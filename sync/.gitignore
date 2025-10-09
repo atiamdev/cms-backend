@@ -1,0 +1,22 @@
+# Environment configuration
+.env
+
+# Node modules
+node_modules/
+
+# Sync tracking
+last-sync.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

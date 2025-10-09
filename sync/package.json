@@ -1,0 +1,28 @@
+{
+  "name": "zkteco-sync",
+  "version": "2.0.0",
+  "description": "ZKTeco K40 attendance sync service for CMS (SQL Server)",
+  "main": "zkteco-mssql-sync.js",
+  "scripts": {
+    "start": "node zkteco-mssql-sync.js",
+    "test": "node test-connection-simple.js",
+    "test-old": "node test-sql-connection.js"
+  },
+  "keywords": [
+    "zkteco",
+    "attendance",
+    "biometric",
+    "sync",
+    "sqlserver"
+  ],
+  "author": "Your School",
+  "license": "MIT",
+  "dependencies": {
+    "mssql": "^11.0.1",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "mdb-reader": "^1.0.0"
+  }
+}
