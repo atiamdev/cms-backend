@@ -8,6 +8,12 @@ const branchSchema = new mongoose.Schema(
       trim: true,
       maxlength: [100, "Branch name cannot exceed 100 characters"],
     },
+    abbreviation: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: [10, "Branch abbreviation cannot exceed 10 characters"],
+    },
     address: {
       street: { type: String, trim: true },
       city: { type: String, trim: true },

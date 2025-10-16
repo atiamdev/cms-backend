@@ -16,6 +16,7 @@ const {
 // @access  Private (Admin, Secretary)
 const createTeacher = async (req, res) => {
   let createdUser = null;
+  let existingUser = null;
 
   try {
     const errors = validationResult(req);
@@ -56,7 +57,7 @@ const createTeacher = async (req, res) => {
     } = req.body;
 
     // Check if user with email already exists
-    let existingUser = await User.findOne({ email });
+    existingUser = await User.findOne({ email });
 
     // If user exists, check if they already have a teacher record
     if (existingUser) {
@@ -123,8 +124,24 @@ const createTeacher = async (req, res) => {
       });
     }
 
+    // Prepare profile details, handling address field
+    let processedProfileDetails = { ...profileDetails };
+    if (typeof processedProfileDetails.address === "string") {
+      // If address is a string, assume it's the street address
+      processedProfileDetails.address = {
+        street: processedProfileDetails.address,
+        city: "",
+        state: "",
+        zipCode: "",
+        country: "Kenya",
+      };
+    }
+
     // Create user account first (if not exists)
     if (!existingUser) {
+      const crypto = require("crypto");
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+
       createdUser = await User.create({
         email,
         password,
@@ -133,33 +150,34 @@ const createTeacher = async (req, res) => {
         roles: ["teacher"],
         branchId: req.branchId,
         profileDetails: {
-          ...profileDetails,
+          ...processedProfileDetails,
           employeeId,
           joiningDate,
           department,
           designation,
         },
-        status: "active",
+        emailVerified: false,
+        emailVerificationToken: verificationToken,
       });
 
-      // Send welcome email to new teacher
+      // Send verification email instead of welcome email
       try {
         const { sendEmail, emailTemplates } = require("../utils/emailService");
-        const loginUrl =
-          process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+        const baseUrl = process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+        const verificationUrl = `${baseUrl}/verify-email?token=${verificationToken}`;
 
         await sendEmail({
           to: createdUser.email,
-          ...emailTemplates.welcome(
+          ...emailTemplates.emailVerification(
             `${createdUser.firstName} ${createdUser.lastName}`,
-            loginUrl
+            verificationUrl
           ),
         });
         console.log(
-          `Welcome email sent successfully to teacher: ${createdUser.email}`
+          `Verification email sent successfully to teacher: ${createdUser.email}`
         );
       } catch (emailError) {
-        console.error("Teacher welcome email sending failed:", emailError);
+        console.error("Teacher verification email sending failed:", emailError);
         // Don't fail registration if email fails
       }
     } else {
@@ -167,7 +185,7 @@ const createTeacher = async (req, res) => {
       createdUser = existingUser;
       createdUser.profileDetails = {
         ...createdUser.profileDetails,
-        ...profileDetails,
+        ...processedProfileDetails,
         employeeId,
         joiningDate,
         department,
@@ -209,7 +227,8 @@ const createTeacher = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Teacher created successfully",
+      message:
+        "Teacher created successfully. They will receive an email to verify their account.",
       teacher,
     });
   } catch (error) {
@@ -455,7 +474,7 @@ const getMyProfile = async (req, res) => {
       { path: "branchId", select: "name configuration" },
       {
         path: "classes.classId",
-        select: "name capacity grade level academicTerm",
+        select: "name capacity grade level academicTerm students",
       },
       {
         path: "classes.courses",
@@ -712,13 +731,13 @@ const assignClass = async (req, res) => {
   }
 };
 
-// @desc    Remove class assignment
+// @desc    Remove class assignment or specific course from class
 // @route   DELETE /api/teachers/:id/remove-class/:classId
 // @access  Private (Admin, Secretary)
 const removeClassAssignment = async (req, res) => {
   try {
     const { id, classId } = req.params;
-    const { academicTermId } = req.query;
+    const { courseId, academicTermId } = req.query;
 
     const teacher = await Teacher.findOne({ _id: id, branchId: req.branchId });
 
@@ -729,13 +748,23 @@ const removeClassAssignment = async (req, res) => {
       });
     }
 
-    await teacher.removeClassAssignment(classId, academicTermId);
-
-    res.json({
-      success: true,
-      message: "Class assignment removed successfully",
-      teacher,
-    });
+    if (courseId) {
+      // Remove specific course from class assignment
+      await teacher.removeCourseFromClass(classId, courseId, academicTermId);
+      res.json({
+        success: true,
+        message: "Course removed from class assignment successfully",
+        teacher,
+      });
+    } else {
+      // Remove entire class assignment (legacy behavior)
+      await teacher.removeClassAssignment(classId, academicTermId);
+      res.json({
+        success: true,
+        message: "Class assignment removed successfully",
+        teacher,
+      });
+    }
   } catch (error) {
     console.error("Remove class assignment error:", error);
     res.status(500).json({

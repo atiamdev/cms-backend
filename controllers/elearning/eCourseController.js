@@ -35,10 +35,42 @@ class ECourseController {
 
       const total = await ECourse.countDocuments(filter);
 
+      // Get enrollment counts for each course
+      const courseIds = courses.map((course) => course._id);
+      const enrollmentCounts = await Enrollment.aggregate([
+        {
+          $match: {
+            courseId: { $in: courseIds },
+            status: { $in: ["active", "approved", "completed"] },
+          },
+        },
+        {
+          $group: {
+            _id: "$courseId",
+            totalStudents: { $sum: 1 },
+          },
+        },
+      ]);
+
+      // Create a map of courseId to enrollment count
+      const enrollmentMap = new Map();
+      enrollmentCounts.forEach((count) => {
+        enrollmentMap.set(count._id.toString(), count.totalStudents);
+      });
+
+      // Add stats to each course
+      const coursesWithStats = courses.map((course) => {
+        const courseObj = course.toObject();
+        courseObj.stats = courseObj.stats || {};
+        courseObj.stats.totalStudents =
+          enrollmentMap.get(course._id.toString()) || 0;
+        return courseObj;
+      });
+
       res.json({
         success: true,
         data: {
-          courses,
+          courses: coursesWithStats,
           pagination: {
             page,
             limit,
@@ -385,16 +417,34 @@ class ECourseController {
         status: { $in: ["active", "approved", "completed"] },
       });
 
+      // Calculate completion rate
+      const completedStudents = await Enrollment.countDocuments({
+        courseId: courseId,
+        status: "completed",
+      });
+      const completionRate =
+        totalStudents > 0
+          ? Math.round((completedStudents / totalStudents) * 100)
+          : 0;
+
       // Add stats
       const ratingData = ratingStats[0];
+      transformedCourse.stats = {
+        totalStudents,
+        completionRate,
+        averageRating:
+          course.stats?.averageRating ||
+          (ratingData ? Math.round(ratingData.averageRating * 10) / 10 : 0),
+        totalRatings:
+          course.stats?.totalRatings ||
+          (ratingData ? ratingData.reviewCount : 0),
+      };
+
+      // Keep backward compatibility
       transformedCourse.totalStudents = totalStudents;
-      transformedCourse.rating =
-        course.stats?.averageRating ||
-        (ratingData ? Math.round(ratingData.averageRating * 10) / 10 : 0);
-      transformedCourse.totalRatings =
-        course.stats?.totalRatings || (ratingData ? ratingData.reviewCount : 0);
-      transformedCourse.reviewCount =
-        course.stats?.totalRatings || (ratingData ? ratingData.reviewCount : 0);
+      transformedCourse.rating = transformedCourse.stats.averageRating;
+      transformedCourse.totalRatings = transformedCourse.stats.totalRatings;
+      transformedCourse.reviewCount = transformedCourse.stats.totalRatings;
 
       res.json({
         success: true,
@@ -1231,10 +1281,42 @@ class ECourseController {
 
       const total = await ECourse.countDocuments(filter);
 
+      // Get enrollment counts for each course
+      const courseIds = courses.map((course) => course._id);
+      const enrollmentCounts = await Enrollment.aggregate([
+        {
+          $match: {
+            courseId: { $in: courseIds },
+            status: { $in: ["active", "approved", "completed"] },
+          },
+        },
+        {
+          $group: {
+            _id: "$courseId",
+            totalStudents: { $sum: 1 },
+          },
+        },
+      ]);
+
+      // Create a map of courseId to enrollment count
+      const enrollmentMap = new Map();
+      enrollmentCounts.forEach((count) => {
+        enrollmentMap.set(count._id.toString(), count.totalStudents);
+      });
+
+      // Add stats to each course
+      const coursesWithStats = courses.map((course) => {
+        const courseObj = course.toObject();
+        courseObj.stats = courseObj.stats || {};
+        courseObj.stats.totalStudents =
+          enrollmentMap.get(course._id.toString()) || 0;
+        return courseObj;
+      });
+
       res.json({
         success: true,
         data: {
-          courses,
+          courses: coursesWithStats,
           pagination: {
             page,
             limit,

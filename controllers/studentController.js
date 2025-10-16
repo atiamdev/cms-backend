@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const Student = require("../models/Student");
 const User = require("../models/User");
 const Branch = require("../models/Branch");
-const { generateId } = require("../utils/helpers");
+const { generateId, generateAdmissionNumber } = require("../utils/helpers");
 const {
   canAccessBranchResource,
   getBranchQueryFilter,
@@ -46,7 +46,6 @@ const createStudent = async (req, res) => {
       lastName,
       profileDetails,
       // Student specific data
-      admissionNumber,
       currentClassId,
       enrollmentDate,
       photoUrl, // Add photo URL
@@ -96,6 +95,17 @@ const createStudent = async (req, res) => {
       });
     }
 
+    // Generate admission number
+    let admissionNumber;
+    try {
+      admissionNumber = await generateAdmissionNumber(branch);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     // Generate unique student ID with retry logic
     let studentId;
     let attempts = 0;
@@ -124,8 +134,24 @@ const createStudent = async (req, res) => {
       });
     }
 
+    // Prepare profile details, handling address field
+    let processedProfileDetails = { ...profileDetails };
+    if (typeof processedProfileDetails.address === "string") {
+      // If address is a string, assume it's the street address
+      processedProfileDetails.address = {
+        street: processedProfileDetails.address,
+        city: "",
+        state: "",
+        zipCode: "",
+        country: "Kenya",
+      };
+    }
+
     // Create user account first (if not exists)
     if (!existingUser) {
+      const crypto = require("crypto");
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+
       createdUser = await User.create({
         email,
         password,
@@ -134,31 +160,32 @@ const createStudent = async (req, res) => {
         roles: ["student"],
         branchId: req.branchId,
         profileDetails: {
-          ...profileDetails,
+          ...processedProfileDetails,
           studentId,
           ...(photoUrl !== undefined && { profilePicture: photoUrl }), // Add profile picture if photo was uploaded
         },
-        status: "active",
+        emailVerified: false,
+        emailVerificationToken: verificationToken,
       });
 
-      // Send welcome email to new student
+      // Send verification email instead of welcome email
       try {
         const { sendEmail, emailTemplates } = require("../utils/emailService");
-        const loginUrl =
-          process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+        const baseUrl = process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+        const verificationUrl = `${baseUrl}/verify-email?token=${verificationToken}`;
 
         await sendEmail({
           to: createdUser.email,
-          ...emailTemplates.welcome(
+          ...emailTemplates.emailVerification(
             `${createdUser.firstName} ${createdUser.lastName}`,
-            loginUrl
+            verificationUrl
           ),
         });
         console.log(
-          `Welcome email sent successfully to student: ${createdUser.email}`
+          `Verification email sent successfully to student: ${createdUser.email}`
         );
       } catch (emailError) {
-        console.error("Student welcome email sending failed:", emailError);
+        console.error("Student verification email sending failed:", emailError);
         // Don't fail registration if email fails
       }
     } else {
@@ -166,7 +193,7 @@ const createStudent = async (req, res) => {
       createdUser = existingUser;
       createdUser.profileDetails = {
         ...createdUser.profileDetails,
-        ...profileDetails,
+        ...processedProfileDetails,
         studentId,
         ...(photoUrl !== undefined && { profilePicture: photoUrl }), // Add profile picture if photo was uploaded
       };
@@ -178,7 +205,7 @@ const createStudent = async (req, res) => {
       userId: createdUser._id,
       branchId: req.branchId,
       studentId,
-      admissionNumber: admissionNumber || generateId("ADM", 6),
+      admissionNumber,
       // currentClassId will be set later when assigning to a class
       enrollmentDate: enrollmentDate || new Date(),
       photoUrl: photoUrl, // Add photo URL from upload
@@ -207,7 +234,8 @@ const createStudent = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Student created successfully",
+      message:
+        "Student created successfully. They will receive an email to verify their account.",
       student,
     });
   } catch (error) {
@@ -1267,6 +1295,14 @@ const generateStudentPaymentReceipt = async (req, res) => {
   try {
     const { id, reference } = req.params;
 
+    console.log("Download receipt request:", {
+      id,
+      reference,
+      userId: req.user._id,
+      userRole: req.user.roles,
+      branchId: req.branchId,
+    });
+
     // Find student with payment history
     const student = await Student.findOne({
       _id: id,
@@ -1277,6 +1313,20 @@ const generateStudentPaymentReceipt = async (req, res) => {
       { path: "branchId", select: "name address phone email configuration" },
     ]);
 
+    console.log(
+      "Found student:",
+      student
+        ? {
+            id: student._id,
+            studentId: student.studentId,
+            userId: student.userId?._id,
+            branchId: student.branchId?._id,
+            hasFees: !!student.fees,
+            paymentHistoryLength: student.fees?.paymentHistory?.length || 0,
+          }
+        : "Not found"
+    );
+
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -1284,9 +1334,31 @@ const generateStudentPaymentReceipt = async (req, res) => {
       });
     }
 
+    // Check if user can access this receipt
+    if (
+      req.user.roles.includes("student") &&
+      student.userId._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only download your own receipts",
+      });
+    }
+
     // Find the payment in history by reference number
     const paymentEntry = student.fees?.paymentHistory?.find(
       (payment) => payment.referenceNumber === reference
+    );
+
+    console.log(
+      "Payment entry found:",
+      paymentEntry
+        ? {
+            referenceNumber: paymentEntry.referenceNumber,
+            amount: paymentEntry.amount,
+            paymentDate: paymentEntry.paymentDate,
+          }
+        : "Not found"
     );
 
     if (!paymentEntry) {
@@ -1332,15 +1404,41 @@ const downloadStudentPaymentReceipt = async (req, res) => {
   try {
     const { id, reference } = req.params;
 
-    // Find student with payment history
-    const student = await Student.findOne({
-      _id: id,
+    console.log("Download receipt request:", {
+      id,
+      reference,
+      userId: req.user._id,
+      userRole: req.user.roles,
       branchId: req.branchId,
-    }).populate([
+    });
+
+    // For students, find their own record regardless of branch filtering
+    let query = { _id: id };
+    if (!req.user.roles.includes("student")) {
+      // For non-students, apply branch filtering
+      query.branchId = req.branchId;
+    }
+
+    // Find student with payment history
+    const student = await Student.findOne(query).populate([
       { path: "userId", select: "firstName lastName email phone" },
       { path: "currentClassId", select: "name" },
       { path: "branchId", select: "name address phone email configuration" },
     ]);
+
+    console.log(
+      "Found student:",
+      student
+        ? {
+            id: student._id,
+            studentId: student.studentId,
+            userId: student.userId?._id,
+            branchId: student.branchId?._id,
+            hasFees: !!student.fees,
+            paymentHistoryLength: student.fees?.paymentHistory?.length || 0,
+          }
+        : "Not found"
+    );
 
     if (!student) {
       return res.status(404).json({
@@ -1349,9 +1447,31 @@ const downloadStudentPaymentReceipt = async (req, res) => {
       });
     }
 
+    // Check if user can access this receipt
+    if (
+      req.user.roles.includes("student") &&
+      student.userId._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only download your own receipts",
+      });
+    }
+
     // Find the payment in history by reference number
     const paymentEntry = student.fees?.paymentHistory?.find(
       (payment) => payment.referenceNumber === reference
+    );
+
+    console.log(
+      "Payment entry found:",
+      paymentEntry
+        ? {
+            referenceNumber: paymentEntry.referenceNumber,
+            amount: paymentEntry.amount,
+            paymentDate: paymentEntry.paymentDate,
+          }
+        : "Not found"
     );
 
     if (!paymentEntry) {
@@ -1364,104 +1484,389 @@ const downloadStudentPaymentReceipt = async (req, res) => {
     // Import PDF generation library
     const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
 
+    console.log("Starting PDF generation...");
+
     // Create a new PDF document
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([600, 800]);
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
+    console.log("PDF document created, starting to draw content...");
+
     // Set up colors
     const black = rgb(0, 0, 0);
-    const blue = rgb(0, 0.4, 0.8);
+    const green = rgb(0, 0.6, 0); // Bright green (already good)
+    const darkGreen = rgb(0, 0.4, 0); // Darker green tone
+    const deepGreen = rgb(0, 0.2, 0);
     const gray = rgb(0.5, 0.5, 0.5);
+    const lightGray = rgb(0.9, 0.9, 0.9);
 
-    // Header
-    page.drawText(student.branchId.name || "School Management System", {
+    // College Header - with null checks
+    const collegeName =
+      `ATIAM COLLEGE - ${student.branchId?.name}` || "Educational Institution";
+    page.drawText(collegeName, {
       x: 50,
-      y: 750,
-      size: 24,
+      y: 770,
+      size: 20,
       font: boldFont,
-      color: blue,
+      color: green,
+    });
+
+    // College contact information
+    let contactY = 750;
+    if (
+      student.branchId?.address &&
+      typeof student.branchId.address === "string"
+    ) {
+      page.drawText(student.branchId.address, {
+        x: 50,
+        y: contactY,
+        size: 10,
+        font: font,
+        color: black,
+      });
+      contactY -= 15;
+    }
+
+    const contactInfo = [];
+    if (student.branchId?.phone && typeof student.branchId.phone === "string")
+      contactInfo.push(`Tel: ${student.branchId.phone}`);
+    if (student.branchId?.email && typeof student.branchId.email === "string")
+      contactInfo.push(`Email: ${student.branchId.email}`);
+
+    if (contactInfo.length > 0) {
+      page.drawText(contactInfo.join(" | "), {
+        x: 50,
+        y: contactY,
+        size: 10,
+        font: font,
+        color: black,
+      });
+    }
+
+    // Receipt Title
+    page.drawRectangle({
+      x: 200,
+      y: 680,
+      width: 200,
+      height: 30,
+      color: green,
     });
 
     page.drawText("PAYMENT RECEIPT", {
+      x: 220,
+      y: 695,
+      size: 16,
+      font: boldFont,
+      color: rgb(1, 1, 1),
+    });
+
+    // Receipt details box
+    page.drawRectangle({
       x: 50,
-      y: 710,
-      size: 20,
+      y: 620,
+      width: 500,
+      height: 60,
+      borderColor: green,
+      borderWidth: 1,
+    });
+
+    // Receipt number and date
+    page.drawText("Receipt No:", {
+      x: 60,
+      y: 650,
+      size: 12,
       font: boldFont,
       color: black,
     });
 
-    // Receipt details
-    const details = [
-      { label: "Receipt Number:", value: paymentEntry.referenceNumber },
+    page.drawText(paymentEntry.referenceNumber || "N/A", {
+      x: 140,
+      y: 650,
+      size: 12,
+      font: font,
+      color: black,
+    });
+
+    page.drawText("Date:", {
+      x: 350,
+      y: 650,
+      size: 12,
+      font: boldFont,
+      color: black,
+    });
+
+    // Safely format payment date
+    let paymentDateString = "N/A";
+    try {
+      if (paymentEntry.paymentDate) {
+        paymentDateString = new Date(
+          paymentEntry.paymentDate
+        ).toLocaleDateString();
+      }
+    } catch (error) {
+      console.warn("Invalid payment date:", paymentEntry.paymentDate);
+    }
+
+    page.drawText(paymentDateString, {
+      x: 390,
+      y: 650,
+      size: 12,
+      font: font,
+      color: black,
+    });
+
+    // Student Information Section
+    page.drawText("STUDENT INFORMATION", {
+      x: 50,
+      y: 590,
+      size: 14,
+      font: boldFont,
+      color: darkGreen,
+    });
+
+    page.drawLine({
+      start: { x: 50, y: 585 },
+      end: { x: 550, y: 585 },
+      thickness: 1,
+      color: green,
+    });
+
+    const studentName = student.userId
+      ? `${student.userId.firstName || "Unknown"} ${
+          student.userId.lastName || "Student"
+        }`
+      : "Unknown Student";
+    const studentDetails = [
+      { label: "Student Name:", value: studentName },
+      { label: "Admission No:", value: student.admissionNumber || "N/A" },
       {
-        label: "Student Name:",
-        value: `${student.userId.firstName} ${student.userId.lastName}`,
+        label: "Class:",
+        value: student.currentClassId?.name || "Not Assigned",
       },
-      { label: "Student ID:", value: student.studentId },
-      { label: "Class:", value: student.currentClassId?.name || "N/A" },
-      {
-        label: "Amount:",
-        value: `KSh ${paymentEntry.amount.toLocaleString()}`,
-      },
-      {
-        label: "Payment Date:",
-        value: new Date(paymentEntry.paymentDate).toLocaleDateString(),
-      },
-      {
-        label: "Payment Method:",
-        value: paymentEntry.paymentMethod.toUpperCase(),
-      },
-      { label: "Notes:", value: paymentEntry.notes || "N/A" },
+      { label: "Email:", value: student.userId?.email || "N/A" },
     ];
 
-    let yPosition = 650;
-    details.forEach((detail) => {
+    let studentY = 560;
+    studentDetails.forEach((detail) => {
       page.drawText(detail.label, {
-        x: 50,
-        y: yPosition,
-        size: 12,
+        x: 60,
+        y: studentY,
+        size: 11,
         font: boldFont,
         color: black,
       });
 
       page.drawText(detail.value, {
-        x: 200,
-        y: yPosition,
-        size: 12,
+        x: 160,
+        y: studentY,
+        size: 11,
         font: font,
         color: black,
       });
 
-      yPosition -= 25;
+      studentY -= 20;
     });
+
+    // Payment Details Section
+    page.drawText("PAYMENT DETAILS", {
+      x: 50,
+      y: 460,
+      size: 14,
+      font: boldFont,
+      color: darkGreen,
+    });
+
+    page.drawLine({
+      start: { x: 50, y: 455 },
+      end: { x: 550, y: 455 },
+      thickness: 1,
+      color: green,
+    });
+
+    const paymentDetails = [
+      {
+        label: "Amount Paid:",
+        value: `KSh ${
+          typeof paymentEntry.amount === "number" && !isNaN(paymentEntry.amount)
+            ? paymentEntry.amount.toLocaleString()
+            : "0"
+        }`,
+      },
+      {
+        label: "Payment Method:",
+        value: paymentEntry.paymentMethod?.toUpperCase() || "N/A",
+      },
+      { label: "Reference No:", value: paymentEntry.referenceNumber || "N/A" },
+      {
+        label: "Payment Date:",
+        value: (() => {
+          try {
+            return paymentEntry.paymentDate
+              ? new Date(paymentEntry.paymentDate).toLocaleDateString("en-KE", {
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })
+              : "N/A";
+          } catch (error) {
+            console.warn(
+              "Invalid payment date in details:",
+              paymentEntry.paymentDate
+            );
+            return "N/A";
+          }
+        })(),
+      },
+    ];
+
+    let paymentY = 430;
+    paymentDetails.forEach((detail) => {
+      page.drawText(detail.label, {
+        x: 60,
+        y: paymentY,
+        size: 11,
+        font: boldFont,
+        color: black,
+      });
+
+      page.drawText(detail.value, {
+        x: 180,
+        y: paymentY,
+        size: 11,
+        font: font,
+        color: black,
+      });
+
+      paymentY -= 20;
+    });
+
+    // Amount in a highlighted box
+    page.drawRectangle({
+      x: 350,
+      y: 430,
+      width: 180,
+      height: 25,
+      color: lightGray,
+      borderColor: green,
+      borderWidth: 1,
+    });
+
+    page.drawText("TOTAL AMOUNT:", {
+      x: 360,
+      y: 440,
+      size: 12,
+      font: boldFont,
+      color: darkGreen,
+    });
+
+    page.drawText(
+      `KSh ${
+        typeof paymentEntry.amount === "number" && !isNaN(paymentEntry.amount)
+          ? paymentEntry.amount.toLocaleString()
+          : "0"
+      }`,
+      {
+        x: 470,
+        y: 440,
+        size: 14,
+        font: boldFont,
+        color: rgb(0, 0.6, 0), // Green color for amount
+      }
+    );
+
+    // Notes section if present
+    if (paymentEntry.notes && typeof paymentEntry.notes === "string") {
+      page.drawText("Notes:", {
+        x: 60,
+        y: 350,
+        size: 11,
+        font: boldFont,
+        color: black,
+      });
+
+      page.drawText(paymentEntry.notes, {
+        x: 110,
+        y: 350,
+        size: 10,
+        font: font,
+        color: gray,
+        maxWidth: 400,
+      });
+    }
 
     // Footer
-    page.drawText(`Generated on: ${new Date().toLocaleDateString()}`, {
-      x: 50,
-      y: 100,
-      size: 10,
-      font: font,
+    page.drawLine({
+      start: { x: 50, y: 120 },
+      end: { x: 550, y: 120 },
+      thickness: 1,
       color: gray,
     });
 
-    page.drawText("This is a computer-generated receipt.", {
+    page.drawText("Thank you for your payment!", {
       x: 50,
-      y: 80,
-      size: 10,
-      font: font,
-      color: gray,
+      y: 100,
+      size: 12,
+      font: boldFont,
+      color: darkGreen,
     });
+
+    page.drawText(
+      `Generated on: ${new Date().toLocaleDateString("en-KE", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`,
+      {
+        x: 50,
+        y: 80,
+        size: 9,
+        font: font,
+        color: gray,
+      }
+    );
+
+    page.drawText(
+      "This is a computer-generated receipt and does not require a signature.",
+      {
+        x: 50,
+        y: 65,
+        size: 8,
+        font: font,
+        color: gray,
+      }
+    );
+
+    page.drawText(
+      `© ${new Date().getFullYear()} ${
+        student.branchId.name || "Educational Institution"
+      }. All rights reserved.`,
+      {
+        x: 50,
+        y: 50,
+        size: 8,
+        font: font,
+        color: gray,
+      }
+    );
 
     // Serialize the PDF
     const pdfBytes = await pdfDoc.save();
+
+    console.log("PDF generated successfully, size:", pdfBytes.length, "bytes");
 
     // Set response headers for PDF download
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="Receipt-${paymentEntry.referenceNumber}.pdf"`
+      `attachment; filename="Receipt-${
+        paymentEntry.referenceNumber || "UNKNOWN"
+      }.pdf"`
     );
     res.setHeader("Content-Length", pdfBytes.length);
 
@@ -1469,9 +1874,11 @@ const downloadStudentPaymentReceipt = async (req, res) => {
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
     console.error("Download student payment receipt error:", error);
+    console.error("Error stack:", error.stack);
     res.status(500).json({
       success: false,
       message: "Failed to download receipt",
+      error: error.message,
     });
   }
 };

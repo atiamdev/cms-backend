@@ -18,6 +18,10 @@ const {
   initiateStudentMpesaPayment,
   handleMpesaCallback,
   testMpesaCallback,
+  initiateEquityPayment,
+  initiateStudentEquityPayment,
+  handleEquityCallback,
+  handleEquityIPN,
   recordManualPayment,
   verifyPayment,
   getPaymentStatus,
@@ -393,6 +397,70 @@ router.post("/payments/mpesa/callback/:paymentId", handleMpesaCallback);
 router.post("/payments/mpesa/callback", handleMpesaCallback);
 // Test M-Pesa callback for webhook.site testing
 router.post("/payments/mpesa/test-callback", testMpesaCallback);
+
+// Equity Bank Payment Routes
+router.post(
+  "/payments/equity/initiate",
+  protect,
+  branchAuth,
+  [
+    body("feeId").notEmpty().withMessage("Fee ID is required"),
+    body("amount")
+      .isFloat({ min: 1 })
+      .withMessage("Amount must be greater than 0"),
+    body("customerFirstName")
+      .notEmpty()
+      .withMessage("Customer first name is required"),
+    body("customerLastName")
+      .notEmpty()
+      .withMessage("Customer last name is required"),
+    body("customerEmail")
+      .isEmail()
+      .withMessage("Valid customer email is required"),
+    body("customerPhone")
+      .matches(/^(\+?254|0)?[17]\d{8}$/)
+      .withMessage("Valid Kenyan phone number is required"),
+  ],
+  initiateEquityPayment
+);
+
+// Equity callback (public endpoint - POST request)
+router.post("/payments/equity/callback/:paymentId", handleEquityCallback);
+// Equity IPN (public endpoint - POST request)
+router.post("/payments/equity/ipn", handleEquityIPN);
+
+// Student Equity Payment Route (no feeId required)
+router.post(
+  "/payments/student/equity/initiate",
+  protect,
+  branchAuth,
+  authorize(["student", "admin", "secretary"]),
+  [
+    body("amount")
+      .isFloat({ min: 1 })
+      .withMessage("Amount must be greater than 0"),
+    body("phoneNumber")
+      .custom((value) => {
+        // Remove all non-digits
+        const clean = value.replace(/\D/g, "");
+
+        // Check various Kenyan phone number formats
+        const kenyanPatterns = [
+          /^254[17]\d{8}$/, // 2547xxxxxxxx or 2541xxxxxxxx
+          /^0[17]\d{8}$/, // 07xxxxxxxx or 01xxxxxxxx
+          /^[17]\d{8}$/, // 7xxxxxxxx or 1xxxxxxxx
+        ];
+
+        return kenyanPatterns.some((pattern) => pattern.test(clean));
+      })
+      .withMessage("Valid Kenyan phone number is required"),
+    body("studentId")
+      .optional()
+      .isMongoId()
+      .withMessage("Valid student ID is required"),
+  ],
+  initiateStudentEquityPayment
+);
 
 router.post(
   "/payments/manual",

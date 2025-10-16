@@ -152,6 +152,68 @@ const emailTemplates = {
     `,
   }),
 
+  emailVerification: (userName, verificationUrl) => ({
+    subject: "Verify Your Email - ATIAM CMS",
+    html: `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verify Your Email - ATIAM CMS</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: linear-gradient(135deg, #317546 0%, #65E62E 50%, #35B53B 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+          .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+          .button { display: inline-block; background: #65E62E; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+          .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+          .warning { background: #fff3cd; border: 1px solid #ffeaa7; color: #856404; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Verify Your Email</h1>
+          <p>ATIAM College Management System</p>
+        </div>
+        <div class="content">
+          <p>Hello ${userName},</p>
+          <p>Welcome to the ATIAM College Management System! To complete your registration, please verify your email address.</p>
+          <p>Click the button below to verify your email:</p>
+          <a href="${verificationUrl}" class="button">Verify Email</a>
+          <div class="warning">
+            <strong>Important:</strong> This link will expire in 24 hours for security reasons.
+          </div>
+          <p>If the button doesn't work, you can copy and paste this link into your browser:</p>
+          <p><a href="${verificationUrl}">${verificationUrl}</a></p>
+          <p>If you didn't create this account, please ignore this email.</p>
+        </div>
+        <div class="footer">
+          <p>This email was sent by ATIAM College Management System</p>
+          <p>If you have any questions, please contact support.</p>
+        </div>
+      </body>
+      </html>
+    `,
+    text: `
+      Verify Your Email - ATIAM CMS
+
+      Hello ${userName},
+
+      Welcome to the ATIAM College Management System! To complete your registration, please verify your email address.
+
+      Click the following link to verify your email:
+      ${verificationUrl}
+
+      Important: This link will expire in 24 hours for security reasons.
+
+      If you didn't create this account, please ignore this email.
+
+      If you have any questions, please contact support.
+
+      ATIAM College Management System
+    `,
+  }),
+
   accountActivated: (userName, loginUrl) => ({
     subject: "Your ATIAM CMS Account Has Been Activated",
     html: `

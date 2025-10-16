@@ -153,6 +153,22 @@ const getClasses = async (req, res) => {
       },
       {
         $lookup: {
+          from: "teachers",
+          localField: "subjects.assignedTeacherIds",
+          foreignField: "_id",
+          as: "subjectTeachers",
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "subjectTeachers.userId",
+          foreignField: "_id",
+          as: "subjectTeacherUsers",
+        },
+      },
+      {
+        $lookup: {
           from: "branches",
           localField: "branchId",
           foreignField: "_id",
@@ -195,6 +211,36 @@ const getClasses = async (req, res) => {
       const teacherUserInfo = cls.teacherUserInfo && cls.teacherUserInfo[0];
       const classTeacherInfo = cls.classTeacherInfo && cls.classTeacherInfo[0];
 
+      // Build teacher assignments with subjects
+      const teacherAssignments = [];
+      if (cls.subjects && cls.subjects.length > 0) {
+        cls.subjects.forEach((subject) => {
+          if (
+            subject.assignedTeacherIds &&
+            subject.assignedTeacherIds.length > 0
+          ) {
+            subject.assignedTeacherIds.forEach((teacherId) => {
+              const teacher = cls.subjectTeachers?.find(
+                (t) => t._id.toString() === teacherId.toString()
+              );
+              const teacherUser = cls.subjectTeacherUsers?.find(
+                (u) => u._id.toString() === teacher?.userId?.toString()
+              );
+
+              if (teacher && teacherUser) {
+                teacherAssignments.push({
+                  teacherId: teacher._id,
+                  teacherName:
+                    `${teacherUser.firstName} ${teacherUser.lastName}`.trim(),
+                  subjectName: subject.subjectName,
+                  subjectCode: subject.subjectCode,
+                });
+              }
+            });
+          }
+        });
+      }
+
       return {
         ...cls,
         teacherName: teacherUserInfo
@@ -204,6 +250,7 @@ const getClasses = async (req, res) => {
         subjectCount: cls.subjects ? cls.subjects.length : 0,
         scheduleCount: cls.schedule ? cls.schedule.length : 0,
         isActive: cls.status === "active",
+        teacherAssignments: teacherAssignments,
       };
     });
 
@@ -251,33 +298,35 @@ const getClass = async (req, res) => {
       });
     }
 
-    // Return basic class data first, then try to populate if needed
-    const response = {
+    // Populate teacher and course information
+    await classData.populate([
+      { path: "branchId", select: "name" },
+      {
+        path: "classTeacherId",
+        select: "userId employeeId",
+        populate: {
+          path: "userId",
+          select: "firstName lastName email",
+        },
+      },
+      {
+        path: "subjects.courseId",
+        select: "name code level",
+      },
+      {
+        path: "subjects.assignedTeacherIds",
+        select: "userId employeeId",
+        populate: {
+          path: "userId",
+          select: "firstName lastName email",
+        },
+      },
+    ]);
+
+    res.json({
       success: true,
       class: classData,
-    };
-
-    // Try to populate optional fields, but don't fail if they don't exist
-    try {
-      await classData.populate([
-        { path: "branchId", select: "name" },
-        {
-          path: "classTeacherId",
-          select: "userId employeeId",
-        },
-        {
-          path: "subjects.courseId",
-          select: "name code level",
-        },
-      ]);
-    } catch (populationError) {
-      console.warn(
-        "Population failed, returning basic data:",
-        populationError.message
-      );
-    }
-
-    res.json(response);
+    });
   } catch (error) {
     console.error("Get class error:", error);
     res.status(500).json({
@@ -566,6 +615,39 @@ const assignTeacherToSubject = async (req, res) => {
   }
 };
 
+// @desc    Remove teacher from subject
+// @route   DELETE /api/classes/:id/subjects/:subjectName/remove-teacher/:teacherId
+// @access  Private (Admin, Academic Head)
+const removeTeacherFromSubject = async (req, res) => {
+  try {
+    const { id, subjectName, teacherId } = req.params;
+
+    const classData = await Class.findOne({ _id: id, branchId: req.branchId });
+
+    if (!classData) {
+      return res.status(404).json({
+        success: false,
+        message: "Class not found",
+      });
+    }
+
+    await classData.removeTeacherFromSubject(subjectName, teacherId);
+
+    res.json({
+      success: true,
+      message: "Teacher removed from subject successfully",
+      class: classData,
+    });
+  } catch (error) {
+    console.error("Remove teacher from subject error:", error);
+    res.status(500).json({
+      success: false,
+      message:
+        error.message || "Server error while removing teacher from subject",
+    });
+  }
+};
+
 // @desc    Set class teacher
 // @route   PUT /api/classes/:id/class-teacher
 // @access  Private (Admin, Academic Head)
@@ -832,6 +914,7 @@ module.exports = {
   removeStudentFromClass,
   addSubjectToClass,
   assignTeacherToSubject,
+  removeTeacherFromSubject,
   setClassTeacher,
   addPeriodToSchedule,
   updatePeriodInSchedule,

@@ -5,7 +5,9 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { swaggerSetup } = require("./config/swagger");
 const http = require("http");
+
 const socketIo = require("socket.io");
+
 require("dotenv").config();
 
 // Import routes
@@ -30,11 +32,12 @@ const noticeRoutes = require("./routes/noticeRoutes");
 
 // Import middleware
 const errorHandler = require("./middlewares/errorHandler");
+const securityMiddleware = require("./middlewares/security");
 
 const app = express();
 
-// Security middleware
-app.use(helmet());
+// Security middleware - comprehensive security headers
+securityMiddleware(app);
 
 // Rate limiting
 const limiter = rateLimit({
@@ -44,18 +47,47 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// CORS configuration
+// CORS configuration - restrict to specific domains only
 const corsOptions = {
-  origin: [
-    process.env.CMS_FRONTEND_URL || "http://localhost:3000",
-    process.env.ELEARNING_FRONTEND_URL || "http://localhost:3001",
-    "http://localhost:3000",
-    "http://localhost:3001",
-  ],
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    const allowedOrigins = [
+      process.env.CMS_FRONTEND_URL || "http://localhost:3000",
+      process.env.ELEARNING_FRONTEND_URL || "http://localhost:3001",
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "https://portal.atiamcollege.com",
+      "https://www.atiamcollege.com",
+    ];
+
+    // Check if the origin is in the allowed list
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      console.warn(`CORS blocked request from origin: ${origin}`);
+      return callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
   optionsSuccessStatus: 200,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
 };
 app.use(cors(corsOptions));
+
+// CORS error handler
+app.use((err, req, res, next) => {
+  if (err.message === "Not allowed by CORS") {
+    return res.status(403).json({
+      error: "CORS Error",
+      message: "Origin not allowed",
+      status: 403,
+    });
+  }
+  next(err);
+});
 
 // Body parsing middleware
 app.use(express.json({ limit: "10mb" }));

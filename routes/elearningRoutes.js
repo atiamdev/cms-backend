@@ -2240,111 +2240,35 @@ router.get(
   "/analytics/overview",
   protect,
   authorize("teacher", "branch-admin", "super-admin"),
-  async (req, res) => {
-    try {
-      // Minimal overview placeholders
-      const overview = {
-        totalStudents: 0,
-        activeCourses: 0,
-        averageCompletionRate: 0,
-        averageSessionDuration: 0,
-        studentGrowth: 0,
-        courseGrowth: 0,
-        completionRateChange: 0,
-        sessionDurationChange: 0,
-        atRiskStudents: 0,
-      };
-      res.json({ success: true, data: overview });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Failed to load overview analytics",
-        error: error.message,
-      });
-    }
-  }
+  analyticsController.getOverviewAnalytics
 );
 
 router.get(
   "/analytics/engagement",
   protect,
   authorize("teacher", "branch-admin", "super-admin"),
-  async (req, res) => {
-    try {
-      // Return an empty timeseries by default
-      const { timeRange = "30d" } = req.query;
-      const data = [];
-      res.json({ success: true, data });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Failed to load engagement analytics",
-        error: error.message,
-      });
-    }
-  }
+  analyticsController.getEngagementAnalytics
 );
 
 router.get(
   "/analytics/progress",
   protect,
   authorize("teacher", "branch-admin", "super-admin"),
-  async (req, res) => {
-    try {
-      const data = [];
-      res.json({ success: true, data });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Failed to load progress analytics",
-        error: error.message,
-      });
-    }
-  }
+  analyticsController.getProgressAnalytics
 );
 
 router.get(
   "/analytics/assessments",
   protect,
   authorize("teacher", "branch-admin", "super-admin"),
-  async (req, res) => {
-    try {
-      // Try to provide basic assessment rollup if assessment analytics exist elsewhere
-      const assessments = {
-        totalAssessments: 0,
-        averageScore: 0,
-        gradeDistribution: { A: 0, B: 0, C: 0, D: 0, F: 0 },
-        performanceTrends: [],
-      };
-      res.json({ success: true, data: assessments });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Failed to load assessment analytics",
-        error: error.message,
-      });
-    }
-  }
+  analyticsController.getAssessmentAnalytics
 );
 
 router.get(
   "/analytics/content",
   protect,
   authorize("teacher", "branch-admin", "super-admin"),
-  async (req, res) => {
-    try {
-      const content = {
-        topContent: [],
-      };
-      res.json({ success: true, data: content });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: "Failed to load content analytics",
-        error: error.message,
-      });
-    }
-  }
+  analyticsController.getContentAnalytics
 );
 
 router.get(

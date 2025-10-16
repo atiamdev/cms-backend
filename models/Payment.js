@@ -43,6 +43,7 @@ const paymentSchema = new mongoose.Schema(
         "cheque",
         "card",
         "mobile_money",
+        "equity",
       ],
       required: [true, "Payment method is required"],
     },
@@ -96,6 +97,62 @@ const paymentSchema = new mongoose.Schema(
         default: false,
       },
       callbackData: {
+        type: mongoose.Schema.Types.Mixed,
+      },
+    },
+
+    // Equity Bank (Jenga) specific fields
+    equityDetails: {
+      orderReference: {
+        type: String,
+        trim: true,
+      },
+      transactionId: {
+        type: String,
+        trim: true,
+      },
+      paymentMode: {
+        type: String,
+        enum: ["CARD", "MPESA", "PWE", "EQUITEL", "PAYPAL"],
+        trim: true,
+      },
+      transactionDate: {
+        type: String, // ISO format from Jenga
+      },
+      confirmedAmount: {
+        type: Number,
+      },
+      currency: {
+        type: String,
+        default: "KES",
+      },
+      billNumber: {
+        type: String,
+        trim: true,
+      },
+      serviceCharge: {
+        type: Number,
+      },
+      status: {
+        type: String,
+        enum: ["SUCCESS", "FAILED"],
+      },
+      remarks: {
+        type: String,
+        trim: true,
+      },
+      callbackReceived: {
+        type: Boolean,
+        default: false,
+      },
+      callbackData: {
+        type: mongoose.Schema.Types.Mixed,
+      },
+      ipnReceived: {
+        type: Boolean,
+        default: false,
+      },
+      ipnData: {
         type: mongoose.Schema.Types.Mixed,
       },
     },
@@ -235,6 +292,8 @@ paymentSchema.index({ feeId: 1, status: 1 });
 paymentSchema.index({ receiptNumber: 1 });
 paymentSchema.index({ "mpesaDetails.transactionId": 1 });
 paymentSchema.index({ "mpesaDetails.checkoutRequestId": 1 });
+paymentSchema.index({ "equityDetails.transactionId": 1 });
+paymentSchema.index({ "equityDetails.orderReference": 1 });
 paymentSchema.index({ status: 1, paymentMethod: 1 });
 
 // Pre-save middleware to generate receipt number

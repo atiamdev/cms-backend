@@ -464,18 +464,27 @@ teacherSchema.methods.assignClass = function (
         cls.academicTermId?.toString() === academicTermId.toString())
   );
 
+  const courseArray = Array.isArray(courses) ? courses : [courses];
+
   if (!existingAssignment) {
     this.classes.push({
       classId,
-      courses: Array.isArray(courses) ? courses : [courses],
+      courses: courseArray,
       isClassTeacher,
       academicTermId,
       startDate: new Date(),
     });
   } else {
-    // Update existing assignment
-    existingAssignment.courses = Array.isArray(courses) ? courses : [courses];
-    existingAssignment.isClassTeacher = isClassTeacher;
+    // Append new courses to existing assignment if they don't already exist
+    courseArray.forEach((courseId) => {
+      if (!existingAssignment.courses.includes(courseId)) {
+        existingAssignment.courses.push(courseId);
+      }
+    });
+    // Update class teacher status if specified
+    if (isClassTeacher !== undefined) {
+      existingAssignment.isClassTeacher = isClassTeacher;
+    }
   }
 
   return this.save();
@@ -495,6 +504,35 @@ teacherSchema.methods.removeClassAssignment = function (
 
   if (assignment) {
     assignment.endDate = new Date();
+  }
+
+  return this.save();
+};
+
+// Method to remove specific course from class assignment
+teacherSchema.methods.removeCourseFromClass = function (
+  classId,
+  courseId,
+  academicTermId
+) {
+  const assignment = this.classes.find(
+    (cls) =>
+      cls.classId.toString() === classId.toString() &&
+      (!cls.endDate || cls.endDate > new Date()) &&
+      (!academicTermId ||
+        cls.academicTermId?.toString() === academicTermId.toString())
+  );
+
+  if (assignment) {
+    // Remove the specific course from the courses array
+    assignment.courses = assignment.courses.filter(
+      (course) => course.toString() !== courseId.toString()
+    );
+
+    // If no courses left, mark the assignment as ended
+    if (assignment.courses.length === 0) {
+      assignment.endDate = new Date();
+    }
   }
 
   return this.save();

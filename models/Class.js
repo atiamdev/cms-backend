@@ -309,6 +309,26 @@ classSchema.methods.assignTeacherToSubject = function (subjectName, teacherId) {
   return this.save();
 };
 
+// Method to remove teacher from subject
+classSchema.methods.removeTeacherFromSubject = function (
+  subjectName,
+  teacherId
+) {
+  const subject = this.subjects.find(
+    (sub) => sub.subjectName.toLowerCase() === subjectName.toLowerCase()
+  );
+
+  if (!subject) {
+    throw new Error("Subject not found in this class");
+  }
+
+  subject.assignedTeacherIds = subject.assignedTeacherIds.filter(
+    (id) => id.toString() !== teacherId.toString()
+  );
+
+  return this.save();
+};
+
 // Method to set class teacher
 classSchema.methods.setClassTeacher = function (teacherId) {
   this.classTeacherId = teacherId;

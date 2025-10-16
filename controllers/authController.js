@@ -136,47 +136,16 @@ const register = async (req, res) => {
         });
       }
 
-      // Validate and set status
-      if (finalStatus) {
-        console.log(
-          `Requested status: ${finalStatus}, user role: ${
-            req.user?.hasRole("superadmin")
-              ? "superadmin"
-              : req.user?.hasRole("secretary")
-              ? "secretary"
-              : "other"
-          }`
-        );
-        // Only superadmin and secretary can set status to active directly
-        if (
-          finalStatus === "active" &&
-          !req.user.hasAnyRole(["superadmin", "secretary"])
-        ) {
-          return res.status(403).json({
-            success: false,
-            message:
-              "Only superadmins and secretaries can create users with active status",
-          });
-        }
-
-        // Validate status value
-        if (
-          !["active", "inactive", "suspended", "pending"].includes(finalStatus)
-        ) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid status value",
-          });
-        }
-      } else {
-        // Default status for non-superadmin created users
-        finalStatus = "pending";
-        console.log(`No status provided, defaulting to: ${finalStatus}`);
-      }
+      // All subsequent users start as pending and require email verification
+      finalStatus = "pending";
     }
 
     // Create user
     console.log(`Creating user with finalStatus: ${finalStatus}`);
+    const crypto = require("crypto");
+    const verificationToken = isFirstUser
+      ? undefined
+      : crypto.randomBytes(32).toString("hex");
     const user = await User.create({
       email,
       password,
@@ -185,30 +154,58 @@ const register = async (req, res) => {
       roles: finalRoles,
       branchId: finalBranchId,
       profileDetails,
-      status: finalStatus,
+      ...(isFirstUser ? { status: "active" } : {}),
+      emailVerified: isFirstUser ? true : false,
+      emailVerificationToken: verificationToken,
     });
     console.log(`User created with status: ${user.status}`);
 
-    // Send welcome email for ALL new users (regardless of status)
-    console.log(
-      `Sending welcome email to ${user.email} for user ${user.firstName} ${user.lastName}`
-    );
-    try {
-      const { sendEmail, emailTemplates } = require("../utils/emailService");
-      const loginUrl = process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+    if (isFirstUser) {
+      // Send welcome email for first user
+      console.log(
+        `Sending welcome email to ${user.email} for user ${user.firstName} ${user.lastName}`
+      );
+      try {
+        const { sendEmail, emailTemplates } = require("../utils/emailService");
+        const loginUrl =
+          process.env.CMS_FRONTEND_URL || "http://localhost:3000";
 
-      console.log(`Login URL: ${loginUrl}`);
-      await sendEmail({
-        to: user.email,
-        ...emailTemplates.welcome(
-          `${user.firstName} ${user.lastName}`,
-          loginUrl
-        ),
-      });
-      console.log(`Welcome email sent successfully to ${user.email}`);
-    } catch (emailError) {
-      console.error("Welcome email sending failed:", emailError);
-      // Don't fail registration if email fails
+        console.log(`Login URL: ${loginUrl}`);
+        await sendEmail({
+          to: user.email,
+          ...emailTemplates.welcome(
+            `${user.firstName} ${user.lastName}`,
+            loginUrl
+          ),
+        });
+        console.log(`Welcome email sent successfully to ${user.email}`);
+      } catch (emailError) {
+        console.error("Welcome email sending failed:", emailError);
+        // Don't fail registration if email fails
+      }
+    } else {
+      // Send verification email for subsequent users
+      console.log(
+        `Sending verification email to ${user.email} for user ${user.firstName} ${user.lastName}`
+      );
+      try {
+        const { sendEmail, emailTemplates } = require("../utils/emailService");
+        const baseUrl = process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+        const verificationUrl = `${baseUrl}/verify-email?token=${verificationToken}`;
+
+        console.log(`Verification URL: ${verificationUrl}`);
+        await sendEmail({
+          to: user.email,
+          ...emailTemplates.emailVerification(
+            `${user.firstName} ${user.lastName}`,
+            verificationUrl
+          ),
+        });
+        console.log(`Verification email sent successfully to ${user.email}`);
+      } catch (emailError) {
+        console.error("Verification email sending failed:", emailError);
+        // Don't fail registration if email fails
+      }
     }
 
     // Generate token
@@ -219,7 +216,7 @@ const register = async (req, res) => {
       success: true,
       message: isFirstUser
         ? "Superadmin account created successfully"
-        : "User registered successfully",
+        : "User registered successfully. Please check your email to verify your account.",
       user: {
         id: user._id,
         email: user.email,
@@ -229,16 +226,87 @@ const register = async (req, res) => {
         roles: user.roles,
         branchId: user.branchId ? user.branchId.toString() : null,
         status: user.status,
+        emailVerified: user.emailVerified,
         profileDetails: user.profileDetails,
       },
-      token,
-      refreshToken,
+      token: isFirstUser ? token : undefined,
+      refreshToken: isFirstUser ? refreshToken : undefined,
     });
   } catch (error) {
     console.error("Registration error:", error);
     res.status(500).json({
       success: false,
       message: "Server error during registration",
+    });
+  }
+};
+
+// @desc    Verify user email
+// @route   GET /api/auth/verify-email
+// @access  Public
+const verifyEmail = async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification token is required",
+      });
+    }
+
+    // Find user by verification token
+    const user = await User.findOne({ emailVerificationToken: token });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired verification token",
+      });
+    }
+
+    // Check if already verified
+    if (user.emailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already verified",
+      });
+    }
+
+    // Update user
+    user.status = "active";
+    user.emailVerified = true;
+    user.emailVerificationToken = undefined; // Clear token
+
+    await user.save();
+
+    // Send welcome email now that account is active
+    try {
+      const { sendEmail, emailTemplates } = require("../utils/emailService");
+      const loginUrl = process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+
+      await sendEmail({
+        to: user.email,
+        ...emailTemplates.accountActivated(
+          `${user.firstName} ${user.lastName}`,
+          loginUrl
+        ),
+      });
+      console.log(`Welcome email sent successfully to ${user.email}`);
+    } catch (emailError) {
+      console.error("Welcome email sending failed:", emailError);
+      // Don't fail verification if email fails
+    }
+
+    res.json({
+      success: true,
+      message: "Email verified successfully. Your account is now active.",
+    });
+  } catch (error) {
+    console.error("Email verification error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during email verification",
     });
   }
 };
@@ -317,6 +385,23 @@ const login = async (req, res) => {
       return res.status(401).json({
         success: false,
         message: "Invalid credentials",
+      });
+    }
+
+    // Check if email is verified
+    if (!user.emailVerified) {
+      // Log failed login attempt for unverified email
+      await AuditLogger.logAuthenticationEvent(
+        user,
+        "USER_LOGIN_FAILED",
+        req,
+        false,
+        "Email not verified"
+      );
+
+      return res.status(401).json({
+        success: false,
+        message: "Please verify your email before logging in.",
       });
     }
 
@@ -986,9 +1071,10 @@ const getGoogleAuthUrl = async (req, res) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      `${
-        process.env.BACKEND_URL || "http://localhost:5000"
-      }/api/auth/google/callback`
+      process.env.GOOGLE_REDIRECT_URI ||
+        `${
+          process.env.BACKEND_URL || "http://localhost:5000"
+        }/api/auth/google/callback`
     );
 
     const scopes = [
@@ -1031,9 +1117,10 @@ const connectGoogleAccount = async (req, res) => {
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      `${
-        process.env.BACKEND_URL || "http://localhost:5000"
-      }/api/auth/google/callback`
+      process.env.GOOGLE_REDIRECT_URI ||
+        `${
+          process.env.BACKEND_URL || "http://localhost:5000"
+        }/api/auth/google/callback`
     );
 
     const { tokens } = await oauth2Client.getToken(code);
@@ -1139,6 +1226,7 @@ module.exports = {
   getUsers, // Add this
   getPendingUsers, // Add this
   bulkActivateUsers, // Add this
+  verifyEmail,
   connectGoogleAccount,
   getGoogleAuthUrl,
   disconnectGoogleAccount,

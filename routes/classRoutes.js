@@ -10,6 +10,7 @@ const {
   removeStudentFromClass,
   addSubjectToClass,
   assignTeacherToSubject,
+  removeTeacherFromSubject,
   setClassTeacher,
   addPeriodToSchedule,
   updatePeriodInSchedule,
@@ -251,8 +252,8 @@ const classValidation = [
     .withMessage("Valid academic term ID is required"),
   body("capacity")
     .optional()
-    .isInt({ min: 1, max: 100 })
-    .withMessage("Capacity must be between 1 and 100"),
+    .isInt({ min: 1, max: 500 })
+    .withMessage("Capacity must be between 1 and 500"),
   body("classTeacherId")
     .optional()
     .isMongoId()
@@ -778,6 +779,62 @@ router.post(
   canAccessStudents,
   [body("teacherId").isMongoId().withMessage("Valid teacher ID is required")],
   assignTeacherToSubject
+);
+
+/**
+ * @swagger
+ * /classes/{id}/subjects/{subjectName}/remove-teacher/{teacherId}:
+ *   delete:
+ *     summary: Remove a teacher from a subject
+ *     tags: [Class Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Class ID
+ *       - in: path
+ *         name: subjectName
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Subject name
+ *       - in: path
+ *         name: teacherId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Teacher ID to remove
+ *     responses:
+ *       200:
+ *         description: Teacher removed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Teacher removed from subject successfully"
+ *                 class:
+ *                   $ref: '#/components/schemas/Class'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ */
+router.delete(
+  "/:id/subjects/:subjectName/remove-teacher/:teacherId",
+  canAccessStudents,
+  removeTeacherFromSubject
 );
 
 // Class teacher assignment

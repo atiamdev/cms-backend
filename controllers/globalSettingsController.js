@@ -1,7 +1,7 @@
 // controllers/globalSettingsController.js
 const GlobalSettings = require("../models/GlobalSettings");
 
-// Get all global settings
+const { clearSettingsCache } = require("../utils/globalSettings");
 const getGlobalSettings = async (req, res) => {
   try {
     let settings = await GlobalSettings.findOne();
@@ -18,192 +18,70 @@ const getGlobalSettings = async (req, res) => {
           primaryColor: "#3B82F6",
           secondaryColor: "#10B981",
           theme: "light",
+          description: "",
+          mission: "",
+          vision: "",
         },
-        academicCalendar: {
-          academicYearStart: new Date().getFullYear() + "-01-01",
-          academicYearEnd: new Date().getFullYear() + "-12-31",
-          termDates: [],
-          holidays: [],
-        },
-        contactInformation: {
-          principalName: "",
-          principalPhone: "",
-          principalEmail: "",
-          adminContacts: [],
-          emergencyNumbers: [],
+        academicYear: {
+          startDate: new Date().getFullYear() + "-01-01",
+          endDate: new Date().getFullYear() + "-12-31",
+          currentYear: `${new Date().getFullYear()}-${
+            new Date().getFullYear() + 1
+          }`,
         },
         financialSettings: {
-          defaultCurrency: "KES",
-          exchangeRates: [],
-          feeCategories: [],
+          currency: "KES",
+          currencySymbol: "KSh",
           paymentMethods: [
             { id: "cash", name: "Cash", enabled: true },
             { id: "card", name: "Credit/Debit Card", enabled: true },
             { id: "mobile", name: "Mobile Money", enabled: true },
           ],
-          latePaymentSettings: {
-            gracePeriodDays: 7,
-            penaltyRate: 5,
-            interestRate: 2,
-          },
-          financialYear: {
-            startMonth: 1,
-            startDay: 1,
-            endMonth: 12,
-            endDay: 31,
-          },
+          lateFeeEnabled: true,
+          lateFeeAmount: 100,
+          dueDateReminder: true,
+          reminderDays: 7,
         },
         academicConfiguration: {
-          gradingSystem: {
-            type: "percentage",
-            passMarks: 50,
-            gradeRanges: [
-              { grade: "A", minScore: 90, maxScore: 100, points: 4.0 },
-              { grade: "B", minScore: 80, maxScore: 89, points: 3.0 },
-              { grade: "C", minScore: 70, maxScore: 79, points: 2.0 },
-              { grade: "D", minScore: 60, maxScore: 69, points: 1.0 },
-              { grade: "F", minScore: 0, maxScore: 59, points: 0.0 },
-            ],
-            gpaScale: 4.0,
-          },
-          classLevels: [],
-          subjectCategories: [],
-          examTypes: [],
-          reportCardTemplates: [],
-        },
-        userRoleSettings: {
-          defaultRoles: [
-            {
-              role: "student",
-              permissions: ["view_own_data", "update_profile"],
-              description: "Student with limited access",
-            },
-            {
-              role: "teacher",
-              permissions: [
-                "manage_classes",
-                "view_students",
-                "record_attendance",
-              ],
-              description: "Teacher with classroom management access",
-            },
-            {
-              role: "admin",
-              permissions: ["manage_branch", "manage_users", "view_reports"],
-              description: "Branch administrator",
-            },
-            {
-              role: "superadmin",
-              permissions: ["full_access"],
-              description: "System administrator with full access",
-            },
+          passingGrade: 50,
+          minimumAttendance: 75,
+          gradingScale: { type: "percentage", gpaScale: 4.0 },
+          gradeBoundaries: [
+            { grade: "A", minScore: 90, maxScore: 100, points: 4.0 },
+            { grade: "B", minScore: 80, maxScore: 89, points: 3.0 },
+            { grade: "C", minScore: 70, maxScore: 79, points: 2.0 },
+            { grade: "D", minScore: 60, maxScore: 69, points: 1.0 },
+            { grade: "F", minScore: 0, maxScore: 59, points: 0.0 },
           ],
-          passwordPolicies: {
-            minLength: 8,
-            requireUppercase: true,
-            requireLowercase: true,
-            requireNumbers: true,
-            requireSymbols: false,
-            expiryDays: 90,
-            preventReuse: 5,
-          },
-          userRegistration: {
-            autoApproval: false,
-            requiredFields: ["name", "email", "phone"],
-            emailVerification: true,
-            defaultRole: "student",
-          },
-          sessionManagement: {
-            timeoutMinutes: 60,
-            maxConcurrentSessions: 3,
-            rememberMeDays: 30,
-          },
         },
-        communicationSettings: {
-          emailConfiguration: {
-            smtpHost: "",
-            smtpPort: 587,
-            smtpUsername: "",
-            smtpPassword: "",
-            encryption: "tls",
-            fromEmail: "",
-            fromName: "",
-            templates: [],
-          },
-          smsSettings: {
-            gateway: "",
-            apiKey: "",
-            senderId: "",
-            enabled: false,
-            templates: [],
-          },
-          notificationPreferences: {
-            events: [
-              {
-                event: "student_enrolled",
-                description: "Student enrollment",
-                enabled: true,
-                channels: ["email"],
-              },
-              {
-                event: "fee_payment",
-                description: "Fee payment received",
-                enabled: true,
-                channels: ["email", "sms"],
-              },
-              {
-                event: "attendance_marked",
-                description: "Attendance marked",
-                enabled: false,
-                channels: ["email"],
-              },
-            ],
-            defaultChannels: ["email"],
-          },
-          announcementSettings: {
-            defaultRecipients: ["all_users"],
-            requireApproval: true,
-            approvers: [],
-            autoPublish: false,
-          },
+        contactInformation: {
+          principalName: "",
+          principalEmail: "",
+          principalPhone: "",
+          admissionsEmail: "",
+          admissionsPhone: "",
+          supportEmail: "",
+          supportPhone: "",
         },
-        integrationSettings: {
-          thirdPartyServices: [
-            { service: "google_classroom", enabled: false },
-            { service: "zoom", enabled: false },
-            { service: "microsoft_teams", enabled: false },
-          ],
-          apiSettings: {
-            enabled: true,
-            rateLimit: 1000,
-            allowedOrigins: ["localhost"],
-            apiKeys: [],
-          },
-          exportFormats: [
-            { format: "pdf", enabled: true },
-            { format: "excel", enabled: true },
-            { format: "csv", enabled: true },
-          ],
-          mobileAppSettings: {
-            pushNotifications: true,
-            appVersion: "1.0.0",
-            forceUpdate: false,
-            maintenanceMode: false,
-          },
-        },
-        emergencyCompliance: {
-          emergencyContacts: [],
+        systemSettings: {
           maintenanceMode: {
             enabled: false,
-            message: "System under maintenance. Please check back later.",
-            allowedRoles: ["superadmin"],
+            message:
+              "System is currently under maintenance. Please check back later.",
           },
-          dataExportSettings: {
-            allowStudentExport: false,
-            exportFormats: ["pdf", "csv"],
-            retentionDays: 90,
-            requireApproval: true,
-          },
+          allowRegistration: false,
+          requireEmailVerification: true,
+          sessionTimeout: 60,
+          maxLoginAttempts: 5,
+          passwordMinLength: 8,
+        },
+        notificationSettings: {
+          emailNotifications: true,
+          smsNotifications: false,
+          feeReminders: true,
+          examReminders: true,
+          attendanceAlerts: true,
+          systemUpdates: true,
         },
       });
 
@@ -239,6 +117,9 @@ const updateSchoolInformation = async (req, res) => {
       { new: true, upsert: true }
     );
 
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
+
     res.json({
       success: true,
       data: settings.schoolInformation,
@@ -253,14 +134,14 @@ const updateSchoolInformation = async (req, res) => {
   }
 };
 
-// Update academic calendar
-const updateAcademicCalendar = async (req, res) => {
+// Update academic year
+const updateAcademicYear = async (req, res) => {
   try {
     const settings = await GlobalSettings.findOneAndUpdate(
       {},
       {
         $set: {
-          academicCalendar: req.body,
+          academicYear: req.body,
           lastUpdated: new Date(),
           updatedBy: req.user.id,
         },
@@ -268,15 +149,18 @@ const updateAcademicCalendar = async (req, res) => {
       { new: true, upsert: true }
     );
 
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
+
     res.json({
       success: true,
-      data: settings.academicCalendar,
+      data: settings.academicYear,
     });
   } catch (error) {
-    console.error("Error updating academic calendar:", error);
+    console.error("Error updating academic year:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to update academic calendar",
+      message: "Failed to update academic year",
       error: error.message,
     });
   }
@@ -296,6 +180,9 @@ const updateContactInformation = async (req, res) => {
       },
       { new: true, upsert: true }
     );
+
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
 
     res.json({
       success: true,
@@ -326,6 +213,9 @@ const updateFinancialSettings = async (req, res) => {
       { new: true, upsert: true }
     );
 
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
+
     res.json({
       success: true,
       data: settings.financialSettings,
@@ -355,6 +245,9 @@ const updateAcademicConfiguration = async (req, res) => {
       { new: true, upsert: true }
     );
 
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
+
     res.json({
       success: true,
       data: settings.academicConfiguration,
@@ -369,14 +262,14 @@ const updateAcademicConfiguration = async (req, res) => {
   }
 };
 
-// Update user role settings
-const updateUserRoleSettings = async (req, res) => {
+// Update system settings
+const updateSystemSettings = async (req, res) => {
   try {
     const settings = await GlobalSettings.findOneAndUpdate(
       {},
       {
         $set: {
-          userRoleSettings: req.body,
+          systemSettings: req.body,
           lastUpdated: new Date(),
           updatedBy: req.user.id,
         },
@@ -384,28 +277,31 @@ const updateUserRoleSettings = async (req, res) => {
       { new: true, upsert: true }
     );
 
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
+
     res.json({
       success: true,
-      data: settings.userRoleSettings,
+      data: settings.systemSettings,
     });
   } catch (error) {
-    console.error("Error updating user role settings:", error);
+    console.error("Error updating system settings:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to update user role settings",
+      message: "Failed to update system settings",
       error: error.message,
     });
   }
 };
 
-// Update communication settings
-const updateCommunicationSettings = async (req, res) => {
+// Update notification settings
+const updateNotificationSettings = async (req, res) => {
   try {
     const settings = await GlobalSettings.findOneAndUpdate(
       {},
       {
         $set: {
-          communicationSettings: req.body,
+          notificationSettings: req.body,
           lastUpdated: new Date(),
           updatedBy: req.user.id,
         },
@@ -413,73 +309,18 @@ const updateCommunicationSettings = async (req, res) => {
       { new: true, upsert: true }
     );
 
-    res.json({
-      success: true,
-      data: settings.communicationSettings,
-    });
-  } catch (error) {
-    console.error("Error updating communication settings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update communication settings",
-      error: error.message,
-    });
-  }
-};
-
-// Update integration settings
-const updateIntegrationSettings = async (req, res) => {
-  try {
-    const settings = await GlobalSettings.findOneAndUpdate(
-      {},
-      {
-        $set: {
-          integrationSettings: req.body,
-          lastUpdated: new Date(),
-          updatedBy: req.user.id,
-        },
-      },
-      { new: true, upsert: true }
-    );
+    // Clear cache to ensure fresh data
+    clearSettingsCache();
 
     res.json({
       success: true,
-      data: settings.integrationSettings,
+      data: settings.notificationSettings,
     });
   } catch (error) {
-    console.error("Error updating integration settings:", error);
+    console.error("Error updating notification settings:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to update integration settings",
-      error: error.message,
-    });
-  }
-};
-
-// Update emergency compliance settings
-const updateEmergencyCompliance = async (req, res) => {
-  try {
-    const settings = await GlobalSettings.findOneAndUpdate(
-      {},
-      {
-        $set: {
-          emergencyCompliance: req.body,
-          lastUpdated: new Date(),
-          updatedBy: req.user.id,
-        },
-      },
-      { new: true, upsert: true }
-    );
-
-    res.json({
-      success: true,
-      data: settings.emergencyCompliance,
-    });
-  } catch (error) {
-    console.error("Error updating emergency compliance settings:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update emergency compliance settings",
+      message: "Failed to update notification settings",
       error: error.message,
     });
   }
@@ -488,12 +329,10 @@ const updateEmergencyCompliance = async (req, res) => {
 module.exports = {
   getGlobalSettings,
   updateSchoolInformation,
-  updateAcademicCalendar,
+  updateAcademicYear,
   updateContactInformation,
   updateFinancialSettings,
   updateAcademicConfiguration,
-  updateUserRoleSettings,
-  updateCommunicationSettings,
-  updateIntegrationSettings,
-  updateEmergencyCompliance,
+  updateSystemSettings,
+  updateNotificationSettings,
 };

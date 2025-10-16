@@ -657,10 +657,530 @@ const getCoursesAnalytics = async (req, res) => {
   }
 };
 
+/**
+ * Get overview analytics for teacher dashboard
+ * GET /api/elearning/analytics/overview
+ */
+const getOverviewAnalytics = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const branchId = req.user.branchId;
+
+    // Get total students enrolled in teacher's courses
+    const totalStudents = await Enrollment.countDocuments({
+      courseId: {
+        $in: await ECourse.find({
+          instructor: teacherId,
+          branchId: branchId,
+        }).distinct("_id"),
+      },
+      status: { $in: ["active", "approved", "completed"] },
+    });
+
+    // Get active courses count
+    const activeCourses = await ECourse.countDocuments({
+      instructor: teacherId,
+      branchId: branchId,
+      status: "published",
+    });
+
+    // Calculate average completion rate
+    const completionStats = await Enrollment.aggregate([
+      {
+        $match: {
+          courseId: {
+            $in: await ECourse.find({
+              instructor: teacherId,
+              branchId: branchId,
+            }).distinct("_id"),
+          },
+          status: { $in: ["active", "approved", "completed"] },
+        },
+      },
+      {
+        $group: {
+          _id: "$courseId",
+          totalEnrolled: { $sum: 1 },
+          completed: {
+            $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalEnrolled: { $sum: "$totalEnrolled" },
+          totalCompleted: { $sum: "$completed" },
+        },
+      },
+    ]);
+
+    const averageCompletionRate =
+      completionStats.length > 0
+        ? Math.round(
+            (completionStats[0].totalCompleted /
+              completionStats[0].totalEnrolled) *
+              100
+          )
+        : 0;
+
+    // Calculate average session duration from learning progress
+    const sessionStats = await LearningProgress.aggregate([
+      {
+        $match: {
+          courseId: {
+            $in: await ECourse.find({
+              instructor: teacherId,
+              branchId: branchId,
+            }).distinct("_id"),
+          },
+        },
+      },
+      {
+        $unwind: "$moduleProgress",
+      },
+      {
+        $group: {
+          _id: null,
+          totalTimeSpent: { $sum: "$moduleProgress.timeSpent" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const averageSessionDuration =
+      sessionStats.length > 0
+        ? Math.round(sessionStats[0].totalTimeSpent / sessionStats[0].count)
+        : 0;
+
+    // For now, set growth metrics to 0 (would need historical data)
+    const studentGrowth = 0;
+    const courseGrowth = 0;
+    const completionRateChange = 0;
+    const sessionDurationChange = 0;
+
+    // Calculate at-risk students (low progress)
+    const atRiskStudents = await LearningProgress.countDocuments({
+      courseId: {
+        $in: await ECourse.find({
+          instructor: teacherId,
+          branchId: branchId,
+        }).distinct("_id"),
+      },
+      overallProgress: { $lt: 30 }, // Less than 30% progress
+    });
+
+    const overview = {
+      totalStudents,
+      activeCourses,
+      averageCompletionRate,
+      averageSessionDuration,
+      studentGrowth,
+      courseGrowth,
+      completionRateChange,
+      sessionDurationChange,
+      atRiskStudents,
+    };
+
+    res.json({ success: true, data: overview });
+  } catch (error) {
+    console.error("Error fetching overview analytics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load overview analytics",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get engagement analytics for teacher dashboard
+ * GET /api/elearning/analytics/engagement
+ */
+const getEngagementAnalytics = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const branchId = req.user.branchId;
+    const { timeRange = "30d" } = req.query;
+
+    // Calculate date range
+    const now = new Date();
+    const startDate = new Date();
+    if (timeRange === "7d") {
+      startDate.setDate(now.getDate() - 7);
+    } else if (timeRange === "30d") {
+      startDate.setDate(now.getDate() - 30);
+    } else if (timeRange === "90d") {
+      startDate.setDate(now.getDate() - 90);
+    } else if (timeRange === "1y") {
+      startDate.setFullYear(now.getFullYear() - 1);
+    }
+
+    // Get course IDs for this teacher
+    const courseIds = await ECourse.find({
+      instructor: teacherId,
+      branchId: branchId,
+    }).distinct("_id");
+
+    // Get daily engagement data
+    const engagementData = await LearningProgress.aggregate([
+      {
+        $match: {
+          courseId: { $in: courseIds },
+          createdAt: { $gte: startDate },
+        },
+      },
+      {
+        $unwind: "$moduleProgress",
+      },
+      {
+        $group: {
+          _id: {
+            date: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$moduleProgress.lastAccessedAt",
+              },
+            },
+          },
+          activeUsers: { $addToSet: "$studentId" },
+          totalInteractions: { $sum: 1 },
+          totalTimeSpent: { $sum: "$moduleProgress.timeSpent" },
+        },
+      },
+      {
+        $project: {
+          date: "$_id.date",
+          activeUsers: { $size: "$activeUsers" },
+          totalInteractions: "$totalInteractions",
+          avgSessionDuration: {
+            $cond: {
+              if: { $gt: ["$activeUsers", 0] },
+              then: { $divide: ["$totalTimeSpent", { $size: "$activeUsers" }] },
+              else: 0,
+            },
+          },
+        },
+      },
+      {
+        $sort: { date: 1 },
+      },
+    ]);
+
+    res.json({ success: true, data: engagementData });
+  } catch (error) {
+    console.error("Error fetching engagement analytics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load engagement analytics",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get progress analytics for teacher dashboard
+ * GET /api/elearning/analytics/progress
+ */
+const getProgressAnalytics = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const branchId = req.user.branchId;
+
+    // Get course IDs for this teacher
+    const courseIds = await ECourse.find({
+      instructor: teacherId,
+      branchId: branchId,
+    }).distinct("_id");
+
+    // Get progress data for each course
+    const progressData = await LearningProgress.aggregate([
+      {
+        $match: {
+          courseId: { $in: courseIds },
+        },
+      },
+      {
+        $lookup: {
+          from: "ecourses",
+          localField: "courseId",
+          foreignField: "_id",
+          as: "course",
+        },
+      },
+      {
+        $unwind: "$course",
+      },
+      {
+        $group: {
+          _id: "$courseId",
+          courseName: { $first: "$course.title" },
+          totalStudents: { $sum: 1 },
+          avgProgress: { $avg: "$overallProgress" },
+          completedStudents: {
+            $sum: {
+              $cond: [{ $gte: ["$overallProgress", 100] }, 1, 0],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          courseId: "$_id",
+          courseName: 1,
+          totalStudents: 1,
+          avgProgress: { $round: ["$avgProgress", 1] },
+          completionRate: {
+            $round: [
+              {
+                $multiply: [
+                  { $divide: ["$completedStudents", "$totalStudents"] },
+                  100,
+                ],
+              },
+              1,
+            ],
+          },
+        },
+      },
+      {
+        $sort: { totalStudents: -1 },
+      },
+    ]);
+
+    res.json({ success: true, data: progressData });
+  } catch (error) {
+    console.error("Error fetching progress analytics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load progress analytics",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get assessment analytics for teacher dashboard
+ * GET /api/elearning/analytics/assessments
+ */
+const getAssessmentAnalytics = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const branchId = req.user.branchId;
+
+    // Get course IDs for this teacher
+    const courseIds = await ECourse.find({
+      instructor: teacherId,
+      branchId: branchId,
+    }).distinct("_id");
+
+    // Get quiz performance data
+    const assessmentData = await QuizAttempt.aggregate([
+      {
+        $match: {
+          courseId: { $in: courseIds },
+        },
+      },
+      {
+        $lookup: {
+          from: "quizzes",
+          localField: "quizId",
+          foreignField: "_id",
+          as: "quiz",
+        },
+      },
+      {
+        $unwind: "$quiz",
+      },
+      {
+        $group: {
+          _id: "$quizId",
+          quizTitle: { $first: "$quiz.title" },
+          totalAttempts: { $sum: 1 },
+          avgScore: { $avg: "$score" },
+          passRate: {
+            $avg: {
+              $cond: [{ $gte: ["$score", 70] }, 1, 0], // Assuming 70% is passing
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          quizId: "$_id",
+          quizTitle: 1,
+          totalAttempts: 1,
+          avgScore: { $round: ["$avgScore", 1] },
+          passRate: { $round: [{ $multiply: ["$passRate", 100] }, 1] },
+        },
+      },
+      {
+        $sort: { totalAttempts: -1 },
+      },
+    ]);
+
+    const analytics = {
+      totalQuizzes: assessmentData.length,
+      averageScore:
+        assessmentData.length > 0
+          ? Math.round(
+              assessmentData.reduce((sum, quiz) => sum + quiz.avgScore, 0) /
+                assessmentData.length
+            )
+          : 0,
+      averagePassRate:
+        assessmentData.length > 0
+          ? Math.round(
+              assessmentData.reduce((sum, quiz) => sum + quiz.passRate, 0) /
+                assessmentData.length
+            )
+          : 0,
+      quizPerformance: assessmentData,
+    };
+
+    res.json({ success: true, data: analytics });
+  } catch (error) {
+    console.error("Error fetching assessment analytics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load assessment analytics",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Get content analytics for teacher dashboard
+ * GET /api/elearning/analytics/content
+ */
+const getContentAnalytics = async (req, res) => {
+  try {
+    const teacherId = req.user._id;
+    const branchId = req.user.branchId;
+
+    // Get course IDs for this teacher
+    const courseIds = await ECourse.find({
+      instructor: teacherId,
+      branchId: branchId,
+    }).distinct("_id");
+
+    // Get content engagement data
+    const contentData = await LearningProgress.aggregate([
+      {
+        $match: {
+          courseId: { $in: courseIds },
+        },
+      },
+      {
+        $unwind: "$moduleProgress",
+      },
+      {
+        $unwind: "$moduleProgress.contentProgress",
+      },
+      {
+        $lookup: {
+          from: "coursecontents",
+          localField: "moduleProgress.contentProgress.contentId",
+          foreignField: "_id",
+          as: "content",
+        },
+      },
+      {
+        $unwind: "$content",
+      },
+      {
+        $group: {
+          _id: {
+            contentId: "$moduleProgress.contentProgress.contentId",
+            type: "$content.type",
+          },
+          title: { $first: "$content.title" },
+          views: { $sum: 1 },
+          completions: {
+            $sum: {
+              $cond: [
+                {
+                  $eq: ["$moduleProgress.contentProgress.status", "completed"],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          avgTimeSpent: { $avg: "$moduleProgress.contentProgress.timeSpent" },
+        },
+      },
+      {
+        $project: {
+          contentId: "$_id.contentId",
+          title: 1,
+          type: "$_id.type",
+          views: 1,
+          completions: 1,
+          completionRate: {
+            $round: [
+              {
+                $multiply: [
+                  {
+                    $cond: [
+                      { $gt: ["$views", 0] },
+                      { $divide: ["$completions", "$views"] },
+                      0,
+                    ],
+                  },
+                  100,
+                ],
+              },
+              1,
+            ],
+          },
+          avgTimeSpent: { $round: ["$avgTimeSpent", 0] },
+        },
+      },
+      {
+        $sort: { views: -1 },
+      },
+      {
+        $limit: 20, // Top 20 content items
+      },
+    ]);
+
+    const analytics = {
+      totalContentItems: contentData.length,
+      mostViewedContent: contentData.slice(0, 5),
+      contentTypeBreakdown: contentData.reduce((acc, item) => {
+        acc[item.type] = (acc[item.type] || 0) + 1;
+        return acc;
+      }, {}),
+      averageCompletionRate:
+        contentData.length > 0
+          ? Math.round(
+              contentData.reduce((sum, item) => sum + item.completionRate, 0) /
+                contentData.length
+            )
+          : 0,
+    };
+
+    res.json({ success: true, data: analytics });
+  } catch (error) {
+    console.error("Error fetching content analytics:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load content analytics",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getStudentProgressAnalytics,
   getCourseCompletionAnalytics,
   getQuizPerformanceAnalytics,
   getAnalyticsDashboard,
   getCoursesAnalytics,
+  getOverviewAnalytics,
+  getEngagementAnalytics,
+  getProgressAnalytics,
+  getAssessmentAnalytics,
+  getContentAnalytics,
 };

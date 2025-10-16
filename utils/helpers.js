@@ -150,6 +150,39 @@ const calculateGrade = (percentage) => {
   if (percentage >= 60) return "D";
   return "F";
 };
+// Generate admission number in format ATIAM/BRANCH_ABBR/XXXX/YYYY
+const generateAdmissionNumber = async (branch) => {
+  const currentYear = new Date().getFullYear();
+  const prefix = `ATIAM/${branch.abbreviation}/`;
+  const yearSuffix = `/${currentYear}`;
+
+  // Find the highest number for this branch and year
+  const Student = require("../models/Student");
+  const regex = new RegExp(`^${prefix}(\\d{4})${yearSuffix}$`);
+  const students = await Student.find({
+    branchId: branch._id,
+    admissionNumber: { $regex: regex },
+  })
+    .sort({ admissionNumber: -1 })
+    .limit(1);
+
+  let nextNumber = 1;
+  if (students.length > 0) {
+    const match = students[0].admissionNumber.match(regex);
+    if (match) {
+      nextNumber = parseInt(match[1]) + 1;
+    }
+  }
+
+  if (nextNumber > 9999) {
+    throw new Error(
+      "Maximum admission numbers reached for this branch and year"
+    );
+  }
+
+  const numberStr = nextNumber.toString().padStart(4, "0");
+  return `${prefix}${numberStr}${yearSuffix}`;
+};
 
 module.exports = {
   generateSecret,
@@ -166,4 +199,5 @@ module.exports = {
   getCurrentAcademicYear,
   maskSensitiveData,
   calculateGrade,
+  generateAdmissionNumber,
 };
