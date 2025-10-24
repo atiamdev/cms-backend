@@ -2525,7 +2525,7 @@ router.post(
     body("title").notEmpty().withMessage("Title is required"),
     body("description").notEmpty().withMessage("Description is required"),
     body("type")
-      .isIn(["video", "document", "image", "link", "text"])
+      .isIn(["video", "document", "image", "link", "text", "mixed"])
       .withMessage("Invalid content type"),
     body("estimatedDuration")
       .isInt({ min: 1 })
@@ -2564,6 +2564,9 @@ router.post(
         content,
         mediaUrl,
         externalUrl,
+        mediaUrls,
+        externalUrls,
+        contentItems,
         estimatedDuration,
         tags,
         visibility,
@@ -2606,6 +2609,16 @@ router.post(
         typeof tags === "string" ? JSON.parse(tags) : tags || [];
       const parsedMaterials =
         typeof materials === "string" ? JSON.parse(materials) : materials || [];
+      const parsedMediaUrls =
+        typeof mediaUrls === "string" ? JSON.parse(mediaUrls) : mediaUrls || [];
+      const parsedExternalUrls =
+        typeof externalUrls === "string"
+          ? JSON.parse(externalUrls)
+          : externalUrls || [];
+      const parsedContentItems =
+        typeof contentItems === "string"
+          ? JSON.parse(contentItems)
+          : contentItems || [];
 
       // Handle file uploads
       const uploadedFiles = req.files || [];
@@ -2694,6 +2707,17 @@ router.post(
         contentData.externalLink = externalUrl;
       } else if (type === "text" && content) {
         contentData.htmlContent = content;
+      } else if (type === "mixed") {
+        // Handle mixed content with multiple items
+        contentData.mediaUrls = Array.isArray(parsedMediaUrls)
+          ? parsedMediaUrls
+          : [];
+        contentData.externalUrls = Array.isArray(parsedExternalUrls)
+          ? parsedExternalUrls
+          : [];
+        contentData.contentItems = Array.isArray(parsedContentItems)
+          ? parsedContentItems
+          : [];
       }
 
       // Create materials from uploaded files
@@ -2764,6 +2788,9 @@ router.post(
           mediaUrl:
             savedContent.content.playbackUrl || savedContent.content.fileUrl,
           externalUrl: savedContent.content.externalLink,
+          mediaUrls: savedContent.content.mediaUrls || [],
+          externalUrls: savedContent.content.externalUrls || [],
+          contentItems: savedContent.content.contentItems || [],
           videoType: savedContent.content.videoType || null,
           estimatedDuration: savedContent.estimatedDuration,
           tags: savedContent.tags,
@@ -2842,6 +2869,21 @@ router.put(
       }
       if (updateData.materials && typeof updateData.materials === "string") {
         updateData.materials = JSON.parse(updateData.materials);
+      }
+      if (updateData.mediaUrls && typeof updateData.mediaUrls === "string") {
+        updateData.mediaUrls = JSON.parse(updateData.mediaUrls);
+      }
+      if (
+        updateData.externalUrls &&
+        typeof updateData.externalUrls === "string"
+      ) {
+        updateData.externalUrls = JSON.parse(updateData.externalUrls);
+      }
+      if (
+        updateData.contentItems &&
+        typeof updateData.contentItems === "string"
+      ) {
+        updateData.contentItems = JSON.parse(updateData.contentItems);
       }
 
       // Find existing content
@@ -2933,6 +2975,17 @@ router.put(
         contentData.externalLink = updateData.externalUrl;
       } else if (updateData.type === "text" && updateData.content) {
         contentData.htmlContent = updateData.content;
+      } else if (updateData.type === "mixed") {
+        // Handle mixed content with multiple items
+        contentData.mediaUrls = Array.isArray(updateData.mediaUrls)
+          ? updateData.mediaUrls
+          : [];
+        contentData.externalUrls = Array.isArray(updateData.externalUrls)
+          ? updateData.externalUrls
+          : [];
+        contentData.contentItems = Array.isArray(updateData.contentItems)
+          ? updateData.contentItems
+          : [];
       }
 
       // Create update payload
@@ -2976,6 +3029,9 @@ router.put(
         mediaUrl:
           updatedContent.content.playbackUrl || updatedContent.content.fileUrl,
         externalUrl: updatedContent.content.externalLink,
+        mediaUrls: updatedContent.content.mediaUrls || [],
+        externalUrls: updatedContent.content.externalUrls || [],
+        contentItems: updatedContent.content.contentItems || [],
         estimatedDuration: updatedContent.estimatedDuration,
         tags: updatedContent.tags,
         visibility: updatedContent.visibility,
@@ -3133,6 +3189,10 @@ router.get(
         content: content.content.htmlContent || "",
         mediaUrl: mediaUrl,
         externalUrl: content.content.externalLink,
+        // Add new array fields for mixed content support
+        mediaUrls: content.content.mediaUrls || [],
+        externalUrls: content.content.externalUrls || [],
+        contentItems: content.content.contentItems || [],
         videoType: videoType,
         estimatedDuration: content.estimatedDuration,
         tags: content.tags,
@@ -3217,6 +3277,7 @@ router.put(
   protect,
   authorize("teacher", "branch-admin", "super-admin"),
   branchAuth,
+  upload.array("files", 10), // Allow up to 10 files for updates
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -3251,6 +3312,87 @@ router.put(
           message: "Access denied",
         });
       }
+
+      // Handle file uploads for new materials
+      const uploadedFiles = req.files || [];
+      let newMaterials = [];
+
+      if (uploadedFiles && uploadedFiles.length > 0) {
+        console.log(
+          `Processing ${uploadedFiles.length} uploaded files for content update`
+        );
+
+        for (const file of uploadedFiles) {
+          try {
+            let uploadResult;
+
+            if (file.mimetype.startsWith("video/")) {
+              // Upload to Cloudflare Stream
+              uploadResult = await cloudflareService.uploadToStream(
+                file.buffer,
+                {
+                  filename: file.originalname,
+                  metadata: {
+                    title: existingContent.title,
+                    courseId: existingContent.courseId,
+                    contentId: existingContent._id,
+                    uploadedBy: req.user._id,
+                  },
+                }
+              );
+
+              newMaterials.push({
+                id: `video_${Date.now()}_${Math.random()}`,
+                name: file.originalname,
+                type: "video",
+                fileUrl: uploadResult.playbackUrl,
+                fileName: file.originalname,
+                fileSize: file.size,
+                mimeType: file.mimetype,
+                streamId: uploadResult.uid,
+                thumbnailUrl: uploadResult.thumbnail,
+                createdAt: new Date(),
+              });
+            } else {
+              // Upload to Cloudflare R2
+              uploadResult = await cloudflareService.uploadFile(file.buffer, {
+                filename: file.originalname,
+                contentType: file.mimetype,
+                folder: `course-content/${existingContent.courseId}`,
+              });
+
+              newMaterials.push({
+                id: `file_${Date.now()}_${Math.random()}`,
+                name: file.originalname,
+                type: file.mimetype.startsWith("image/")
+                  ? "image"
+                  : file.mimetype.startsWith("audio/")
+                  ? "audio"
+                  : "document",
+                fileUrl: uploadResult.url,
+                fileName: file.originalname,
+                fileSize: file.size,
+                mimeType: file.mimetype,
+                createdAt: new Date(),
+              });
+            }
+
+            console.log(`Successfully uploaded file: ${file.originalname}`);
+          } catch (error) {
+            console.error(`Failed to upload file ${file.originalname}:`, error);
+            return res.status(500).json({
+              success: false,
+              message: `Failed to upload file: ${file.originalname}`,
+              error: error.message,
+            });
+          }
+        }
+      }
+
+      // Combine existing materials with new uploaded materials
+      const existingMaterials =
+        updateData.materials || existingContent.materials || [];
+      const allMaterials = [...existingMaterials, ...newMaterials];
 
       // Update content data structure based on type
       const contentData = existingContent.content;
@@ -3368,7 +3510,7 @@ router.put(
           description: updateData.description || existingContent.description,
           type: updateData.type || existingContent.type,
           content: contentData,
-          materials: updateData.materials || existingContent.materials,
+          materials: allMaterials,
           tags: updateData.tags || existingContent.tags,
           visibility: updateData.visibility || existingContent.visibility,
           estimatedDuration: updateData.estimatedDuration
@@ -3657,6 +3799,105 @@ router.delete(
       res.status(500).json({
         success: false,
         message: "Error deleting content",
+        error: error.message,
+      });
+    }
+  }
+);
+
+// Delete individual material from content
+router.delete(
+  "/content/:contentId/materials/:materialId",
+  protect,
+  authorize("teacher", "branch-admin", "super-admin"),
+  branchAuth,
+  async (req, res) => {
+    try {
+      const { contentId, materialId } = req.params;
+
+      // Find the content
+      const content = await CourseContent.findById(contentId);
+      if (!content) {
+        return res.status(404).json({
+          success: false,
+          message: "Content not found",
+        });
+      }
+
+      // Check if user has permission to modify this content
+      if (
+        content.createdBy.toString() !== req.user._id.toString() &&
+        !req.user.roles.includes("branch-admin") &&
+        !req.user.roles.includes("super-admin")
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied",
+        });
+      }
+
+      // Find the material to delete
+      const materialIndex = content.materials.findIndex(
+        (material) =>
+          material.id === materialId || material._id?.toString() === materialId
+      );
+
+      if (materialIndex === -1) {
+        return res.status(404).json({
+          success: false,
+          message: "Material not found",
+        });
+      }
+
+      const material = content.materials[materialIndex];
+
+      // Delete the file from Cloudflare if it exists
+      const fileUrlToDelete = material.fileUrl || material.url;
+      console.log("Material to delete:", {
+        id: material.id,
+        type: material.type,
+        fileUrl: material.fileUrl,
+        url: material.url,
+        fileUrlToDelete,
+      });
+
+      if (fileUrlToDelete && material.type !== "link") {
+        try {
+          console.log(
+            `Attempting to delete from Cloudflare: ${fileUrlToDelete}`
+          );
+          await cloudflareService.deleteFile(fileUrlToDelete);
+          console.log(
+            `Deleted material file from Cloudflare R2: ${fileUrlToDelete}`
+          );
+        } catch (error) {
+          console.error(
+            `Failed to delete material file ${fileUrlToDelete}:`,
+            error
+          );
+          // Don't fail the operation if file deletion fails
+        }
+      } else {
+        console.log(
+          "Skipping Cloudflare deletion - no file URL or it's a link"
+        );
+      }
+
+      // Remove the material from the array
+      content.materials.splice(materialIndex, 1);
+
+      // Save the updated content
+      await content.save();
+
+      res.json({
+        success: true,
+        message: "Material deleted successfully",
+      });
+    } catch (error) {
+      console.error("Error deleting material:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error deleting material",
         error: error.message,
       });
     }

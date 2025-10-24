@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const Student = require("../models/Student");
 const User = require("../models/User");
 const Branch = require("../models/Branch");
+const Class = require("../models/Class");
+const CloudflareService = require("../services/cloudflareService");
 const { generateId, generateAdmissionNumber } = require("../utils/helpers");
 const {
   canAccessBranchResource,
@@ -722,6 +724,24 @@ const deleteStudent = async (req, res) => {
         success: false,
         message: "Student not found",
       });
+    }
+
+    // Remove student from all classes where they are enrolled
+    await Class.updateMany(
+      { branchId: req.branchId, "students.studentId": id },
+      { $pull: { students: { studentId: id } } }
+    );
+
+    // Delete student photo from Cloudflare if it exists
+    if (student.photoUrl) {
+      const cloudflareService = new CloudflareService();
+      try {
+        await cloudflareService.deleteFile(student.photoUrl);
+        console.log("Student photo deleted from Cloudflare:", student.photoUrl);
+      } catch (photoError) {
+        console.error("Error deleting student photo:", photoError);
+        // Don't fail the entire deletion if photo deletion fails
+      }
     }
 
     // Delete user account as well

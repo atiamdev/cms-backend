@@ -34,6 +34,7 @@ const CourseContentSchema = new mongoose.Schema(
         "assignment",
         "live_session",
         "interactive",
+        "mixed",
       ],
       required: true,
     },
@@ -65,6 +66,40 @@ const CourseContentSchema = new mongoose.Schema(
       // Common content
       htmlContent: String, // Rich text content
       externalLink: String, // External resource link
+
+      // For mixed content type - arrays of multiple content items
+      mediaUrls: [String], // Array of media URLs (videos/audio)
+      externalUrls: [String], // Array of external links
+      contentItems: [
+        {
+          id: String,
+          type: {
+            type: String,
+            enum: [
+              "video",
+              "document",
+              "image",
+              "audio",
+              "text",
+              "link",
+              "interactive",
+            ],
+            required: true,
+          },
+          title: String,
+          content: String, // For text content
+          mediaUrl: String, // For video/audio
+          externalUrl: String, // For external links
+          files: [
+            {
+              fileName: String,
+              fileSize: Number,
+              mimeType: String,
+              fileUrl: String,
+            },
+          ],
+        },
+      ],
     },
     // Additional materials and resources
     materials: [
@@ -73,7 +108,7 @@ const CourseContentSchema = new mongoose.Schema(
         name: String,
         type: {
           type: String,
-          enum: ["file", "link"],
+          enum: ["file", "link", "image", "video", "audio", "document"],
           required: true,
         },
         description: String,

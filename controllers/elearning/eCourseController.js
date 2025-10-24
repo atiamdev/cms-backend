@@ -266,6 +266,10 @@ class ECourseController {
                     item.content.htmlContent || item.content.externalLink || "",
                   mediaUrl: item.content.playbackUrl || item.content.fileUrl,
                   externalUrl: item.content.externalLink,
+                  // Add new array fields for mixed content support
+                  mediaUrls: item.content.mediaUrls || [],
+                  externalUrls: item.content.externalUrls || [],
+                  contentItems: item.content.contentItems || [],
                   videoType: item.content.videoType,
                   estimatedDuration: item.estimatedDuration,
                   materials: item.materials,
@@ -323,6 +327,10 @@ class ECourseController {
                     "",
                   videoUrl,
                   fileUrl: item.content?.fileUrl,
+                  // Add mixed content support
+                  mediaUrls: item.content?.mediaUrls || [],
+                  externalUrls: item.content?.externalUrls || [],
+                  contentItems: item.content?.contentItems || [],
                   attachments: item.materials || [],
                   isCompleted,
                   isLocked: false, // TODO: implement locking logic
