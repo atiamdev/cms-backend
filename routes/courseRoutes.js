@@ -446,9 +446,30 @@ router.get(
         });
       }
 
+      // Return materials organized by modules, with a default "General" module for unmigrated materials
+      const modules = course.resources.modules || [];
+      const legacyMaterials = course.resources.materials || [];
+
+      // If there are legacy materials and no modules, create a default module
+      let organizedModules = [...modules];
+      if (legacyMaterials.length > 0 && modules.length === 0) {
+        organizedModules = [
+          {
+            _id: "default",
+            name: "General",
+            description: "Default module for existing materials",
+            order: 0,
+            materials: legacyMaterials,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        ];
+      }
+
       res.json({
         success: true,
-        materials: course.resources.materials || [],
+        modules: organizedModules,
+        materials: legacyMaterials, // Keep for backward compatibility
       });
     } catch (error) {
       console.error("Get course materials error:", error);
@@ -623,6 +644,441 @@ router.delete(
       res.status(500).json({
         success: false,
         message: "Server error while deleting course material",
+      });
+    }
+  }
+);
+
+// Course Modules Routes
+router.get(
+  "/:id/modules",
+  protect,
+  branchAuth,
+  filterByBranch,
+  async (req, res) => {
+    try {
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        modules: course.resources.modules || [],
+      });
+    } catch (error) {
+      console.error("Get course modules error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while fetching course modules",
+      });
+    }
+  }
+);
+
+router.post(
+  "/:id/modules",
+  protect,
+  branchAuth,
+  validateBranchOwnership(Course),
+  async (req, res) => {
+    try {
+      const { name, description, order } = req.body;
+
+      if (!name) {
+        return res.status(400).json({
+          success: false,
+          message: "Module name is required",
+        });
+      }
+
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const newModule = {
+        name,
+        description: description || "",
+        order: order || course.resources.modules?.length || 0,
+        materials: [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      course.resources.modules.push(newModule);
+      await course.save();
+
+      res.status(201).json({
+        success: true,
+        message: "Module created successfully",
+        module: newModule,
+      });
+    } catch (error) {
+      console.error("Create course module error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while creating course module",
+      });
+    }
+  }
+);
+
+router.put(
+  "/:id/modules/:moduleId",
+  protect,
+  branchAuth,
+  validateBranchOwnership(Course),
+  async (req, res) => {
+    try {
+      const { name, description, order } = req.body;
+
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const module = course.resources.modules.id(req.params.moduleId);
+
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
+
+      if (name) module.name = name;
+      if (description !== undefined) module.description = description;
+      if (order !== undefined) module.order = order;
+      module.updatedAt = new Date();
+
+      await course.save();
+
+      res.json({
+        success: true,
+        message: "Module updated successfully",
+        module,
+      });
+    } catch (error) {
+      console.error("Update course module error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while updating course module",
+      });
+    }
+  }
+);
+
+router.delete(
+  "/:id/modules/:moduleId",
+  protect,
+  branchAuth,
+  validateBranchOwnership(Course),
+  async (req, res) => {
+    try {
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const module = course.resources.modules.id(req.params.moduleId);
+
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
+
+      // Delete all files from materials in this module
+      for (const material of module.materials) {
+        if (material.fileUrl) {
+          try {
+            await cloudflareService.deleteFile(material.fileUrl);
+          } catch (deleteError) {
+            console.error("Error deleting file from R2:", deleteError);
+          }
+        }
+      }
+
+      course.resources.modules.pull(req.params.moduleId);
+      await course.save();
+
+      res.json({
+        success: true,
+        message: "Module deleted successfully",
+      });
+    } catch (error) {
+      console.error("Delete course module error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while deleting course module",
+      });
+    }
+  }
+);
+
+// Module Materials Routes
+router.get(
+  "/:id/modules/:moduleId/materials",
+  protect,
+  branchAuth,
+  filterByBranch,
+  async (req, res) => {
+    try {
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const module = course.resources.modules.id(req.params.moduleId);
+
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        materials: module.materials || [],
+      });
+    } catch (error) {
+      console.error("Get module materials error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while fetching module materials",
+      });
+    }
+  }
+);
+
+router.post(
+  "/:id/modules/:moduleId/materials",
+  protect,
+  branchAuth,
+  validateBranchOwnership(Course),
+  async (req, res) => {
+    try {
+      const { title, description, type, fileUrl, content } = req.body;
+
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const module = course.resources.modules.id(req.params.moduleId);
+
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
+
+      const newMaterial = {
+        title,
+        description,
+        type,
+        fileUrl,
+        content,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      module.materials.push(newMaterial);
+      await course.save();
+
+      res.status(201).json({
+        success: true,
+        message: "Material added to module successfully",
+        material: newMaterial,
+      });
+    } catch (error) {
+      console.error("Add module material error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while adding module material",
+      });
+    }
+  }
+);
+
+router.put(
+  "/:id/modules/:moduleId/materials/:materialId",
+  protect,
+  branchAuth,
+  validateBranchOwnership(Course),
+  async (req, res) => {
+    try {
+      const { title, description, type, fileUrl, content } = req.body;
+
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const module = course.resources.modules.id(req.params.moduleId);
+
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
+
+      const material = module.materials.id(req.params.materialId);
+
+      if (!material) {
+        return res.status(404).json({
+          success: false,
+          message: "Material not found",
+        });
+      }
+
+      // Delete old file from R2 if fileUrl is changing and old file exists
+      if (material.fileUrl && fileUrl !== material.fileUrl) {
+        try {
+          await cloudflareService.deleteFile(material.fileUrl);
+        } catch (deleteError) {
+          console.error("Error deleting old file from R2:", deleteError);
+          // Continue with update even if old file deletion fails
+        }
+      }
+
+      material.title = title;
+      material.description = description;
+      material.type = type;
+      material.fileUrl = fileUrl;
+      material.content = content;
+      material.updatedAt = new Date();
+
+      await course.save();
+
+      res.json({
+        success: true,
+        message: "Material updated successfully",
+        material,
+      });
+    } catch (error) {
+      console.error("Update module material error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while updating module material",
+      });
+    }
+  }
+);
+
+router.delete(
+  "/:id/modules/:moduleId/materials/:materialId",
+  protect,
+  branchAuth,
+  validateBranchOwnership(Course),
+  async (req, res) => {
+    try {
+      const course = await Course.findOne({
+        _id: req.params.id,
+        branchId: req.branchId,
+      });
+
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      const module = course.resources.modules.id(req.params.moduleId);
+
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
+
+      const material = module.materials.id(req.params.materialId);
+
+      if (!material) {
+        return res.status(404).json({
+          success: false,
+          message: "Material not found",
+        });
+      }
+
+      // Delete file from R2 storage if it exists
+      if (material.fileUrl) {
+        try {
+          await cloudflareService.deleteFile(material.fileUrl);
+        } catch (deleteError) {
+          console.error("Error deleting file from R2:", deleteError);
+          // Continue with database deletion even if R2 deletion fails
+        }
+      }
+
+      module.materials.pull(req.params.materialId);
+      await course.save();
+
+      res.json({
+        success: true,
+        message: "Material deleted successfully",
+      });
+    } catch (error) {
+      console.error("Delete module material error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error while deleting module material",
       });
     }
   }

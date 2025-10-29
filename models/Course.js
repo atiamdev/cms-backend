@@ -65,6 +65,65 @@ const courseSchema = new mongoose.Schema(
           isbn: String,
         },
       ],
+      modules: [
+        {
+          name: {
+            type: String,
+            required: true,
+            trim: true,
+          },
+          description: {
+            type: String,
+            trim: true,
+          },
+          order: {
+            type: Number,
+            default: 0,
+          },
+          materials: [
+            {
+              title: {
+                type: String,
+                required: true,
+                trim: true,
+              },
+              description: {
+                type: String,
+                trim: true,
+              },
+              type: {
+                type: String,
+                enum: ["document", "video", "image", "link", "text"],
+                required: true,
+              },
+              fileUrl: {
+                type: String,
+                trim: true,
+              },
+              content: {
+                type: String, // For text-type materials
+                trim: true,
+              },
+              createdAt: {
+                type: Date,
+                default: Date.now,
+              },
+              updatedAt: {
+                type: Date,
+                default: Date.now,
+              },
+            },
+          ],
+          createdAt: {
+            type: Date,
+            default: Date.now,
+          },
+          updatedAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      ],
       materials: [
         {
           title: {

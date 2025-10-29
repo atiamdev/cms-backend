@@ -122,6 +122,11 @@ const QuizSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    status: {
+      type: String,
+      enum: ["draft", "published", "archived"],
+      default: "draft",
+    },
     branchId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Branch",

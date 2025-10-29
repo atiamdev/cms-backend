@@ -4,6 +4,8 @@ const {
   getExamsForCourse,
   getTeacherExams,
   updateExam,
+  archiveExam,
+  unarchiveExam,
   deleteExam,
   submitExamGrades,
   getExamGrades,
@@ -23,6 +25,8 @@ router.use(protect);
 router.post("/", authorize("teacher"), createExam);
 router.get("/teacher", authorize("teacher"), getTeacherExams);
 router.put("/:id", authorize("teacher"), updateExam);
+router.put("/:id/archive", authorize("teacher"), archiveExam);
+router.put("/:id/unarchive", authorize("teacher"), unarchiveExam);
 router.delete("/:id", authorize("teacher"), deleteExam);
 router.post("/:examId/grades", authorize("teacher"), submitExamGrades);
 router.get("/:examId/grades", authorize("teacher"), getExamGrades);

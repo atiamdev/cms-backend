@@ -1851,9 +1851,17 @@ router.get(
       // Populate courseId based on courseType for each quiz
       for (let quiz of quizzes) {
         if (quiz.courseType === "ecourse") {
-          await quiz.populate("courseId", "title name");
+          await quiz.populate({
+            path: "courseId",
+            model: "ECourse",
+            select: "title name",
+          });
         } else {
-          await quiz.populate("courseId", "name");
+          await quiz.populate({
+            path: "courseId",
+            model: "Course",
+            select: "name title",
+          });
         }
       }
 

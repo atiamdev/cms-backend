@@ -1933,9 +1933,9 @@ const getStudentCourseMaterials = async (req, res) => {
       });
     }
 
-    // Get the course with materials
+    // Get the course with modules and materials
     const course = await Course.findById(courseId).select(
-      "name code resources.materials"
+      "name code resources.modules resources.materials"
     );
     if (!course) {
       return res.status(404).json({
@@ -1944,14 +1944,36 @@ const getStudentCourseMaterials = async (req, res) => {
       });
     }
 
+    // Handle backward compatibility: organize materials by modules
+    const modules = course.resources?.modules || [];
+    const legacyMaterials = course.resources?.materials || [];
+
+    // If there are legacy materials and no modules, create a default module
+    let organizedModules = [...modules];
+    if (legacyMaterials.length > 0 && modules.length === 0) {
+      organizedModules = [
+        {
+          _id: "default",
+          name: "General",
+          description: "Default module for existing materials",
+          order: 0,
+          materials: legacyMaterials,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      ];
+    }
+
     res.json({
       success: true,
       course: {
         id: course._id,
         name: course.name,
         code: course.code,
-        materials: course.resources.materials || [],
+        modules: organizedModules,
       },
+      modules: organizedModules, // Also include for compatibility
+      materials: legacyMaterials, // Keep for backward compatibility
     });
   } catch (error) {
     console.error("Get student course materials error:", error);

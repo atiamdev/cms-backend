@@ -232,6 +232,134 @@ exports.updateExam = async (req, res) => {
   }
 };
 
+// @desc    Archive exam
+// @route   PUT /api/exams/:id/archive
+// @access  Private (Teacher only)
+exports.archiveExam = async (req, res) => {
+  try {
+    const examId = req.params.id;
+
+    const teacherId = await getTeacherId(req.user._id, req.user.branchId);
+
+    if (!teacherId) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher profile not found",
+      });
+    }
+
+    const exam = await Exam.findById(examId);
+
+    if (!exam) {
+      return res.status(404).json({
+        success: false,
+        message: "Exam not found",
+      });
+    }
+
+    // Check if teacher owns this exam
+    if (exam.teacherId.toString() !== teacherId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to archive this exam",
+      });
+    }
+
+    // Only allow archiving completed exams
+    if (exam.status !== "completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Can only archive completed exams",
+      });
+    }
+
+    const archivedExam = await Exam.findByIdAndUpdate(
+      examId,
+      { status: "archived" },
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).populate("courseId", "name code");
+
+    res.status(200).json({
+      success: true,
+      data: archivedExam,
+      message: "Exam archived successfully",
+    });
+  } catch (error) {
+    console.error("Archive exam error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
+// @desc    Unarchive exam
+// @route   PUT /api/exams/:id/unarchive
+// @access  Private (Teacher only)
+exports.unarchiveExam = async (req, res) => {
+  try {
+    const examId = req.params.id;
+
+    const teacherId = await getTeacherId(req.user._id, req.user.branchId);
+
+    if (!teacherId) {
+      return res.status(404).json({
+        success: false,
+        message: "Teacher profile not found",
+      });
+    }
+
+    const exam = await Exam.findById(examId);
+
+    if (!exam) {
+      return res.status(404).json({
+        success: false,
+        message: "Exam not found",
+      });
+    }
+
+    // Check if teacher owns this exam
+    if (exam.teacherId.toString() !== teacherId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to unarchive this exam",
+      });
+    }
+
+    // Only allow unarchiving archived exams
+    if (exam.status !== "archived") {
+      return res.status(400).json({
+        success: false,
+        message: "Can only unarchive archived exams",
+      });
+    }
+
+    const unarchivedExam = await Exam.findByIdAndUpdate(
+      examId,
+      { status: "completed" },
+      {
+        new: true,
+        runValidators: true,
+      }
+    ).populate("courseId", "name code");
+
+    res.status(200).json({
+      success: true,
+      data: unarchivedExam,
+      message: "Exam unarchived successfully",
+    });
+  } catch (error) {
+    console.error("Unarchive exam error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
+  }
+};
+
 // @desc    Delete exam
 // @route   DELETE /api/exams/:id
 // @access  Private (Teacher only)

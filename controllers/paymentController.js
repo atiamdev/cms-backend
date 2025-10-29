@@ -33,10 +33,13 @@ const getJengaConfig = () => ({
   apiKey: process.env.JENGA_API_KEY,
   callbackUrl: process.env.JENGA_CALLBACK_URL,
   ipnUrl: process.env.JENGA_IPN_URL,
+  accountNumber:
+    process.env.JENGA_ACCOUNT_NUMBER || process.env.JENGA_MERCHANT_CODE,
+  merchantName: process.env.JENGA_MERCHANT_NAME || "CMS School Management",
   baseUrl:
     process.env.JENGA_ENVIRONMENT === "production"
       ? "https://api.finserve.africa"
-      : "https://api.finserve.africa",
+      : "https://uat.finserve.africa",
 });
 
 // Generate M-Pesa access token
@@ -66,7 +69,6 @@ const getMpesaAccessToken = async () => {
   }
 };
 
-// Generate Jenga access token
 const getJengaAccessToken = async () => {
   try {
     const config = getJengaConfig();
@@ -85,6 +87,7 @@ const getJengaAccessToken = async () => {
       }
     );
 
+    console.log("Access token:", response.data.accessToken);
     return response.data.accessToken;
   } catch (error) {
     console.error(
@@ -1024,33 +1027,44 @@ const initiateStudentEquityPayment = async (req, res) => {
 
       await payment.save();
 
-      // Prepare Jenga M-Pesa STK Push request
+      // Prepare Jenga M-Pesa STK Push request according to API documentation
       const stkPushData = {
-        customer: {
-          mobileNumber: formattedPhone,
+        merchant: {
+          accountNumber: config.accountNumber,
           countryCode: "KE",
+          name: config.merchantName,
         },
-        transaction: {
+        payment: {
+          ref: orderReference,
           amount: amount.toString(),
-          currencyCode: "KES",
-          description: `Fee payment for ${student.studentId}`,
-          reference: orderReference,
+          currency: "KES",
+          telco: "Safaricom",
+          mobileNumber: formattedPhone,
           date: new Date().toISOString().split("T")[0], // YYYY-MM-DD format
+          callBackUrl: `${config.callbackUrl}/${payment._id}`,
+          pushType: "USSD",
         },
-        callbackUrl: `${config.callbackUrl}/${payment._id}`,
       };
 
-      console.log("Initiating Jenga M-Pesa STK Push:", stkPushData);
+      // Generate HMAC signature for STK Push according to Jenga documentation
+      // Formula: merchant.accountNumber + payment.ref + payment.mobileNumber + payment.telco + payment.amount + payment.currency
+      const signatureString = `${config.accountNumber}${orderReference}${formattedPhone}${stkPushData.payment.telco}${stkPushData.payment.amount}${stkPushData.payment.currency}`;
+      const signature = crypto
+        .createHmac("sha256", config.consumerSecret)
+        .update(signatureString)
+        .digest("base64");
+
+      console.log("Using Jenga access token for STK push:", accessToken);
+      console.log("STK Push headers:", {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        "Merchant-Code": config.merchantCode,
+        Signature: signature,
+      });
 
       // Make Jenga STK Push request. Try several known paths used in
       // different Jenga/UAT/production deployments until one succeeds.
-      const candidatePaths = [
-        "/api-checkout/mpesa-stk-push/v3.0/init",
-        "/v3-apis/transaction-api/v3.0/remittance/mpesa/stkpush",
-        "/transaction-api/v3.0/remittance/mpesa/stkpush",
-        "/v3-apis/mpesa/stkpush",
-        "/v3-apis/payments/mpesa/stkpush",
-      ];
+      const candidatePaths = ["/v3-apis/payment-api/v3.0/stkussdpush/initiate"];
 
       let stkResponse = null;
       let endpointUsed = null;
@@ -1064,6 +1078,8 @@ const initiateStudentEquityPayment = async (req, res) => {
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
               "Merchant-Code": config.merchantCode,
+              "Api-Key": config.apiKey,
+              Signature: signature,
             },
           });
 

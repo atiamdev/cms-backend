@@ -289,8 +289,15 @@ const getTeacherQuizzes = async (req, res) => {
 
     if (status === "published") {
       query.isPublished = true;
+      query.status = { $ne: "archived" };
     } else if (status === "draft") {
       query.isPublished = false;
+      query.status = { $ne: "archived" };
+    } else if (status === "archived") {
+      query.status = "archived";
+    } else {
+      // Default: exclude archived quizzes
+      query.status = { $ne: "archived" };
     }
 
     // Get total count for pagination
@@ -596,6 +603,114 @@ const updateQuiz = async (req, res) => {
 };
 
 /**
+ * Archive quiz
+ */
+const archiveQuiz = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the quiz
+    const quiz = await Quiz.findById(id);
+    if (!quiz) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz not found",
+      });
+    }
+
+    // Check permissions
+    const isOwner = quiz.createdBy.toString() === req.user._id.toString();
+    const isAdmin = req.user.roles.some((role) =>
+      ["admin", "branch-admin", "super-admin"].includes(role)
+    );
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only archive your own quizzes.",
+      });
+    }
+
+    const archivedQuiz = await Quiz.findByIdAndUpdate(
+      id,
+      { status: "archived", isPublished: false },
+      { new: true }
+    ).populate("courseId", "name");
+
+    res.json({
+      success: true,
+      message: "Quiz archived successfully",
+      data: archivedQuiz,
+    });
+  } catch (error) {
+    console.error("Error archiving quiz:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error archiving quiz",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Unarchive quiz
+ */
+const unarchiveQuiz = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Find the quiz
+    const quiz = await Quiz.findById(id);
+    if (!quiz) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz not found",
+      });
+    }
+
+    // Check permissions
+    const isOwner = quiz.createdBy.toString() === req.user._id.toString();
+    const isAdmin = req.user.roles.some((role) =>
+      ["admin", "branch-admin", "super-admin"].includes(role)
+    );
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You can only unarchive your own quizzes.",
+      });
+    }
+
+    // Only allow unarchiving archived quizzes
+    if (quiz.status !== "archived") {
+      return res.status(400).json({
+        success: false,
+        message: "Can only unarchive archived quizzes",
+      });
+    }
+
+    const unarchivedQuiz = await Quiz.findByIdAndUpdate(
+      id,
+      { status: "published", isPublished: true },
+      { new: true }
+    ).populate("courseId", "name");
+
+    res.json({
+      success: true,
+      message: "Quiz unarchived successfully",
+      data: unarchivedQuiz,
+    });
+  } catch (error) {
+    console.error("Error unarchiving quiz:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error unarchiving quiz",
+      error: error.message,
+    });
+  }
+};
+
+/**
  * Delete quiz
  */
 const deleteQuiz = async (req, res) => {
@@ -692,6 +807,7 @@ const toggleQuizPublication = async (req, res) => {
 
     // Update publication status
     quiz.isPublished = isPublished;
+    quiz.status = isPublished ? "published" : "draft";
     await quiz.save();
 
     res.json({
@@ -2048,6 +2164,8 @@ module.exports = {
   getTeacherQuizzes,
   getQuizById,
   updateQuiz,
+  archiveQuiz,
+  unarchiveQuiz,
   deleteQuiz,
   toggleQuizPublication,
   addQuestion,

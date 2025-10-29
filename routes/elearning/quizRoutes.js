@@ -782,4 +782,68 @@ router.get(
   quizController.getQuizAttempts
 );
 
+/**
+ * @swagger
+ * /api/elearning/quizzes/{id}/archive:
+ *   put:
+ *     summary: Archive a quiz
+ *     tags: [Quizzes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Quiz ID
+ *     responses:
+ *       200:
+ *         description: Quiz archived successfully
+ *       404:
+ *         description: Quiz not found
+ *       403:
+ *         description: Access denied
+ */
+router.put(
+  "/:id/archive",
+  protect,
+  authorize("teacher", "admin", "branch-admin", "super-admin"),
+  branchAuth,
+  [param("id").isMongoId().withMessage("Invalid quiz ID")],
+  quizController.archiveQuiz
+);
+
+/**
+ * @swagger
+ * /api/elearning/quizzes/{id}/unarchive:
+ *   put:
+ *     summary: Unarchive a quiz
+ *     tags: [Quizzes]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Quiz ID
+ *     responses:
+ *       200:
+ *         description: Quiz unarchived successfully
+ *       404:
+ *         description: Quiz not found
+ *       403:
+ *         description: Access denied
+ */
+router.put(
+  "/:id/unarchive",
+  protect,
+  authorize("teacher", "admin", "branch-admin", "super-admin"),
+  branchAuth,
+  [param("id").isMongoId().withMessage("Invalid quiz ID")],
+  quizController.unarchiveQuiz
+);
+
 module.exports = router;

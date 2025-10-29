@@ -12,7 +12,7 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024, // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    // Allow only PDFs and images
+    // Allow PDFs, images, Microsoft Office documents, and videos
     const allowedTypes = [
       "application/pdf",
       "image/jpeg",
@@ -20,15 +20,56 @@ const upload = multer({
       "image/png",
       "image/gif",
       "image/webp",
+      // Microsoft Office documents
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+      "application/vnd.ms-excel", // .xls
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
+      "application/vnd.ms-powerpoint", // .ppt
+      "application/msword", // .doc
+      // Video files
+      "video/mp4",
+      "video/avi",
+      "video/quicktime",
+      "video/x-ms-wmv",
     ];
 
+    // Check MIME type first
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(
-        new Error("Invalid file type. Only PDF and image files are allowed."),
-        false
-      );
+      // Fallback: check file extension
+      const fileExtension = file.originalname.split(".").pop()?.toLowerCase();
+      const allowedExtensions = [
+        "pdf",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "ppt",
+        "pptx",
+        "txt",
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "webp",
+        "mp4",
+        "avi",
+        "mov",
+        "wmv",
+      ];
+
+      if (allowedExtensions.includes(fileExtension)) {
+        cb(null, true);
+      } else {
+        cb(
+          new Error(
+            "Invalid file type. Only PDF, Word documents (.doc, .docx), Excel spreadsheets (.xls, .xlsx), PowerPoint presentations (.ppt, .pptx), Images (.jpg, .png, .gif), Videos (.mp4, .avi), and Text files (.txt) are allowed."
+          ),
+          false
+        );
+      }
     }
   },
 });
