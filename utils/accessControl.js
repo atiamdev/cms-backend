@@ -239,7 +239,7 @@ const getAllowedRolesForManagement = (user) => {
 };
 
 /**
- * Check if user can access a specific expense
+ * Check if user can access a specific expense (for viewing/approval)
  * @param {Object} user - User object
  * @param {Object} expense - Expense object with branchId and recordedBy
  * @returns {boolean} - True if user has access
@@ -260,13 +260,44 @@ const canAccessExpense = (user, expense) => {
     return expense.recordedBy.toString() === user._id.toString();
   }
 
-  // Branch admin can access expenses from their branch
+  // Branch admin can access expenses from their branch (for viewing and approval)
   if (hasRole(user, "branchadmin")) {
     return expense.branchId.toString() === user.branchId.toString();
   }
 
   // Others can access expenses from their branch
   return expense.branchId.toString() === user.branchId.toString();
+};
+
+/**
+ * Check if user can edit a specific expense
+ * @param {Object} user - User object
+ * @param {Object} expense - Expense object with branchId and recordedBy
+ * @returns {boolean} - True if user has edit access
+ */
+const canEditExpense = (user, expense) => {
+  // Superadmin can edit all expenses
+  if (isSuperAdmin(user)) {
+    return true;
+  }
+
+  // Admin can edit all expenses
+  if (hasRole(user, "admin")) {
+    return true;
+  }
+
+  // Secretary can only edit expenses they created
+  if (hasRole(user, "secretary")) {
+    return expense.recordedBy.toString() === user._id.toString();
+  }
+
+  // Branch admin can only edit expenses they created (not just any expense in their branch)
+  if (hasRole(user, "branchadmin")) {
+    return expense.recordedBy.toString() === user._id.toString();
+  }
+
+  // Others cannot edit expenses
+  return false;
 };
 
 module.exports = {
@@ -280,6 +311,7 @@ module.exports = {
   canModifyUser,
   getBranchFilter,
   canAccessExpense,
+  canEditExpense,
   canAccessStudentTeacherRecords,
   isOwnRecord,
   canAccessBranchResource,

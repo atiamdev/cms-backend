@@ -699,7 +699,7 @@ router.put(
   "/:id/approval",
   protect,
   branchAuth,
-  authorize(["superadmin", "admin", "secretary"]),
+  authorize(["superadmin", "admin", "secretary", "branchadmin"]),
   [
     body("approvalStatus")
       .isIn(["approved", "rejected", "on_hold"])

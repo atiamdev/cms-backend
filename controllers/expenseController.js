@@ -8,6 +8,7 @@ const {
   canAccessResource,
   hasAdminPrivileges,
   canAccessExpense,
+  canEditExpense,
 } = require("../utils/accessControl");
 
 // @desc    Get all expenses for a branch
@@ -312,12 +313,12 @@ const updateExpense = async (req, res) => {
       });
     }
 
-    // Check if user can access this expense
-    if (!canAccessExpense(req.user, expense)) {
+    // Check if user can edit this expense
+    if (!canEditExpense(req.user, expense)) {
       return res.status(403).json({
         success: false,
         message:
-          "Access denied. You do not have permission to access this expense",
+          "Access denied. You do not have permission to edit this expense",
       });
     }
 
@@ -479,8 +480,8 @@ const updateExpenseApproval = async (req, res) => {
       });
     }
 
-    // Check if user can access this expense based on role and branch
-    if (!canAccessResource(req.user, ["superadmin"], expense.branchId)) {
+    // Check if user can access this expense for approval
+    if (!canAccessExpense(req.user, expense)) {
       return res.status(403).json({
         success: false,
         message: "Access denied. Cannot access expense from other branches",
