@@ -166,13 +166,7 @@ router.post(
  *       200:
  *         description: Quizzes retrieved successfully
  */
-router.get(
-  "/",
-  protect,
-  authorize("teacher", "admin", "branch-admin", "super-admin"),
-  branchAuth,
-  quizController.getTeacherQuizzes
-);
+router.get("/", protect, quizController.getTeacherQuizzes);
 
 /**
  * @swagger
@@ -732,7 +726,7 @@ router.post(
 );
 
 router.get(
-  "/quizzes/:id/my-attempts",
+  "/:id/my-attempts",
   protect,
   authorize("student"),
   [param("id").isMongoId().withMessage("Invalid quiz ID")],

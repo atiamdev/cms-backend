@@ -297,7 +297,107 @@ const getCourseProgress = async (req, res) => {
   }
 };
 
+const unlockNextModule = async (req, res) => {
+  try {
+    const { courseId, moduleId } = req.params;
+
+    // Get student profile
+    const Student = require("../../models/Student");
+    const student = await Student.findOne({ userId: req.user._id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    const studentId = student._id;
+
+    // Find the learning progress
+    const LearningProgress = require("../../models/elearning/LearningProgress");
+    const LearningModule = require("../../models/elearning/LearningModule");
+
+    let learningProgress = await LearningProgress.findOne({
+      studentId,
+      courseId,
+    });
+
+    if (!learningProgress) {
+      return res.status(404).json({
+        success: false,
+        message: "Learning progress not found",
+      });
+    }
+
+    // Find the current module
+    const currentModuleIndex = learningProgress.moduleProgress.findIndex(
+      (mp) => mp.moduleId.toString() === moduleId
+    );
+
+    if (currentModuleIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Module not found in progress",
+      });
+    }
+
+    // Get all modules for the course
+    const allModules = await LearningModule.find({ courseId }).sort({
+      order: 1,
+    });
+
+    const currentModuleOrder = allModules.findIndex(
+      (m) => m._id.toString() === moduleId
+    );
+
+    if (
+      currentModuleOrder === -1 ||
+      currentModuleOrder >= allModules.length - 1
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "No next module to unlock",
+      });
+    }
+
+    const nextModule = allModules[currentModuleOrder + 1];
+    const nextModuleProgressIndex = learningProgress.moduleProgress.findIndex(
+      (mp) => mp.moduleId.toString() === nextModule._id.toString()
+    );
+
+    if (nextModuleProgressIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: "Next module progress not found",
+      });
+    }
+
+    // Unlock the next module
+    learningProgress.moduleProgress[nextModuleProgressIndex].status =
+      "in_progress";
+
+    await learningProgress.save();
+
+    res.json({
+      success: true,
+      message: "Next module unlocked successfully",
+      nextModule: {
+        _id: nextModule._id,
+        title: nextModule.title,
+      },
+    });
+  } catch (error) {
+    console.error("Error unlocking next module:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to unlock next module",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   updateContentProgress,
   getCourseProgress,
+  unlockNextModule,
 };

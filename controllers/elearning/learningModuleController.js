@@ -26,6 +26,7 @@ class LearningModuleController {
         status,
         settings,
         contents,
+        quizId,
       } = req.body;
 
       // Verify course exists and user has access
@@ -46,9 +47,14 @@ class LearningModuleController {
       }
 
       // Get next order
-      const nextOrder = course.modules ? course.modules.length + 1 : 1;
+      const existingModulesCount = await LearningModule.countDocuments({
+        courseId,
+      });
+      const nextOrder = existingModulesCount + 1;
 
-      const moduleData = {
+      // Create the learning module document
+      const learningModule = new LearningModule({
+        courseId,
         title,
         description,
         order: nextOrder,
@@ -60,23 +66,17 @@ class LearningModuleController {
           attempts: 1,
         },
         contents: contents || [],
-        createdAt: new Date(),
-      };
+        quizId: quizId || null, // Add quiz attachment
+        branchId: course.branchId,
+        createdBy: req.user._id,
+      });
 
-      // Add module to course
-      course.modules.push(moduleData);
-      await course.save();
-
-      // Return the newly created module
-      const newModule = course.modules[course.modules.length - 1];
+      await learningModule.save();
 
       res.status(201).json({
         success: true,
         message: "Learning module created successfully",
-        data: {
-          ...newModule.toObject(),
-          _id: newModule._id,
-        },
+        data: learningModule,
       });
     } catch (error) {
       console.error("Error creating learning module:", error);
@@ -180,36 +180,110 @@ class LearningModuleController {
         });
       }
 
-      // Filter modules based on status if provided
-      let modules = course.modules || [];
+      // Build query
+      let query = { courseId };
       if (status) {
-        modules = modules.filter((module) => module.status === status);
+        query.status = status;
       }
 
-      // Sort by order
-      modules.sort((a, b) => a.order - b.order);
+      // Get all modules first
+      let allModules = await LearningModule.find(query)
+        .populate(
+          includeContent === "true"
+            ? {
+                path: "contents",
+                match: { status: "published" },
+                select: "title description type order estimatedDuration",
+                options: { sort: { order: 1 } },
+              }
+            : []
+        )
+        .populate("quizId", "title description passingScore")
+        .sort({ order: 1 });
 
-      // Pagination
-      const skip = (page - 1) * limit;
-      const paginatedModules = modules.slice(skip, skip + parseInt(limit));
+      // If user is a student, filter modules based on access rules
+      if (req.user.role === "student") {
+        const Student = require("../../models/Student");
+        const student = await Student.findOne({ userId: req.user._id });
+        if (!student) {
+          return res.status(404).json({
+            success: false,
+            message: "Student profile not found",
+          });
+        }
+
+        // Check enrollment
+        const Enrollment = require("../../models/elearning/Enrollment");
+        const enrollment = await Enrollment.findOne({
+          studentId: student._id,
+          courseId,
+          status: { $in: ["active", "approved"] },
+        });
+
+        if (!enrollment) {
+          return res.status(403).json({
+            success: false,
+            message: "Not enrolled in this course",
+          });
+        }
+
+        // Filter accessible modules
+        const accessibleModules = [];
+        for (const module of allModules) {
+          if (module.order === 1) {
+            // First module is always accessible
+            accessibleModules.push(module);
+          } else {
+            // Check if previous module's quiz is completed
+            const prevModule = allModules.find(
+              (m) => m.order === module.order - 1
+            );
+            if (prevModule && prevModule.quizId) {
+              // Check if student has passed the previous module's quiz
+              const QuizAttempt = require("../../models/elearning/QuizAttempt");
+              const passedAttempt = await QuizAttempt.findOne({
+                studentId: student._id,
+                quizId: prevModule.quizId,
+                status: "completed",
+                score: { $gte: prevModule.quizId.passingScore },
+              });
+
+              if (passedAttempt) {
+                accessibleModules.push(module);
+              }
+            } else {
+              // No quiz on previous module, allow access
+              accessibleModules.push(module);
+            }
+          }
+        }
+
+        allModules = accessibleModules;
+      }
+
+      // Apply pagination
+      const total = allModules.length;
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + limit;
+      const modules = allModules.slice(startIndex, endIndex);
 
       res.json({
         success: true,
         data: {
-          modules: paginatedModules,
+          modules,
           pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total: modules.length,
-            pages: Math.ceil(modules.length / limit),
+            total,
+            pages: Math.ceil(total / parseInt(limit)),
           },
         },
       });
     } catch (error) {
-      console.error("Error fetching course modules:", error);
+      console.error("Error fetching modules by course:", error);
       res.status(500).json({
         success: false,
-        message: "Failed to fetch course modules",
+        message: "Failed to fetch modules",
         error: error.message,
       });
     }
@@ -221,42 +295,39 @@ class LearningModuleController {
       const { courseId, moduleId } = req.params;
       const updates = req.body;
 
-      // Find the course
-      const course = await ECourse.findById(courseId);
-      if (!course) {
+      // Find the learning module
+      const learningModule = await LearningModule.findById(moduleId);
+      if (!learningModule) {
         return res.status(404).json({
           success: false,
-          message: "Course not found",
+          message: "Learning module not found",
+        });
+      }
+
+      // Verify course access
+      if (learningModule.courseId.toString() !== courseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Module does not belong to the specified course",
         });
       }
 
       // Check permissions
-      if (course.branchId.toString() !== req.user.branchId.toString()) {
+      if (learningModule.branchId.toString() !== req.user.branchId.toString()) {
         return res.status(403).json({
           success: false,
           message: "Permission denied to edit this module",
         });
       }
 
-      // Find the module in the course
-      const moduleIndex = course.modules.findIndex(
-        (m) => m._id.toString() === moduleId
-      );
-      if (moduleIndex === -1) {
-        return res.status(404).json({
-          success: false,
-          message: "Module not found",
-        });
-      }
-
       // Update the module
-      Object.assign(course.modules[moduleIndex], updates);
-      await course.save();
+      Object.assign(learningModule, updates);
+      await learningModule.save();
 
       res.json({
         success: true,
         message: "Learning module updated successfully",
-        data: course.modules[moduleIndex],
+        data: learningModule,
       });
     } catch (error) {
       console.error("Error updating learning module:", error);
@@ -273,37 +344,33 @@ class LearningModuleController {
     try {
       const { courseId, moduleId } = req.params;
 
-      // Find the course
-      const course = await ECourse.findById(courseId);
-      if (!course) {
+      // Find the learning module
+      const learningModule = await LearningModule.findById(moduleId);
+      if (!learningModule) {
         return res.status(404).json({
           success: false,
-          message: "Course not found",
+          message: "Learning module not found",
+        });
+      }
+
+      // Verify course access
+      if (learningModule.courseId.toString() !== courseId) {
+        return res.status(400).json({
+          success: false,
+          message: "Module does not belong to the specified course",
         });
       }
 
       // Check permissions
-      if (course.branchId.toString() !== req.user.branchId.toString()) {
+      if (learningModule.branchId.toString() !== req.user.branchId.toString()) {
         return res.status(403).json({
           success: false,
           message: "Permission denied to delete this module",
         });
       }
 
-      // Find and remove the module
-      const moduleIndex = course.modules.findIndex(
-        (m) => m._id.toString() === moduleId
-      );
-      if (moduleIndex === -1) {
-        return res.status(404).json({
-          success: false,
-          message: "Module not found",
-        });
-      }
-
-      // Remove the module from the array
-      course.modules.splice(moduleIndex, 1);
-      await course.save();
+      // Delete the module
+      await LearningModule.findByIdAndDelete(moduleId);
 
       res.json({
         success: true,
@@ -326,7 +393,7 @@ class LearningModuleController {
       const { moduleOrders } = req.body; // Array of { id, order }
 
       // Verify course access
-      const course = await Course.findById(courseId);
+      const course = await ECourse.findById(courseId);
       if (!course) {
         return res.status(404).json({
           success: false,

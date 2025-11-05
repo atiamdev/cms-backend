@@ -731,7 +731,7 @@ const sendFeeReminders = async (req, res) => {
           } ${req.user.lastName}\nFee Administrator`,
           type: "fee_reminder",
           priority: "high",
-          targetAudience: "students", // Set to students but specificRecipients will control visibility
+          // No targetAudience set - specificRecipients controls visibility
           specificRecipients: [student._id], // Target specific student only
           branchId,
           author: {

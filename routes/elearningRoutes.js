@@ -1,5 +1,5 @@
 const express = require("express");
-const { body, validationResult } = require("express-validator");
+const { body, param, validationResult } = require("express-validator");
 const { protect, authorize } = require("../middlewares/auth");
 const { branchAuth } = require("../middlewares/branchAuth");
 const {
@@ -18,14 +18,14 @@ const {
 const eCourseController = require("../controllers/elearning/eCourseController");
 const courseContentController = require("../controllers/elearning/courseContentController");
 const progressController = require("../controllers/elearning/progressController");
+const Payment = require("../models/Payment");
+const axios = require("axios");
+const crypto = require("crypto");
 const analyticsController = require("../controllers/elearning/analyticsController");
 const liveSessionController = require("../controllers/elearning/liveSessionController");
 const discussionController = require("../controllers/elearning/discussionController");
 const cloudflareService = require("../services/cloudflareService");
-const Payment = require("../models/Payment");
 const Student = require("../models/Student");
-const axios = require("axios");
-const crypto = require("crypto");
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
@@ -77,32 +77,36 @@ const upload = multer({
   },
 });
 
-// M-Pesa Configuration for elearning payments
-const getMpesaConfig = () => ({
-  consumerKey: process.env.MPESA_CONSUMER_KEY,
-  consumerSecret: process.env.MPESA_CONSUMER_SECRET,
-  businessShortCode: process.env.MPESA_BUSINESS_SHORTCODE,
-  passkey: process.env.MPESA_PASSKEY,
-  callbackUrl: process.env.MPESA_CALLBACK_URL,
+// Jenga (Equity Bank) configuration
+const getJengaConfig = () => ({
+  merchantCode: process.env.JENGA_MERCHANT_CODE,
+  apiKey: process.env.JENGA_API_KEY,
+  consumerSecret: process.env.JENGA_CONSUMER_SECRET,
   baseUrl:
-    process.env.MPESA_ENVIRONMENT === "production"
-      ? "https://api.safaricom.co.ke"
-      : "https://sandbox.safaricom.co.ke",
+    process.env.JENGA_ENVIRONMENT === "production"
+      ? "https://api.jengahq.io"
+      : "https://sandbox.jengahq.io",
+  callbackUrl: process.env.JENGA_CALLBACK_URL,
 });
 
-// Generate M-Pesa access token
-const getMpesaAccessToken = async () => {
-  try {
-    const config = getMpesaConfig();
-    const auth = Buffer.from(
-      `${config.consumerKey}:${config.consumerSecret}`
-    ).toString("base64");
+// Get Jenga access token
+const getJengaAccessToken = async () => {
+  const config = getJengaConfig();
 
-    const response = await axios.get(
-      `${config.baseUrl}/oauth/v1/generate?grant_type=client_credentials`,
+  const auth = Buffer.from(
+    `${config.merchantCode}:${config.consumerSecret}`
+  ).toString("base64");
+
+  try {
+    const response = await axios.post(
+      `${config.baseUrl}/identity/v2/token`,
+      {
+        grant_type: "client_credentials",
+      },
       {
         headers: {
           Authorization: `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
         },
       }
     );
@@ -110,25 +114,11 @@ const getMpesaAccessToken = async () => {
     return response.data.access_token;
   } catch (error) {
     console.error(
-      "M-Pesa access token error:",
+      "Jenga access token error:",
       error.response?.data || error.message
     );
-    throw new Error("Failed to get M-Pesa access token");
+    throw new Error("Failed to get Jenga access token");
   }
-};
-
-// Generate M-Pesa password
-const generateMpesaPassword = () => {
-  const config = getMpesaConfig();
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[^0-9]/g, "")
-    .slice(0, -3);
-  const password = Buffer.from(
-    `${config.businessShortCode}${config.passkey}${timestamp}`
-  ).toString("base64");
-
-  return { password, timestamp };
 };
 
 // ===========================
@@ -1018,6 +1008,57 @@ router.get(
 
 /**
  * @swagger
+ * /api/elearning/courses/{courseId}/modules/{moduleId}/unlock-next:
+ *   post:
+ *     summary: Manually unlock the next module after completing current module
+ *     tags: [E-Learning Progress]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: courseId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Course ID
+ *       - in: path
+ *         name: moduleId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Current module ID
+ *     responses:
+ *       200:
+ *         description: Next module unlocked successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Next module unlocked successfully
+ *                 nextModule:
+ *                   type: object
+ *                   properties:
+ *                     _id:
+ *                       type: string
+ *                     title:
+ *                       type: string
+ */
+router.post(
+  "/courses/:courseId/modules/:moduleId/unlock-next",
+  protect,
+  authorize("student"),
+  [param("courseId").isMongoId(), param("moduleId").isMongoId()],
+  progressController.unlockNextModule
+);
+
+/**
+ * @swagger
  * /api/elearning/courses/{courseId}/modules/{moduleId}/content/{contentId}/progress:
  *   put:
  *     summary: Update content progress for a student
@@ -1110,7 +1151,12 @@ router.post(
   async (req, res) => {
     try {
       const { courseId } = req.params;
-      const { phoneNumber } = req.body; // For MPESA payment
+      const {
+        phoneNumber,
+        customerFirstName,
+        customerLastName,
+        customerEmail,
+      } = req.body; // For Equity payment
 
       // Find the student record for the current user
       const Student = require("../models/Student");
@@ -1198,11 +1244,17 @@ router.post(
           });
         }
 
-        // Validate phone number for MPESA
-        if (!phoneNumber) {
+        // Validate required fields for Equity payment
+        if (
+          !phoneNumber ||
+          !customerFirstName ||
+          !customerLastName ||
+          !customerEmail
+        ) {
           return res.status(400).json({
             success: false,
-            message: "Phone number is required for paid course enrollment",
+            message:
+              "Phone number, customer name, and email are required for paid course enrollment",
           });
         }
 
@@ -1214,13 +1266,21 @@ router.post(
           });
         }
 
-        try {
-          const config = getMpesaConfig();
-          const accessToken = await getMpesaAccessToken();
-          const { password, timestamp } = generateMpesaPassword();
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(customerEmail)) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid email format",
+          });
+        }
 
-          // Generate receipt number for course payment
-          const receiptNumber = `EC-${Date.now()}-${Math.random()
+        try {
+          const config = getJengaConfig();
+          const accessToken = await getJengaAccessToken();
+
+          // Generate order reference
+          const orderReference = `EC-${Date.now()}-${Math.random()
             .toString(36)
             .substr(2, 5)
             .toUpperCase()}`;
@@ -1230,81 +1290,75 @@ router.post(
             branchId,
             courseId,
             studentId,
-            receiptNumber,
             amount: course.pricing.amount,
-            paymentMethod: "mpesa",
+            paymentMethod: "equity",
             status: "pending",
-            mpesaDetails: {
-              phoneNumber: formattedPhone,
+            equityDetails: {
+              orderReference,
             },
             recordedBy: req.user._id,
           });
 
           await payment.save();
 
-          // Prepare STK Push request
-          const stkPushData = {
-            BusinessShortCode: config.businessShortCode,
-            Password: password,
-            Timestamp: timestamp,
-            TransactionType: "CustomerPayBillOnline",
-            Amount: course.pricing.amount,
-            PartyA: formattedPhone,
-            PartyB: config.businessShortCode,
-            PhoneNumber: formattedPhone,
-            CallBackURL: `${config.callbackUrl}/${payment._id}`,
-            AccountReference: `${course.title.substring(
-              0,
-              10
-            )}-${receiptNumber}`,
-            TransactionDesc: `Course enrollment: ${course.title}`,
+          // Prepare Jenga checkout data
+          const checkoutData = {
+            token: accessToken,
+            merchantCode: config.merchantCode,
+            currency: "KES",
+            orderAmount: course.pricing.amount.toString(),
+            orderReference,
+            productType: "Service",
+            productDescription: `Course enrollment: ${course.title}`,
+            extraData: payment._id.toString(),
+            paymentTimeLimit: "15mins",
+            customerFirstName,
+            customerLastName,
+            customerPostalCodeZip: "00100", // Default Nairobi postal code
+            customerAddress: "Nairobi, Kenya", // Default address
+            customerEmail,
+            customerPhone: formattedPhone,
+            callbackUrl: `${config.callbackUrl}/${payment._id}`,
+            countryCode: "KE",
+            secondaryReference: student.studentId || studentId.toString(),
           };
 
-          const stkResponse = await axios.post(
-            `${config.baseUrl}/mpesa/stkpush/v1/processrequest`,
-            stkPushData,
-            {
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                "Content-Type": "application/json",
-              },
-            }
-          );
+          // Generate signature: merchantCode + orderReference + currency + orderAmount + callbackUrl
+          const signatureString = `${config.merchantCode}${orderReference}${checkoutData.currency}${checkoutData.orderAmount}${checkoutData.callbackUrl}`;
+          checkoutData.signature = crypto
+            .createHash("sha256")
+            .update(signatureString)
+            .digest("hex");
 
-          // Update payment with M-Pesa details
-          payment.mpesaDetails.checkoutRequestId =
-            stkResponse.data.CheckoutRequestID;
-          payment.mpesaDetails.merchantRequestId =
-            stkResponse.data.MerchantRequestID;
-          payment.status = "processing";
-
+          // Store checkout data for redirect
+          payment.equityDetails.checkoutData = checkoutData;
           await payment.save();
 
           res.json({
             success: true,
             message:
-              "Payment initiated successfully. Please complete the payment on your phone to enroll in the course",
+              "Equity payment initiated successfully. Redirecting to payment gateway...",
             data: {
               paymentId: payment._id,
-              checkoutRequestId: stkResponse.data.CheckoutRequestID,
-              merchantRequestId: stkResponse.data.MerchantRequestID,
+              orderReference,
               amount: course.pricing.amount,
               phoneNumber: formattedPhone,
               courseTitle: course.title,
+              checkoutData,
             },
           });
-        } catch (mpesaError) {
+        } catch (equityError) {
           console.error(
-            "M-Pesa STK Push error:",
-            mpesaError.response?.data || mpesaError.message
+            "Equity payment error:",
+            equityError.response?.data || equityError.message
           );
 
           res.status(500).json({
             success: false,
             message: "Failed to initiate payment",
             error:
-              mpesaError.response?.data?.errorMessage ||
-              "M-Pesa service unavailable",
+              equityError.response?.data?.errorMessage ||
+              "Equity payment service unavailable",
           });
         }
       } else {
@@ -4339,80 +4393,6 @@ router.get(
 );
 
 // Note: quiz routes are handled by the mounted router above (./elearning/quizRoutes)
-
-// M-Pesa callback for course enrollment payments
-router.post("/payments/mpesa/callback/:paymentId", async (req, res) => {
-  try {
-    const { paymentId } = req.params;
-    const callbackData = req.body;
-
-    console.log("E-learning course payment callback received:", {
-      paymentId,
-      callbackData,
-    });
-
-    // Find the payment
-    const payment = await Payment.findById(paymentId);
-    if (!payment) {
-      console.error("Payment not found for callback:", paymentId);
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment not found" });
-    }
-
-    // Update payment with callback data
-    payment.mpesaDetails = payment.mpesaDetails || {};
-    payment.mpesaDetails.callbackReceived = true;
-    payment.mpesaDetails.callbackData = callbackData;
-
-    // Check if payment was successful
-    const resultCode = callbackData.Body?.stkCallback?.ResultCode;
-    const resultDesc = callbackData.Body?.stkCallback?.ResultDesc;
-
-    if (resultCode === 0) {
-      // Payment successful
-      payment.status = "completed";
-      payment.mpesaDetails.receiptNumber =
-        callbackData.Body.stkCallback.CallbackMetadata.Item.find(
-          (item) => item.Name === "MpesaReceiptNumber"
-        )?.Value;
-
-      // Create enrollment for the course
-      const enrollmentData = {
-        studentId: payment.studentId,
-        courseId: payment.courseId,
-        branchId: payment.branchId,
-        enrollmentType: "self",
-        status: "active",
-      };
-
-      const enrollment = new Enrollment(enrollmentData);
-      await enrollment.save();
-
-      console.log("Enrollment created for successful course payment:", {
-        paymentId,
-        enrollmentId: enrollment._id,
-        studentId: payment.studentId,
-        courseId: payment.courseId,
-      });
-    } else {
-      // Payment failed
-      payment.status = "failed";
-      payment.mpesaDetails.failureReason = resultDesc;
-    }
-
-    await payment.save();
-
-    res.json({ success: true, message: "Callback processed successfully" });
-  } catch (error) {
-    console.error("Error processing e-learning payment callback:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error processing callback",
-      error: error.message,
-    });
-  }
-});
 
 // ===========================
 // RATING ROUTES

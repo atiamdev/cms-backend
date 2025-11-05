@@ -14,10 +14,6 @@ const {
 } = require("../controllers/feeController");
 
 const {
-  initiateMpesaPayment,
-  initiateStudentMpesaPayment,
-  handleMpesaCallback,
-  testMpesaCallback,
   initiateEquityPayment,
   initiateStudentEquityPayment,
   handleEquityCallback,
@@ -109,29 +105,6 @@ const {
  *             amount: 5000
  *             isOptional: true
  *             dueDate: "2024-03-20"
- *
- *     InitiateMpesaPaymentRequest:
- *       type: object
- *       required:
- *         - feeId
- *         - amount
- *         - phoneNumber
- *       properties:
- *         feeId:
- *           type: string
- *           description: Fee ID to pay
- *         amount:
- *           type: number
- *           minimum: 1
- *           description: Amount to pay
- *         phoneNumber:
- *           type: string
- *           pattern: '^254[0-9]{9}$'
- *           description: M-Pesa phone number (format 254XXXXXXXXX)
- *       example:
- *         feeId: 64f7c9b8e123456789abcdef
- *         amount: 25000
- *         phoneNumber: "254712345678"
  *
  *     RecordManualPaymentRequest:
  *       type: object
@@ -353,50 +326,6 @@ router.put(
   ],
   updateFee
 );
-
-// Payment Routes
-router.post(
-  "/payments/mpesa/initiate",
-  protect,
-  branchAuth,
-  [
-    body("feeId").notEmpty().withMessage("Fee ID is required"),
-    body("amount")
-      .isFloat({ min: 1 })
-      .withMessage("Amount must be greater than 0"),
-    body("phoneNumber")
-      .matches(/^(\+?254|0)?[17]\d{8}$/)
-      .withMessage("Valid Kenyan phone number is required"),
-  ],
-  initiateMpesaPayment
-);
-
-// Student Course Fee Payment Route (no feeId required)
-router.post(
-  "/payments/student/mpesa/initiate",
-  protect,
-  branchAuth,
-  [
-    body("amount")
-      .isFloat({ min: 1 })
-      .withMessage("Amount must be greater than 0"),
-    body("phoneNumber")
-      .matches(/^(\+?254|0)?[17]\d{8}$/)
-      .withMessage("Valid Kenyan phone number is required"),
-    body("studentId")
-      .optional()
-      .isMongoId()
-      .withMessage("Valid student ID is required when provided"),
-  ],
-  initiateStudentMpesaPayment
-);
-
-// M-Pesa callback (public endpoint)
-router.post("/payments/mpesa/callback/:paymentId", handleMpesaCallback);
-// Simple M-Pesa callback without payment ID
-router.post("/payments/mpesa/callback", handleMpesaCallback);
-// Test M-Pesa callback for webhook.site testing
-router.post("/payments/mpesa/test-callback", testMpesaCallback);
 
 // Equity Bank Payment Routes
 router.post(

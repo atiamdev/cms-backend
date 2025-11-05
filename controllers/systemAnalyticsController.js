@@ -343,16 +343,15 @@ const getCpuUsage = () => {
 
 const getUserAnalytics = async (startDate, endDate) => {
   const [totalUsers, activeUsers, newUsers, usersByRole] = await Promise.all([
-    User.countDocuments({ isActive: true }),
+    User.countDocuments(), // Count all users
     User.countDocuments({
-      isActive: true,
-      lastLogin: { $gte: startDate },
+      lastLogin: { $gte: startDate }, // Count users who logged in within timeframe
     }),
     User.countDocuments({
       createdAt: { $gte: startDate, $lte: endDate },
     }),
     User.aggregate([
-      { $match: { isActive: true } },
+      { $match: {} }, // Count all users by role, not just active ones
       { $unwind: "$roles" },
       { $group: { _id: "$roles", count: { $sum: 1 } } },
     ]),
@@ -444,10 +443,10 @@ const getFinancialAnalytics = async (startDate, endDate) => {
 
 const getAcademicAnalytics = async (startDate, endDate) => {
   const [students, teachers, classes, courses, attendance] = await Promise.all([
-    Student.countDocuments({ isActive: true }),
-    Teacher.countDocuments({ isActive: true }),
-    Class.countDocuments({ isActive: true }),
-    Course.countDocuments({ isActive: true }),
+    Student.countDocuments({ academicStatus: "active" }),
+    Teacher.countDocuments({ employmentStatus: "active" }),
+    Class.countDocuments(), // Classes don't seem to have status field
+    Course.countDocuments(), // Courses don't seem to have status field
     Attendance.aggregate([
       {
         $match: {
@@ -651,7 +650,9 @@ const getSecretaryDashboardStats = async (req, res) => {
             ((studentsThisMonth - studentsLastMonth) / studentsLastMonth) *
             100
           ).toFixed(1)
-        : 100;
+        : studentsThisMonth > 0
+        ? 100
+        : 0;
 
     // 2. Payments Processed
     const [
@@ -694,7 +695,9 @@ const getSecretaryDashboardStats = async (req, res) => {
             ((paymentsThisMonth - paymentsLastMonth) / paymentsLastMonth) *
             100
           ).toFixed(1)
-        : 100;
+        : paymentsThisMonth > 0
+        ? 100
+        : 0;
 
     const totalAmountThisMonth = paymentAmountThisMonth[0]?.total || 0;
 
@@ -712,17 +715,18 @@ const getSecretaryDashboardStats = async (req, res) => {
           $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
         },
       }),
-      // Fees with balance > 0 (pending payments)
+      // Fees with outstanding balance (unpaid, partially_paid, or overdue)
       Fee.countDocuments({
         ...branchFilter,
         balance: { $gt: 0 },
-        status: "pending",
+        status: { $in: ["unpaid", "partially_paid", "overdue"] },
       }),
-      // Fees past due date
+      // Fees past due date with outstanding balance
       Fee.countDocuments({
         ...branchFilter,
         balance: { $gt: 0 },
         dueDate: { $lt: now },
+        status: { $in: ["unpaid", "partially_paid", "overdue"] },
       }),
     ]);
 
@@ -756,15 +760,17 @@ const getSecretaryDashboardStats = async (req, res) => {
       const studentName = payment.studentId?.userId
         ? `${payment.studentId.userId.firstName || ""} ${
             payment.studentId.userId.lastName || ""
-          }`.trim()
+          }`.trim() || "Unknown Student"
         : "Unknown Student";
 
       recentActivity.push({
         type: "payment",
         icon: "CreditCard",
         title: "Payment processed",
-        description: `${studentName} - KSh ${payment.amount.toLocaleString()} fee payment`,
-        timestamp: payment.paymentDate,
+        description: `${studentName} - KSh ${
+          payment.amount?.toLocaleString() || 0
+        } fee payment`,
+        timestamp: payment.paymentDate || payment.createdAt,
         receiptNumber: payment.receiptNumber,
       });
     });
@@ -774,16 +780,16 @@ const getSecretaryDashboardStats = async (req, res) => {
       const studentName = student.userId
         ? `${student.userId.firstName || ""} ${
             student.userId.lastName || ""
-          }`.trim()
+          }`.trim() || "Unknown Student"
         : "Unknown Student";
+
+      const className = student.currentClassId?.name || "";
 
       recentActivity.push({
         type: "registration",
         icon: "UserPlus",
         title: "New student registered",
-        description: `${studentName}${
-          student.currentClassId ? " - " + student.currentClassId.name : ""
-        }`,
+        description: `${studentName}${className ? " - " + className : ""}`,
         timestamp: student.createdAt,
       });
     });

@@ -913,34 +913,60 @@ const getStudentsByClass = async (req, res) => {
 // @access  Private (Admin, Secretary)
 const getStudentStatistics = async (req, res) => {
   try {
-    const [totalStudents, activeStudents, statusCounts, classCounts] =
-      await Promise.all([
-        Student.countDocuments({ branchId: req.branchId }),
-        Student.countDocuments({
-          branchId: req.branchId,
-          academicStatus: "active",
-        }),
-        Student.getCountByStatus(req.branchId),
-        Student.aggregate([
-          { $match: { branchId: new mongoose.Types.ObjectId(req.branchId) } },
-          { $group: { _id: "$currentClassId", count: { $sum: 1 } } },
-          {
-            $lookup: {
-              from: "classes",
-              localField: "_id",
-              foreignField: "_id",
-              as: "classInfo",
-            },
+    // Calculate date range for current month
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const endOfMonth = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999
+    );
+
+    const [
+      totalStudents,
+      activeStudents,
+      newEnrollments,
+      statusCounts,
+      classCounts,
+    ] = await Promise.all([
+      Student.countDocuments({ branchId: req.branchId }),
+      Student.countDocuments({
+        branchId: req.branchId,
+        academicStatus: "active",
+      }),
+      Student.countDocuments({
+        branchId: req.branchId,
+        enrollmentDate: {
+          $gte: startOfMonth,
+          $lte: endOfMonth,
+        },
+      }),
+      Student.getCountByStatus(req.branchId),
+      Student.aggregate([
+        { $match: { branchId: new mongoose.Types.ObjectId(req.branchId) } },
+        { $group: { _id: "$currentClassId", count: { $sum: 1 } } },
+        {
+          $lookup: {
+            from: "classes",
+            localField: "_id",
+            foreignField: "_id",
+            as: "classInfo",
           },
-          { $unwind: { path: "$classInfo", preserveNullAndEmptyArrays: true } },
-        ]),
-      ]);
+        },
+        { $unwind: { path: "$classInfo", preserveNullAndEmptyArrays: true } },
+      ]),
+    ]);
 
     res.json({
       success: true,
       statistics: {
         totalStudents,
         activeStudents,
+        newEnrollments,
         statusCounts: statusCounts.reduce((acc, item) => {
           acc[item._id] = item.count;
           return acc;

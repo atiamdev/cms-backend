@@ -13,18 +13,67 @@ const {
   hasAdminPrivileges,
 } = require("../utils/accessControl");
 
-// M-Pesa Configuration
-const getMpesaConfig = () => ({
-  consumerKey: process.env.MPESA_CONSUMER_KEY,
-  consumerSecret: process.env.MPESA_CONSUMER_SECRET,
-  businessShortCode: process.env.MPESA_BUSINESS_SHORTCODE,
-  passkey: process.env.MPESA_PASSKEY,
-  callbackUrl: process.env.MPESA_CALLBACK_URL,
-  baseUrl:
-    process.env.MPESA_ENVIRONMENT === "production"
-      ? "https://api.safaricom.co.ke"
-      : "https://sandbox.safaricom.co.ke",
-});
+// Helper functions
+const validateAndFormatPhone = (phoneNumber) => {
+  if (!phoneNumber) {
+    throw new Error("Phone number is required");
+  }
+  const formattedPhone = phoneNumber.replace(/^\+?254|^0/, "254");
+  if (!/^254[17]\d{8}$/.test(formattedPhone)) {
+    throw new Error("Invalid phone number format");
+  }
+  return formattedPhone;
+};
+
+const updateStudentFeesAfterPayment = async (
+  payment,
+  transactionRef,
+  checkExisting = false
+) => {
+  const student = await Student.findById(payment.studentId);
+  if (!student || !student.fees) return;
+
+  const oldBalance = student.fees.totalBalance;
+  student.fees.totalBalance -= payment.amount;
+
+  // Add to payment history
+  if (
+    !checkExisting ||
+    !student.fees.paymentHistory?.find(
+      (h) => h.referenceNumber === transactionRef
+    )
+  ) {
+    const paymentHistoryEntry = {
+      date: new Date(),
+      amount: payment.amount,
+      paymentMethod:
+        payment.paymentMethod === "equity"
+          ? "equity-mpesa"
+          : payment.paymentMethod,
+      referenceNumber: transactionRef || payment.receiptNumber,
+      notes: `${
+        payment.paymentMethod === "equity"
+          ? "Equity Bank M-Pesa STK Push"
+          : payment.paymentMethod
+      } - Transaction: ${transactionRef || "N/A"}`,
+      recordedBy: payment.recordedBy,
+    };
+
+    if (!student.fees.paymentHistory) {
+      student.fees.paymentHistory = [];
+    }
+    student.fees.paymentHistory.push(paymentHistoryEntry);
+  }
+
+  await student.save();
+
+  console.log("Student fees updated:", {
+    studentId: student.studentId,
+    oldBalance,
+    newBalance: student.fees.totalBalance,
+    amountPaid: payment.amount,
+  });
+};
 
 // Jenga Configuration
 const getJengaConfig = () => ({
@@ -41,33 +90,6 @@ const getJengaConfig = () => ({
       ? "https://api.finserve.africa"
       : "https://uat.finserve.africa",
 });
-
-// Generate M-Pesa access token
-const getMpesaAccessToken = async () => {
-  try {
-    const config = getMpesaConfig();
-    const auth = Buffer.from(
-      `${config.consumerKey}:${config.consumerSecret}`
-    ).toString("base64");
-
-    const response = await axios.get(
-      `${config.baseUrl}/oauth/v1/generate?grant_type=client_credentials`,
-      {
-        headers: {
-          Authorization: `Basic ${auth}`,
-        },
-      }
-    );
-
-    return response.data.access_token;
-  } catch (error) {
-    console.error(
-      "M-Pesa access token error:",
-      error.response?.data || error.message
-    );
-    throw new Error("Failed to get M-Pesa access token");
-  }
-};
 
 const getJengaAccessToken = async () => {
   try {
@@ -95,169 +117,6 @@ const getJengaAccessToken = async () => {
       error.response?.data || error.message
     );
     throw new Error("Failed to get Jenga access token");
-  }
-};
-
-// Generate M-Pesa password
-const generateMpesaPassword = () => {
-  const config = getMpesaConfig();
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[^0-9]/g, "")
-    .slice(0, -3);
-  const password = Buffer.from(
-    `${config.businessShortCode}${config.passkey}${timestamp}`
-  ).toString("base64");
-
-  return { password, timestamp };
-};
-
-// @desc    Initiate M-Pesa STK Push payment
-// @route   POST /api/payments/mpesa/initiate
-// @access  Private (Student, Admin, Secretary)
-const initiateMpesaPayment = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation failed",
-        errors: errors.array(),
-      });
-    }
-
-    const { feeId, amount, phoneNumber } = req.body;
-
-    // Validate fee exists and belongs to the user's branch
-    const fee = await Fee.findOne({
-      _id: feeId,
-      branchId: req.user.branchId,
-    }).populate("studentId", "studentId userId");
-
-    if (!fee) {
-      return res.status(404).json({
-        success: false,
-        message: "Fee record not found",
-      });
-    }
-
-    // Check if student can pay (for student role)
-    if (
-      req.user.roles.includes("student") &&
-      req.user.studentProfile?.toString() !== fee.studentId._id.toString()
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. You can only pay your own fees",
-      });
-    }
-
-    // Validate payment amount
-    if (amount <= 0 || amount > fee.balance) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid payment amount",
-      });
-    }
-
-    // Format phone number (remove leading +254 or 0, ensure it starts with 254)
-    const formattedPhone = phoneNumber.replace(/^\+?254|^0/, "254");
-    if (!/^254[17]\d{8}$/.test(formattedPhone)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number format",
-      });
-    }
-
-    try {
-      const config = getMpesaConfig();
-      const accessToken = await getMpesaAccessToken();
-      const { password, timestamp } = generateMpesaPassword();
-
-      // Create payment record first
-      const payment = new Payment({
-        branchId: req.user.branchId,
-        feeId: fee._id,
-        studentId: fee.studentId._id,
-        amount,
-        paymentMethod: "mpesa",
-        status: "pending",
-        mpesaDetails: {
-          phoneNumber: formattedPhone,
-        },
-        recordedBy: req.user._id,
-      });
-
-      await payment.save();
-
-      // Prepare STK Push request
-      const stkPushData = {
-        BusinessShortCode: config.businessShortCode,
-        Password: password,
-        Timestamp: timestamp,
-        TransactionType: "CustomerPayBillOnline",
-        Amount: amount,
-        PartyA: formattedPhone,
-        PartyB: config.businessShortCode,
-        PhoneNumber: formattedPhone,
-        CallBackURL: `${config.callbackUrl}/${payment._id}`,
-        AccountReference: `${fee.studentId.studentId}-${fee.academicTerm}`,
-        TransactionDesc: `Fee payment for ${fee.studentId.studentId}`,
-      };
-
-      const stkResponse = await axios.post(
-        `${config.baseUrl}/mpesa/stkpush/v1/processrequest`,
-        stkPushData,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      // Update payment with M-Pesa details
-      payment.mpesaDetails.checkoutRequestId =
-        stkResponse.data.CheckoutRequestID;
-      payment.mpesaDetails.merchantRequestId =
-        stkResponse.data.MerchantRequestID;
-      payment.status = "processing";
-
-      await payment.save();
-
-      res.json({
-        success: true,
-        message:
-          "Payment initiated successfully. Please complete the payment on your phone",
-        data: {
-          paymentId: payment._id,
-          checkoutRequestId: stkResponse.data.CheckoutRequestID,
-          merchantRequestId: stkResponse.data.MerchantRequestID,
-          amount,
-          phoneNumber: formattedPhone,
-        },
-      });
-    } catch (mpesaError) {
-      console.error(
-        "M-Pesa STK Push error:",
-        mpesaError.response?.data || mpesaError.message
-      );
-
-      res.status(500).json({
-        success: false,
-        message: "Failed to initiate M-Pesa payment",
-        error:
-          mpesaError.response?.data?.errorMessage ||
-          "M-Pesa service unavailable",
-      });
-    }
-  } catch (error) {
-    console.error("Initiate M-Pesa payment error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
   }
 };
 
@@ -330,13 +189,7 @@ const initiateEquityPayment = async (req, res) => {
     }
 
     // Format phone number (ensure it starts with country code)
-    const formattedPhone = customerPhone.replace(/^\+?254|^0/, "254");
-    if (!/^254[17]\d{8}$/.test(formattedPhone)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number format",
-      });
-    }
+    const formattedPhone = validateAndFormatPhone(customerPhone);
 
     try {
       const config = getJengaConfig();
@@ -428,278 +281,6 @@ const initiateEquityPayment = async (req, res) => {
   }
 };
 
-// @desc    Handle M-Pesa STK Push callback
-// @route   POST /api/fees/payments/mpesa/callback/:paymentId
-// @route   POST /api/fees/payments/mpesa/callback
-// @access  Public (M-Pesa callback)
-const handleMpesaCallback = async (req, res) => {
-  try {
-    const callbackData = req.body;
-
-    console.log("=== M-PESA CALLBACK RECEIVED ===");
-    console.log("URL:", req.originalUrl);
-    console.log("Method:", req.method);
-    console.log("Headers:", JSON.stringify(req.headers, null, 2));
-    console.log("Body:", JSON.stringify(callbackData, null, 2));
-    console.log("================================");
-
-    // Extract STK callback data according to M-Pesa Express documentation
-    const stkCallback = callbackData.Body?.stkCallback;
-    if (!stkCallback) {
-      console.error("Invalid callback format - missing stkCallback");
-      return res.status(400).json({
-        ResultCode: 1,
-        ResultDesc: "Invalid callback format",
-      });
-    }
-
-    const { MerchantRequestID, CheckoutRequestID, ResultCode, ResultDesc } =
-      stkCallback;
-
-    console.log("Processing callback for:", {
-      MerchantRequestID,
-      CheckoutRequestID,
-      ResultCode,
-      ResultDesc,
-    });
-
-    // Find payment by CheckoutRequestID or MerchantRequestID
-    let payment = await Payment.findOne({
-      $or: [
-        { "mpesaDetails.checkoutRequestId": CheckoutRequestID },
-        { "mpesaDetails.merchantRequestId": MerchantRequestID },
-      ],
-    });
-
-    if (!payment) {
-      console.error("Payment not found for callback:", {
-        MerchantRequestID,
-        CheckoutRequestID,
-      });
-      return res.status(404).json({
-        ResultCode: 1,
-        ResultDesc: "Payment record not found",
-      });
-    }
-
-    console.log("Found payment:", payment._id);
-
-    // Update payment with callback data
-    payment.mpesaDetails.callbackReceived = true;
-    payment.mpesaDetails.callbackData = callbackData;
-
-    // Process the callback based on ResultCode
-    if (ResultCode === 0) {
-      // Payment successful - extract transaction details
-      console.log("Payment successful - processing callback metadata");
-      const callbackMetadata = stkCallback.CallbackMetadata?.Item || [];
-
-      // Extract transaction details from metadata
-      const mpesaReceiptNumber = callbackMetadata.find(
-        (item) => item.Name === "MpesaReceiptNumber"
-      )?.Value;
-
-      const transactionDate = callbackMetadata.find(
-        (item) => item.Name === "TransactionDate"
-      )?.Value;
-
-      const amount = callbackMetadata.find(
-        (item) => item.Name === "Amount"
-      )?.Value;
-
-      const phoneNumber = callbackMetadata.find(
-        (item) => item.Name === "PhoneNumber"
-      )?.Value;
-
-      console.log("Extracted M-Pesa details:", {
-        mpesaReceiptNumber,
-        transactionDate,
-        amount,
-        phoneNumber,
-      });
-
-      if (mpesaReceiptNumber) {
-        payment.receiptNumber = mpesaReceiptNumber; // Update with actual M-Pesa receipt number
-        payment.mpesaDetails.transactionId = mpesaReceiptNumber;
-        payment.mpesaDetails.transactionDate = transactionDate;
-        payment.mpesaDetails.confirmedAmount = amount;
-        payment.mpesaDetails.confirmedPhoneNumber = phoneNumber;
-        payment.status = "completed";
-        payment.verificationStatus = "verified";
-        payment.verificationDate = new Date();
-
-        console.log("Updating student fees balance for payment:", payment._id);
-
-        // Handle course enrollment payments
-        if (payment.courseId) {
-          const { Enrollment, ECourse } = require("../models/elearning");
-
-          const course = await ECourse.findById(payment.courseId);
-          if (course) {
-            const enrollmentData = {
-              studentId: payment.studentId,
-              courseId: payment.courseId,
-              branchId: payment.branchId,
-              enrollmentType: course.registration.type,
-              status: "active", // Set to active since payment is verified
-            };
-
-            const enrollment = new Enrollment(enrollmentData);
-            await enrollment.save();
-
-            console.log("Course enrollment created after successful payment:", {
-              enrollmentId: enrollment._id,
-              studentId: payment.studentId,
-              courseId: payment.courseId,
-            });
-          } else {
-            console.error("Course not found for enrollment:", payment.courseId);
-          }
-        }
-        // Update student fees balance (for traditional fee payments)
-        else if (payment.studentId && !payment.feeId) {
-          const student = await Student.findById(payment.studentId);
-          if (student && student.fees) {
-            const oldBalance = student.fees.totalBalance;
-            student.fees.totalPaid += payment.amount;
-            student.fees.totalBalance -= payment.amount;
-            student.fees.lastPaymentDate = new Date();
-
-            // Add payment to student's payment history
-            const paymentHistoryEntry = {
-              paymentDate: new Date(),
-              amount: payment.amount,
-              paymentMethod: "mpesa",
-              referenceNumber: mpesaReceiptNumber || payment.receiptNumber,
-              notes: `M-Pesa payment - Receipt: ${
-                mpesaReceiptNumber || "Transaction"
-              }`,
-              recordedBy: student.userId, // Use the student's user ID for automated M-Pesa payments
-            };
-
-            if (!student.fees.paymentHistory) {
-              student.fees.paymentHistory = [];
-            }
-            student.fees.paymentHistory.push(paymentHistoryEntry);
-
-            await student.save();
-
-            console.log("Student fees updated:", {
-              studentId: student.studentId,
-              oldBalance,
-              newBalance: student.fees.totalBalance,
-              amountPaid: payment.amount,
-              paymentHistoryCount: student.fees.paymentHistory.length,
-            });
-          }
-        }
-
-        // Update Fee record balance (for traditional fee payments)
-        if (payment.feeId) {
-          const fee = await Fee.findById(payment.feeId);
-          if (fee) {
-            fee.amountPaid += payment.amount;
-            await fee.save();
-            console.log("Fee record updated:", {
-              feeId: fee._id,
-              newAmountPaid: fee.amountPaid,
-            });
-          }
-        }
-      }
-    } else {
-      // Payment failed, cancelled, or no response
-      console.log("Payment failed/cancelled:", { ResultCode, ResultDesc });
-      payment.status = "failed";
-      payment.mpesaDetails.resultCode = ResultCode;
-      payment.mpesaDetails.resultDesc = ResultDesc;
-
-      // Map specific result codes to more descriptive statuses
-      if (ResultCode === 1032) {
-        payment.mpesaDetails.failureReason = "Cancelled by user";
-      } else if (ResultCode === 1037) {
-        payment.mpesaDetails.failureReason = "No response from user";
-      } else {
-        payment.mpesaDetails.failureReason = ResultDesc;
-      }
-    }
-    await payment.save();
-
-    // Send payment status notification
-    try {
-      const notificationService = require("../services/notificationService");
-      const student = await require("../models/Student")
-        .findById(payment.studentId)
-        .populate("userId");
-
-      if (student) {
-        let description = "Fee payment";
-        if (payment.courseId) {
-          const course = await require("../models/elearning").ECourse.findById(
-            payment.courseId
-          );
-          description = course
-            ? `Course: ${course.title}`
-            : "Course enrollment";
-        } else if (payment.feeId) {
-          const fee = await require("../models/Fee").findById(payment.feeId);
-          description = fee ? `Fee: ${fee.feeType}` : "Fee payment";
-        }
-
-        await notificationService.notifyPaymentStatus({
-          userId: student.userId._id,
-          paymentId: payment._id,
-          amount: `$${payment.amount}`,
-          status: payment.status,
-          description,
-          actionUrl:
-            payment.status === "completed"
-              ? `/student/payments/${payment._id}/receipt`
-              : `/student/payments/${payment._id}`,
-        });
-        console.log(
-          `Payment status notification sent to user ${student.userId._id} for payment ${payment._id}`
-        );
-      }
-    } catch (notifError) {
-      console.error("Error sending payment notification:", notifError);
-      // Don't fail the payment processing if notification fails
-    }
-
-    // Respond to M-Pesa
-    res.json({
-      ResultCode: 0,
-      ResultDesc: "Callback processed successfully",
-    });
-  } catch (error) {
-    console.error("M-Pesa callback error:", error);
-    res.status(500).json({
-      ResultCode: 1,
-      ResultDesc: "Callback processing failed",
-    });
-  }
-};
-
-// @desc    Test M-Pesa callback (for testing with webhook.site data)
-// @route   POST /api/fees/payments/mpesa/test-callback
-// @access  Private (Admin/Testing)
-const testMpesaCallback = async (req, res) => {
-  try {
-    console.log("=== TESTING M-PESA CALLBACK ===");
-    console.log("Test callback data:", JSON.stringify(req.body, null, 2));
-
-    // Forward to the actual callback handler
-    return await handleMpesaCallback(req, res);
-  } catch (error) {
-    console.error("Test callback error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Test callback failed",
-      error: error.message,
-    });
-  }
-};
-
 // @desc    Handle Equity Bank payment callback
 // @route   POST /api/fees/payments/equity/callback/:paymentId
 // @access  Public (Jenga callback)
@@ -778,37 +359,7 @@ const handleEquityCallback = async (req, res) => {
       payment.verificationDate = new Date();
 
       // Update student fees balance
-      const student = await Student.findById(payment.studentId);
-      if (student && student.fees) {
-        const oldBalance = student.fees.totalBalance;
-        student.fees.totalBalance -= payment.amount;
-
-        // Add to payment history
-        const paymentHistoryEntry = {
-          date: new Date(),
-          amount: payment.amount,
-          paymentMethod: "equity-mpesa",
-          referenceNumber: transactionRef || payment.receiptNumber,
-          notes: `Equity Bank M-Pesa STK Push - Transaction: ${
-            transactionRef || "N/A"
-          }`,
-          recordedBy: payment.recordedBy,
-        };
-
-        if (!student.fees.paymentHistory) {
-          student.fees.paymentHistory = [];
-        }
-        student.fees.paymentHistory.push(paymentHistoryEntry);
-
-        await student.save();
-
-        console.log("Student fees updated:", {
-          studentId: student.studentId,
-          oldBalance,
-          newBalance: student.fees.totalBalance,
-          amountPaid: payment.amount,
-        });
-      }
+      await updateStudentFeesAfterPayment(payment, transactionRef);
 
       // Update Fee record balance
       if (payment.feeId) {
@@ -990,13 +541,7 @@ const initiateStudentEquityPayment = async (req, res) => {
     }
 
     // Format phone number (ensure it starts with country code)
-    const formattedPhone = phoneNumber.replace(/^\+?254|^0/, "254");
-    if (!/^254[17]\d{8}$/.test(formattedPhone)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number format",
-      });
-    }
+    const formattedPhone = validateAndFormatPhone(phoneNumber);
 
     try {
       const config = getJengaConfig();
@@ -1077,8 +622,6 @@ const initiateStudentEquityPayment = async (req, res) => {
             headers: {
               Authorization: `Bearer ${accessToken}`,
               "Content-Type": "application/json",
-              "Merchant-Code": config.merchantCode,
-              "Api-Key": config.apiKey,
               Signature: signature,
             },
           });
@@ -1209,30 +752,11 @@ const handleEquityIPN = async (req, res) => {
 
         // Update balances if not already done via callback
         if (!payment.equityDetails.callbackReceived) {
-          // Update student fees balance
-          const student = await Student.findById(payment.studentId);
-          if (student && student.fees) {
-            student.fees.totalBalance -= payment.amount;
-            // Add payment history if not exists
-            const existingEntry = student.fees.paymentHistory?.find(
-              (h) => h.referenceNumber === transaction.reference
-            );
-            if (!existingEntry) {
-              const paymentHistoryEntry = {
-                date: new Date(),
-                amount: payment.amount,
-                paymentMethod: "equity",
-                referenceNumber: transaction.reference,
-                notes: `Equity Bank payment - IPN: ${transaction.reference}`,
-                recordedBy: payment.recordedBy,
-              };
-              if (!student.fees.paymentHistory) {
-                student.fees.paymentHistory = [];
-              }
-              student.fees.paymentHistory.push(paymentHistoryEntry);
-              await student.save();
-            }
-          }
+          await updateStudentFeesAfterPayment(
+            payment,
+            transaction.reference,
+            true
+          );
 
           // Update Fee record
           if (payment.feeId) {
@@ -1556,182 +1080,6 @@ const getFeePaymentHistory = async (req, res) => {
   }
 };
 
-// Student Course Fee Payment (without Fee document)
-const initiateStudentMpesaPayment = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation errors",
-        errors: errors.array(),
-      });
-    }
-
-    const { amount, phoneNumber, studentId } = req.body;
-
-    // Determine which student to process payment for
-    let student;
-    if (studentId) {
-      // Secretary initiating payment for a specific student
-      student = await Student.findById(studentId)
-        .populate("courses")
-        .populate({
-          path: "currentClassId",
-          populate: {
-            path: "branchId",
-            select: "name",
-          },
-        });
-    } else {
-      // Student making their own payment
-      student = await Student.findOne({ userId: req.user._id })
-        .populate("courses")
-        .populate({
-          path: "currentClassId",
-          populate: {
-            path: "branchId",
-            select: "name",
-          },
-        });
-    }
-
-    if (!student) {
-      return res.status(404).json({
-        success: false,
-        message: "Student profile not found",
-      });
-    }
-
-    // Check if student has outstanding balance
-    if (!student.fees || student.fees.totalBalance <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "No outstanding fees to pay",
-      });
-    }
-
-    // Validate payment amount
-    if (amount <= 0 || amount > student.fees.totalBalance) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid payment amount. Outstanding balance is ${student.fees.totalBalance}`,
-      });
-    }
-
-    // Format phone number (remove leading +254 or 0, ensure it starts with 254)
-    const formattedPhone = phoneNumber.replace(/^\+?254|^0/, "254");
-    if (!/^254[17]\d{8}$/.test(formattedPhone)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid phone number format",
-      });
-    }
-
-    try {
-      const config = getMpesaConfig();
-      const accessToken = await getMpesaAccessToken();
-      const { password, timestamp } = generateMpesaPassword();
-
-      // Create payment record for course fees first (outside of try block)
-      const receiptNumber = `RCP${Date.now()}${Math.random()
-        .toString(36)
-        .substr(2, 4)
-        .toUpperCase()}`;
-
-      const payment = new Payment({
-        branchId: req.user.branchId,
-        studentId: student._id,
-        amount,
-        paymentMethod: "mpesa",
-        status: "pending",
-        description: "Course Fee Payment",
-        receiptNumber,
-        mpesaDetails: {
-          phoneNumber: formattedPhone,
-        },
-        recordedBy: req.user._id,
-      });
-
-      await payment.save();
-
-      try {
-        // Prepare STK Push request (M-Pesa Express format)
-        const stkPushData = {
-          BusinessShortCode: config.businessShortCode,
-          Password: password,
-          Timestamp: timestamp,
-          TransactionType: "CustomerPayBillOnline",
-          Amount: amount,
-          PartyA: formattedPhone,
-          PartyB: config.businessShortCode,
-          PhoneNumber: formattedPhone,
-          CallBackURL: config.callbackUrl,
-          AccountReference: payment._id.toString().slice(-12), // Max 12 characters
-          TransactionDesc: "Fee Payment", // Max 13 characters
-        };
-
-        // Send STK Push request
-        const response = await axios.post(
-          `${config.baseUrl}/mpesa/stkpush/v1/processrequest`,
-          stkPushData,
-          {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
-
-        // Update payment with M-Pesa details
-        payment.mpesaDetails.checkoutRequestId =
-          response.data.CheckoutRequestID;
-        payment.mpesaDetails.merchantRequestId =
-          response.data.MerchantRequestID;
-        await payment.save();
-
-        res.json({
-          success: true,
-          message: "Payment initiated successfully",
-          data: {
-            paymentId: payment._id,
-            checkoutRequestId: response.data.CheckoutRequestID,
-            merchantRequestId: response.data.MerchantRequestID,
-          },
-        });
-      } catch (mpesaError) {
-        console.error(
-          "M-Pesa STK Push error:",
-          mpesaError.response?.data || mpesaError.message
-        );
-
-        // Update payment status to failed
-        await Payment.findByIdAndUpdate(payment._id, { status: "failed" });
-
-        res.status(500).json({
-          success: false,
-          message: "Failed to initiate M-Pesa payment",
-          error: mpesaError.response?.data || mpesaError.message,
-        });
-      }
-    } catch (error) {
-      console.error("Payment creation error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Server error",
-        error: error.message,
-      });
-    }
-  } catch (error) {
-    console.error("Payment initiation error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: error.message,
-    });
-  }
-};
-
 const getPayments = async (req, res) => {
   try {
     const {
@@ -1982,7 +1330,7 @@ ${req.user.firstName} ${req.user.lastName}
 Secretary`,
           type: "fee_reminder",
           priority: "high",
-          targetAudience: "students",
+          // No targetAudience set - specificRecipients controls visibility
           specificRecipients: [student.userId._id],
           branchId,
           author: {
@@ -2025,10 +1373,6 @@ Secretary`,
 };
 
 module.exports = {
-  initiateMpesaPayment,
-  initiateStudentMpesaPayment,
-  handleMpesaCallback,
-  testMpesaCallback,
   initiateEquityPayment,
   initiateStudentEquityPayment,
   handleEquityCallback,

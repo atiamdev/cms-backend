@@ -7,6 +7,7 @@ const {
   updateCourse,
   deleteCourse,
   getCoursesByLevel,
+  getCourseStatistics,
 } = require("../controllers/courseController");
 const { protect, requireAdmin } = require("../middlewares/auth");
 const { branchAuth } = require("../middlewares/branchAuth");
@@ -302,6 +303,42 @@ router.post(
  *         $ref: '#/components/responses/Unauthorized'
  */
 router.get("/", filterByBranch, getCourses);
+
+/**
+ * @swagger
+ * /courses/statistics:
+ *   get:
+ *     summary: Get course statistics
+ *     tags: [Course Management]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Course statistics
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 statistics:
+ *                   type: object
+ *                   properties:
+ *                     totalCourses:
+ *                       type: number
+ *                     activeCourses:
+ *                       type: number
+ *                     inactiveCourses:
+ *                       type: number
+ *                     coursesByCategory:
+ *                       type: object
+ *                     coursesByLevel:
+ *                       type: object
+ *                     averageCredits:
+ *                       type: number
+ */
+router.get("/statistics", filterByBranch, getCourseStatistics);
 
 /**
  * @swagger
