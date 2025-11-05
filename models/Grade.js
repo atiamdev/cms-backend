@@ -199,13 +199,13 @@ gradeSchema.statics.calculateOverallGrade = async function (
   const overallPercentage = (totalWeightedScore / totalWeightage) * 100;
 
   let overallGrade;
-  if (overallPercentage >= 80) {
+  if (overallPercentage >= 70) {
     overallGrade = "A";
-  } else if (overallPercentage >= 70) {
-    overallGrade = "B";
   } else if (overallPercentage >= 60) {
-    overallGrade = "C";
+    overallGrade = "B";
   } else if (overallPercentage >= 50) {
+    overallGrade = "C";
+  } else if (overallPercentage >= 40) {
     overallGrade = "D";
   } else {
     overallGrade = "F";
@@ -250,13 +250,13 @@ gradeSchema.statics.calculateOverallGrade = async function (
   const overallPercentage = (totalWeightedScore / totalWeightage) * 100;
 
   let overallGrade;
-  if (overallPercentage >= 80) {
+  if (overallPercentage >= 70) {
     overallGrade = "A";
-  } else if (overallPercentage >= 70) {
-    overallGrade = "B";
   } else if (overallPercentage >= 60) {
-    overallGrade = "C";
+    overallGrade = "B";
   } else if (overallPercentage >= 50) {
+    overallGrade = "C";
+  } else if (overallPercentage >= 40) {
     overallGrade = "D";
   } else {
     overallGrade = "F";

@@ -5,6 +5,7 @@ const {
   Enrollment,
   LearningProgress,
   Rating,
+  QuizAttempt,
 } = require("../../models/elearning");
 const User = require("../../models/User");
 const { validationResult } = require("express-validator");
@@ -220,10 +221,11 @@ class ECourseController {
       // For students, get enrollment and progress data
       let enrollmentData = null;
       let learningProgress = null;
+      let student = null;
       if (isStudent) {
         // Find the student record first
         const Student = require("../../models/Student");
-        const student = await Student.findOne({ userId: req.user._id });
+        student = await Student.findOne({ userId: req.user._id });
         if (student) {
           enrollmentData = await Enrollment.findOne({
             studentId: student._id,
@@ -244,9 +246,17 @@ class ECourseController {
 
       // Include modules with content for teachers and admins, and lessons for students
       if (isInstructor || isAdmin || isStudent) {
+        // Fetch LearningModule documents for this course
+        const learningModules = await LearningModule.find({
+          courseId,
+          branchId: course.branchId,
+        })
+          .populate("createdBy", "firstName lastName email")
+          .sort({ order: 1 });
+
         // Fetch content for each module
         const modulesWithContent = await Promise.all(
-          (transformedCourse.modules || []).map(async (module) => {
+          learningModules.map(async (module) => {
             const content = await CourseContent.find({
               courseId: courseId,
               moduleId: module._id,
@@ -256,7 +266,17 @@ class ECourseController {
 
             if (isInstructor || isAdmin) {
               return {
-                ...module,
+                _id: module._id,
+                title: module.title,
+                description: module.description,
+                order: module.order,
+                estimatedDuration: module.estimatedDuration,
+                status: module.status,
+                settings: module.settings,
+                quizId: module.quizId,
+                createdBy: module.createdBy,
+                createdAt: module.createdAt,
+                updatedAt: module.updatedAt,
                 contents: content.map((item) => ({
                   _id: item._id,
                   title: item.title,
@@ -271,6 +291,7 @@ class ECourseController {
                   externalUrls: item.content.externalUrls || [],
                   contentItems: item.content.contentItems || [],
                   videoType: item.content.videoType,
+                  quizId: item.quizId, // Add quizId for quiz content
                   estimatedDuration: item.estimatedDuration,
                   materials: item.materials,
                   status: item.isPublished ? "published" : "draft",
@@ -280,6 +301,85 @@ class ECourseController {
                 })),
               };
             } else if (isStudent) {
+              // For students, check if module is accessible based on quiz completion or learning progress
+              let isAccessible = true;
+
+              // First module is always accessible
+              if (module.order > 1) {
+                // Check learning progress first - if module is already in_progress or completed, it's accessible
+                if (learningProgress) {
+                  const currentModuleProgress =
+                    learningProgress.moduleProgress.find(
+                      (mp) => mp.moduleId.toString() === module._id.toString()
+                    );
+
+                  // If this module is already in_progress or completed, it's accessible
+                  if (
+                    currentModuleProgress &&
+                    (currentModuleProgress.status === "in_progress" ||
+                      currentModuleProgress.status === "completed")
+                  ) {
+                    isAccessible = true;
+                  } else {
+                    // Otherwise, check if previous module's quiz was completed
+                    const prevModule = learningModules.find(
+                      (m) => m.order === module.order - 1
+                    );
+
+                    if (prevModule) {
+                      if (prevModule.quizId) {
+                        const quizAttempt = await QuizAttempt.findOne({
+                          studentId: student._id,
+                          quizId: prevModule.quizId,
+                          status: {
+                            $in: [
+                              "submitted",
+                              "submitted_pending_grading",
+                              "partially_graded",
+                            ],
+                          },
+                          percentageScore: { $gte: 60 }, // Assuming 60% passing score
+                        }).sort({ submittedAt: -1 });
+                        isAccessible = !!quizAttempt;
+                      } else {
+                        // If previous module doesn't have a quiz, check if it's completed in learning progress
+                        const prevModuleProgress =
+                          learningProgress.moduleProgress.find(
+                            (mp) =>
+                              mp.moduleId.toString() ===
+                              prevModule._id.toString()
+                          );
+                        isAccessible =
+                          prevModuleProgress?.status === "completed";
+                      }
+                    }
+                  }
+                } else {
+                  // No learning progress, default to checking previous module quiz
+                  const prevModule = learningModules.find(
+                    (m) => m.order === module.order - 1
+                  );
+
+                  if (prevModule && prevModule.quizId) {
+                    const quizAttempt = await QuizAttempt.findOne({
+                      studentId: student._id,
+                      quizId: prevModule.quizId,
+                      status: {
+                        $in: [
+                          "submitted",
+                          "submitted_pending_grading",
+                          "partially_graded",
+                        ],
+                      },
+                      percentageScore: { $gte: 60 },
+                    }).sort({ submittedAt: -1 });
+                    isAccessible = !!quizAttempt;
+                  } else {
+                    isAccessible = false;
+                  }
+                }
+              }
+
               // For students, transform to lessons
               const lessons = content.map((item, index) => {
                 // Check if lesson is completed in progress data
@@ -333,13 +433,14 @@ class ECourseController {
                   contentItems: item.content?.contentItems || [],
                   attachments: item.materials || [],
                   isCompleted,
-                  isLocked: false, // TODO: implement locking logic
+                  isLocked: !isAccessible, // Inherit module's accessibility
                   order: index + 1,
                 };
               });
 
               // Check if module is completed
               let moduleCompleted = false;
+              let quizCompleted = false;
               if (learningProgress) {
                 const moduleProgress = learningProgress.moduleProgress.find(
                   (mp) => mp.moduleId.toString() === module._id.toString()
@@ -349,11 +450,36 @@ class ECourseController {
                 }
               }
 
+              // Check if quiz is completed
+              if (module.quizId) {
+                const quizAttempt = await QuizAttempt.findOne({
+                  studentId: student._id,
+                  quizId: module.quizId,
+                  status: {
+                    $in: [
+                      "submitted",
+                      "submitted_pending_grading",
+                      "partially_graded",
+                    ],
+                  },
+                  percentageScore: { $gte: 60 }, // Assuming 60% passing score
+                }).sort({ submittedAt: -1 }); // Get most recent passing attempt
+                quizCompleted = !!quizAttempt;
+              }
+
               return {
-                ...module,
+                _id: module._id,
+                title: module.title,
+                description: module.description,
+                order: module.order,
+                estimatedDuration: module.estimatedDuration,
+                status: module.status,
+                quizId: module.quizId,
                 lessons,
                 isCompleted: moduleCompleted,
-                isLocked: false, // TODO: implement locking logic
+                quizCompleted,
+                isAccessible,
+                isLocked: !isAccessible,
               };
             }
           })

@@ -133,6 +133,11 @@ const CourseContentSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // For quiz content type
+    quizId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Quiz",
+    },
     order: {
       type: Number,
       required: true,

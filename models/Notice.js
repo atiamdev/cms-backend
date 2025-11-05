@@ -137,8 +137,9 @@ noticeSchema.methods.isReadByUser = function (userId) {
 
 // Method to mark as read by user
 noticeSchema.methods.markAsReadByUser = function (userId) {
-  if (!this.isReadByUser(userId)) {
-    this.readBy.push({ userId });
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  if (!this.isReadByUser(userObjectId)) {
+    this.readBy.push({ userId: userObjectId });
   }
 };
 

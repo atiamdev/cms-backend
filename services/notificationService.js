@@ -113,7 +113,8 @@ class NotificationService {
         content: message,
         type: type || "info", // Default to "info" if type not provided or invalid
         priority: "medium",
-        targetAudience: this.getTargetAudienceForRole(user.roles[0]),
+        // No targetAudience - specificRecipients controls visibility for personal notifications
+        specificRecipients: [userId], // Target specific user only
         branchId: user.branchId,
         author: {
           userId: userId, // Use the target user ID as author (required field)
@@ -234,7 +235,8 @@ class NotificationService {
         content: message,
         type: "academic",
         priority: "high",
-        targetAudience: "students",
+        // No targetAudience - specificRecipients controls visibility for personal notifications
+        specificRecipients: [student.userId._id], // Target specific student only
         branchId: student.branchId,
         author: {
           userId: student.userId._id,
@@ -318,7 +320,8 @@ class NotificationService {
         content: message,
         type: "info",
         priority,
-        targetAudience: this.getTargetAudienceForRole(user.roles[0]),
+        // No targetAudience - specificRecipients controls visibility for personal notifications
+        specificRecipients: [userId], // Target specific user only
         branchId: user.branchId,
         author: {
           userId,

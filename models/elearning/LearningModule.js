@@ -31,6 +31,10 @@ const LearningModuleSchema = new mongoose.Schema(
         ref: "CourseContent",
       },
     ],
+    quizId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Quiz",
+    },
     prerequisites: [
       {
         type: mongoose.Schema.Types.ObjectId,

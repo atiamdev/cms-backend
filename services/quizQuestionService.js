@@ -19,8 +19,11 @@ class QuizQuestionService {
       ...this.formatQuestionByType(questionData),
     };
 
-    this.validateQuestion(question);
-    return question;
+    const validation = this.validateQuestion(question);
+    if (!validation.isValid) {
+      return { success: false, errors: validation.errors };
+    }
+    return { success: true, question };
   }
 
   /**
@@ -165,11 +168,10 @@ class QuizQuestionService {
         break;
     }
 
-    if (errors.length > 0) {
-      throw new Error(`Question validation failed: ${errors.join(", ")}`);
-    }
-
-    return true;
+    return {
+      isValid: errors.length === 0,
+      errors,
+    };
   }
 
   /**
@@ -477,12 +479,12 @@ class QuizQuestionService {
     switch (format) {
       case "json":
         for (const questionData of questionsData) {
-          try {
-            const question = this.createQuestion(questionData);
-            importedQuestions.push(question);
-          } catch (error) {
+          const result = this.createQuestion(questionData);
+          if (result.success) {
+            importedQuestions.push(result.question);
+          } else {
             console.error(
-              `Error importing question: ${error.message}`,
+              `Error importing question: ${result.errors.join(", ")}`,
               questionData
             );
           }

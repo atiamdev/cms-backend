@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 // Get notices for the current user based on their role
 const getStudentNotices = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = new mongoose.Types.ObjectId(req.user.id);
     const branchId = req.user.branchId;
     const userRole = req.user.roles[0]; // Get primary role
 
@@ -27,14 +27,14 @@ const getStudentNotices = async (req, res) => {
         allowedAudiences = ["all", "students"];
         break;
       case "teacher":
-        allowedAudiences = ["all", "teachers", "students"]; // Teachers can see student notices too for context
+        allowedAudiences = ["all", "teachers"];
         break;
       case "secretary":
       case "branchadmin":
       case "admin":
       case "superadmin":
-        // Staff and admins can see all notices
-        allowedAudiences = ["all", "students", "teachers", "staff", "parents"];
+        // Staff and admins can see general notices and staff-specific notices
+        allowedAudiences = ["all", "staff"];
         break;
       case "parent":
         allowedAudiences = ["all", "parents"];
@@ -46,58 +46,42 @@ const getStudentNotices = async (req, res) => {
     // Find notices for the user's branch and role
     let query;
 
-    if (isAdmin) {
-      // Admins can see all notices
-      query = {
-        $and: [
-          { branchId: branchId },
-          { isActive: true },
-          { publishDate: { $lte: new Date() } },
-          {
-            $or: [
-              { expiryDate: { $exists: false } },
-              { expiryDate: null },
-              { expiryDate: { $gt: new Date() } },
-            ],
-          },
-        ],
-      };
-    } else {
-      // Non-admins see notices based on audience and specific recipients
-      query = {
-        $and: [
-          { branchId: branchId },
-          { isActive: true },
-          { publishDate: { $lte: new Date() } },
-          {
-            $or: [
-              // General notices for this user's audience (must have no specific recipients)
-              {
-                targetAudience: { $in: allowedAudiences },
-                specificRecipients: { $exists: false },
-              },
-              {
-                targetAudience: { $in: allowedAudiences },
-                specificRecipients: { $size: 0 },
-              },
-              {
-                targetAudience: { $in: allowedAudiences },
-                specificRecipients: null,
-              },
-              // Notices specifically addressed to this user (regardless of targetAudience)
-              { specificRecipients: userId },
-            ],
-          },
-          {
-            $or: [
-              { expiryDate: { $exists: false } },
-              { expiryDate: null },
-              { expiryDate: { $gt: new Date() } },
-            ],
-          },
-        ],
-      };
-    }
+    // All users can see:
+    // 1. General notices based on their role's allowed audiences (where specificRecipients is empty/null)
+    // 2. Personal notices specifically addressed to them (regardless of targetAudience)
+    query = {
+      $and: [
+        { branchId: branchId },
+        { isActive: true },
+        { publishDate: { $lte: new Date() } },
+        {
+          $or: [
+            // General notices for this user's audience (must have no specific recipients)
+            {
+              targetAudience: { $in: allowedAudiences },
+              specificRecipients: { $exists: false },
+            },
+            {
+              targetAudience: { $in: allowedAudiences },
+              specificRecipients: { $size: 0 },
+            },
+            {
+              targetAudience: { $in: allowedAudiences },
+              specificRecipients: null,
+            },
+            // Notices specifically addressed to this user (regardless of targetAudience)
+            { specificRecipients: { $in: [userId] } },
+          ],
+        },
+        {
+          $or: [
+            { expiryDate: { $exists: false } },
+            { expiryDate: null },
+            { expiryDate: { $gt: new Date() } },
+          ],
+        },
+      ],
+    };
 
     // Get total count for pagination
     const totalNotices = await Notice.countDocuments(query);
@@ -178,7 +162,7 @@ const markNoticeAsRead = async (req, res) => {
 // Mark all notices as read for current user
 const markAllNoticesAsRead = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = new mongoose.Types.ObjectId(req.user.id);
     const branchId = req.user.branchId;
     const userRole = req.user.roles[0];
 
@@ -190,13 +174,14 @@ const markAllNoticesAsRead = async (req, res) => {
         allowedAudiences = ["all", "students"];
         break;
       case "teacher":
-        allowedAudiences = ["all", "teachers", "students"];
+        allowedAudiences = ["all", "teachers"];
         break;
       case "secretary":
       case "branchadmin":
       case "admin":
       case "superadmin":
-        allowedAudiences = ["all", "students", "teachers", "staff", "parents"];
+        // Staff and admins can see general notices and staff-specific notices
+        allowedAudiences = ["all", "staff"];
         break;
       case "parent":
         allowedAudiences = ["all", "parents"];
@@ -206,18 +191,39 @@ const markAllNoticesAsRead = async (req, res) => {
     }
 
     // Find all unread notices for this user
-    const unreadNotices = await Notice.find({
+    // All users can see:
+    // 1. General notices based on their role's allowed audiences (where specificRecipients is empty/null)
+    // 2. Personal notices specifically addressed to them (regardless of targetAudience)
+    const query = {
       branchId,
       isActive: true,
-      targetAudience: { $in: allowedAudiences },
       publishDate: { $lte: new Date() },
       $or: [
         { expiryDate: { $exists: false } },
         { expiryDate: null },
         { expiryDate: { $gt: new Date() } },
       ],
+      $or: [
+        // General notices for this user's audience (must have no specific recipients)
+        {
+          targetAudience: { $in: allowedAudiences },
+          specificRecipients: { $exists: false },
+        },
+        {
+          targetAudience: { $in: allowedAudiences },
+          specificRecipients: { $size: 0 },
+        },
+        {
+          targetAudience: { $in: allowedAudiences },
+          specificRecipients: null,
+        },
+        // Notices specifically addressed to this user (regardless of targetAudience)
+        { specificRecipients: { $in: [userId] } },
+      ],
       readBy: { $not: { $elemMatch: { userId } } },
-    });
+    };
+
+    const unreadNotices = await Notice.find(query);
 
     // Mark each notice as read
     for (const notice of unreadNotices) {

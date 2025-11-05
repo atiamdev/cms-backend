@@ -1,4 +1,5 @@
 const { validationResult } = require("express-validator");
+const mongoose = require("mongoose");
 const Course = require("../models/Course");
 const { generateId } = require("../utils/helpers");
 const {
@@ -318,6 +319,72 @@ const debugGetAllCourses = async (req, res) => {
   }
 };
 
+// @desc    Get course statistics
+// @route   GET /api/courses/statistics
+// @access  Private (Admin, Academic Head)
+const getCourseStatistics = async (req, res) => {
+  try {
+    const [totalCourses, activeCourses] = await Promise.all([
+      Course.countDocuments({ branchId: req.branchId }),
+      Course.countDocuments({ branchId: req.branchId, isActive: true }),
+    ]);
+
+    const inactiveCourses = totalCourses - activeCourses;
+
+    // Get courses by category and level
+    const coursesByCategory = await Course.aggregate([
+      { $match: { branchId: new mongoose.Types.ObjectId(req.branchId) } },
+      { $group: { _id: "$category", count: { $sum: 1 } } },
+    ]);
+
+    const coursesByLevel = await Course.aggregate([
+      { $match: { branchId: new mongoose.Types.ObjectId(req.branchId) } },
+      { $group: { _id: "$level", count: { $sum: 1 } } },
+    ]);
+
+    // Calculate average credits
+    const creditStats = await Course.aggregate([
+      { $match: { branchId: new mongoose.Types.ObjectId(req.branchId) } },
+      {
+        $group: {
+          _id: null,
+          totalCredits: { $sum: "$credits" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const averageCredits =
+      creditStats.length > 0
+        ? creditStats[0].totalCredits / creditStats[0].count
+        : 0;
+
+    res.json({
+      success: true,
+      statistics: {
+        totalCourses,
+        activeCourses,
+        inactiveCourses,
+        coursesByCategory: coursesByCategory.reduce((acc, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {}),
+        coursesByLevel: coursesByLevel.reduce((acc, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {}),
+        averageCredits: Math.round(averageCredits * 10) / 10, // Round to 1 decimal place
+      },
+    });
+  } catch (error) {
+    console.error("Get course statistics error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching course statistics",
+    });
+  }
+};
+
 module.exports = {
   createCourse,
   getCourses,
@@ -325,5 +392,6 @@ module.exports = {
   updateCourse,
   deleteCourse,
   getCoursesByLevel,
+  getCourseStatistics,
   debugGetAllCourses,
 };

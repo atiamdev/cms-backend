@@ -158,15 +158,23 @@ const createQuiz = async (req, res) => {
     // Process and validate questions if provided
     let processedQuestions = [];
     if (questions && questions.length > 0) {
-      try {
-        processedQuestions = questions.map((questionData) =>
-          quizQuestionService.createQuestion(questionData)
-        );
-      } catch (error) {
+      const validationErrors = [];
+      for (let i = 0; i < questions.length; i++) {
+        const result = quizQuestionService.createQuestion(questions[i]);
+        if (!result.success) {
+          validationErrors.push({
+            questionIndex: i + 1,
+            errors: result.errors,
+          });
+        } else {
+          processedQuestions.push(result.question);
+        }
+      }
+      if (validationErrors.length > 0) {
         return res.status(400).json({
           success: false,
           message: "Question validation failed",
-          error: error.message,
+          errors: validationErrors,
         });
       }
     }
@@ -1151,9 +1159,26 @@ const addQuestions = async (req, res) => {
     }
 
     // Process and validate new questions
-    const processedQuestions = questions.map((questionData) =>
-      quizQuestionService.createQuestion(questionData)
-    );
+    const processedQuestions = [];
+    const validationErrors = [];
+    for (let i = 0; i < questions.length; i++) {
+      const result = quizQuestionService.createQuestion(questions[i]);
+      if (!result.success) {
+        validationErrors.push({
+          questionIndex: i + 1,
+          errors: result.errors,
+        });
+      } else {
+        processedQuestions.push(result.question);
+      }
+    }
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Question validation failed",
+        errors: validationErrors,
+      });
+    }
 
     // Add questions to quiz
     quiz.questions.push(...processedQuestions);
@@ -1611,6 +1636,272 @@ const submitQuizAttempt = async (req, res) => {
     } catch (gradeError) {
       console.error("Error creating automatic grade:", gradeError);
       // Don't fail the quiz submission if grade creation fails
+    }
+
+    // Update course progress for e-learning courses
+    try {
+      const quiz = attempt.quizId; // Get the populated quiz
+      console.log(
+        "Progress update - quiz:",
+        quiz?._id,
+        "courseType:",
+        quiz?.courseType,
+        "moduleId:",
+        quiz?.moduleId
+      );
+      if (quiz && quiz.courseType === "ecourse") {
+        const LearningProgress = require("../../models/elearning/LearningProgress");
+        const LearningModule = require("../../models/elearning/LearningModule");
+
+        // Find the learning progress for this student and course
+        let learningProgress = await LearningProgress.findOne({
+          studentId,
+          courseId: quiz.courseId,
+        });
+        console.log(
+          "Progress update - learningProgress found:",
+          !!learningProgress
+        );
+
+        if (learningProgress) {
+          // Find which module contains this quiz
+          let modules = [];
+
+          if (quiz.moduleId) {
+            // If quiz has moduleId, find by that
+            console.log(
+              "Progress update - finding module by moduleId:",
+              quiz.moduleId
+            );
+            const module = await LearningModule.findById(quiz.moduleId);
+            if (module) modules = [module];
+            console.log(
+              "Progress update - module found by moduleId:",
+              !!module
+            );
+          } else {
+            // Otherwise, find by quizId
+            console.log(
+              "Progress update - finding modules by quizId:",
+              quiz._id
+            );
+            modules = await LearningModule.find({
+              courseId: quiz.courseId,
+              quizId: quiz._id,
+            });
+            console.log(
+              "Progress update - modules found by quizId:",
+              modules.length
+            );
+          }
+
+          if (modules.length > 0) {
+            const module = modules[0];
+            console.log(
+              "Progress update - module found:",
+              module._id,
+              "title:",
+              module.title
+            );
+            const moduleProgressIndex =
+              learningProgress.moduleProgress.findIndex(
+                (mp) => mp.moduleId.toString() === module._id.toString()
+              );
+
+            console.log(
+              "Progress update - moduleProgressIndex:",
+              moduleProgressIndex
+            );
+
+            if (moduleProgressIndex >= 0) {
+              const moduleProgress =
+                learningProgress.moduleProgress[moduleProgressIndex];
+
+              // Update assessment results
+              const existingResultIndex =
+                moduleProgress.assessmentResults.findIndex(
+                  (ar) => ar.assessmentId.toString() === quiz._id.toString()
+                );
+
+              const assessmentResult = {
+                assessmentId: quiz._id,
+                assessmentType: "quiz",
+                score: attempt.totalScore,
+                maxScore: attempt.totalPossible,
+                percentage: attempt.percentageScore,
+                attempts: 1, // This would need to be calculated properly
+                bestAttemptScore: attempt.totalScore,
+                submittedAt: attempt.submittedAt,
+                passed: attempt.percentageScore >= 60, // Assuming 60% is passing
+              };
+
+              if (existingResultIndex >= 0) {
+                // Update existing result
+                moduleProgress.assessmentResults[existingResultIndex] =
+                  assessmentResult;
+              } else {
+                // Add new result
+                moduleProgress.assessmentResults.push(assessmentResult);
+              }
+
+              // Update completion criteria
+              moduleProgress.completionCriteria.requiredAssessmentsCompleted =
+                moduleProgress.assessmentResults.filter(
+                  (ar) => ar.passed
+                ).length;
+
+              // Check if module is now completed
+              const totalAssessments = 1; // For now, assume 1 quiz per module
+              const hasPassedQuiz = assessmentResult.passed;
+
+              console.log(
+                "Progress update - hasPassedQuiz:",
+                hasPassedQuiz,
+                "module status:",
+                moduleProgress.status
+              );
+
+              // Mark module as completed if quiz is passed
+              if (hasPassedQuiz) {
+                const wasAlreadyCompleted =
+                  moduleProgress.status === "completed";
+
+                if (!wasAlreadyCompleted) {
+                  moduleProgress.status = "completed";
+                  moduleProgress.completedAt = new Date();
+                  moduleProgress.progress = 100;
+                  console.log("Progress update - module marked as completed");
+                }
+
+                // Always try to unlock next module when quiz is passed (even if module was already completed)
+                const allModules = await LearningModule.find({
+                  courseId: quiz.courseId,
+                }).sort({ order: 1 });
+
+                const currentModuleIndex = allModules.findIndex(
+                  (m) => m._id.toString() === module._id.toString()
+                );
+
+                console.log(
+                  "Progress update - currentModuleIndex:",
+                  currentModuleIndex,
+                  "total modules:",
+                  allModules.length
+                );
+
+                if (
+                  currentModuleIndex >= 0 &&
+                  currentModuleIndex < allModules.length - 1
+                ) {
+                  const nextModule = allModules[currentModuleIndex + 1];
+                  const nextModuleProgressIndex =
+                    learningProgress.moduleProgress.findIndex(
+                      (mp) =>
+                        mp.moduleId.toString() === nextModule._id.toString()
+                    );
+
+                  console.log(
+                    "Progress update - unlocking next module:",
+                    nextModule._id,
+                    "title:",
+                    nextModule.title,
+                    "progressIndex:",
+                    nextModuleProgressIndex
+                  );
+
+                  if (nextModuleProgressIndex >= 0) {
+                    const nextModuleStatus =
+                      learningProgress.moduleProgress[nextModuleProgressIndex]
+                        .status;
+                    console.log(
+                      "Progress update - next module current status:",
+                      nextModuleStatus
+                    );
+
+                    // Only unlock if the next module is not_started (not yet started)
+                    if (nextModuleStatus === "not_started") {
+                      learningProgress.moduleProgress[
+                        nextModuleProgressIndex
+                      ].status = "in_progress";
+                      console.log(
+                        "Progress update - next module unlocked from not_started to in_progress!"
+                      );
+                    } else {
+                      console.log(
+                        "Progress update - next module already unlocked, status:",
+                        nextModuleStatus
+                      );
+                    }
+                  } else {
+                    console.log(
+                      "Progress update - next module progress not found, creating it"
+                    );
+                    // Create progress for next module if it doesn't exist
+                    learningProgress.moduleProgress.push({
+                      moduleId: nextModule._id,
+                      status: "in_progress",
+                      progress: 0,
+                      contentProgress: [],
+                      assessmentResults: [],
+                      completionCriteria: {
+                        requiredContentCompleted: 0,
+                        requiredAssessmentsCompleted: 0,
+                      },
+                    });
+                    console.log(
+                      "Progress update - next module progress created and unlocked!"
+                    );
+                  }
+
+                  // Verify the save worked by reloading
+                  await learningProgress.save();
+                  console.log("Progress update - learningProgress saved");
+
+                  const verifyProgress = await LearningProgress.findOne({
+                    studentId,
+                    courseId: quiz.courseId,
+                  });
+                  if (verifyProgress && nextModule) {
+                    const nextModuleVerify = verifyProgress.moduleProgress.find(
+                      (mp) =>
+                        mp.moduleId.toString() === nextModule._id.toString()
+                    );
+                    console.log(
+                      "Progress update - verification after save, next module status:",
+                      nextModuleVerify?.status
+                    );
+                  }
+                } else {
+                  // No next module to unlock, just save
+                  await learningProgress.save();
+                  console.log(
+                    "Progress update - learningProgress saved (no next module)"
+                  );
+                }
+              } else {
+                // Quiz not passed, just save the progress
+                await learningProgress.save();
+                console.log(
+                  "Progress update - learningProgress saved (quiz not passed)"
+                );
+              }
+            } else {
+              console.log(
+                "Progress update - module progress not found in learningProgress"
+              );
+            }
+          } else {
+            console.log("Progress update - no modules found for quiz");
+          }
+        } else {
+          console.log("Progress update - no learningProgress found");
+        }
+      } else {
+        console.log("Progress update - quiz not found or not ecourse");
+      }
+    } catch (progressError) {
+      console.error("Error updating course progress:", progressError);
+      // Don't fail the quiz submission if progress update fails
     }
 
     res.json({
