@@ -77,47 +77,97 @@ const upload = multer({
   },
 });
 
-// Jenga (Equity Bank) configuration
+// Jenga (Equity Bank) configuration - Updated to use FinServe API
 const getJengaConfig = () => ({
   merchantCode: process.env.JENGA_MERCHANT_CODE,
-  apiKey: process.env.JENGA_API_KEY,
   consumerSecret: process.env.JENGA_CONSUMER_SECRET,
+  apiKey: process.env.JENGA_API_KEY,
+  callbackUrl: process.env.JENGA_CALLBACK_URL,
+  accountNumber:
+    process.env.JENGA_ACCOUNT_NUMBER || process.env.JENGA_MERCHANT_CODE,
+  merchantName: process.env.JENGA_MERCHANT_NAME || "CMS School Management",
+  privateKeyPath: process.env.JENGA_PRIVATE_KEY_PATH || "./keys/privatekey.pem",
   baseUrl:
     process.env.JENGA_ENVIRONMENT === "production"
-      ? "https://api.jengahq.io"
-      : "https://sandbox.jengahq.io",
-  callbackUrl: process.env.JENGA_CALLBACK_URL,
+      ? "https://api.finserve.africa"
+      : "https://uat.finserve.africa",
 });
 
-// Get Jenga access token
+// Get Jenga access token - Updated to use new authentication endpoint
 const getJengaAccessToken = async () => {
-  const config = getJengaConfig();
-
-  const auth = Buffer.from(
-    `${config.merchantCode}:${config.consumerSecret}`
-  ).toString("base64");
-
   try {
+    const config = getJengaConfig();
+
+    console.log("=== JENGA ACCESS TOKEN REQUEST ===");
+    console.log("Base URL:", config.baseUrl);
+    console.log("Merchant Code:", config.merchantCode);
+    console.log("API Key:", config.apiKey ? "Set" : "Missing");
+    console.log("Consumer Secret:", config.consumerSecret ? "Set" : "Missing");
+
     const response = await axios.post(
-      `${config.baseUrl}/identity/v2/token`,
+      `${config.baseUrl}/authentication/api/v3/authenticate/merchant`,
       {
-        grant_type: "client_credentials",
+        merchantCode: config.merchantCode,
+        consumerSecret: config.consumerSecret,
       },
       {
         headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Type": "application/json",
+          "Api-Key": config.apiKey,
         },
+        timeout: 30000, // 30 second timeout
       }
     );
 
-    return response.data.access_token;
+    console.log("Access token obtained successfully for e-learning");
+    console.log("Token:", response.data.accessToken ? "Received" : "Missing");
+    return response.data.accessToken;
   } catch (error) {
-    console.error(
-      "Jenga access token error:",
-      error.response?.data || error.message
+    console.error("=== JENGA ACCESS TOKEN ERROR ===");
+    console.error("Error type:", error.code);
+    console.error("Error message:", error.message);
+    if (error.response) {
+      console.error("Response status:", error.response.status);
+      console.error("Response data:", error.response.data);
+    }
+    console.error("Full error:", error);
+    throw new Error(`Failed to get Jenga access token: ${error.message}`);
+  }
+};
+
+// Validate and format phone number for Kenyan M-Pesa
+const validateAndFormatPhone = (phoneNumber) => {
+  if (!phoneNumber) {
+    throw new Error("Phone number is required");
+  }
+  const formattedPhone = phoneNumber.replace(/^\+?254|^0/, "254");
+  if (!/^254[17]\d{8}$/.test(formattedPhone)) {
+    throw new Error("Invalid phone number format");
+  }
+  return formattedPhone;
+};
+
+// Generate RSA signature for Jenga API requests
+const generateJengaSignature = (dataToSign) => {
+  try {
+    const config = getJengaConfig();
+    const privateKeyPath = path.resolve(
+      process.env.JENGA_PRIVATE_KEY_PATH || "./keys/privatekey.pem"
     );
-    throw new Error("Failed to get Jenga access token");
+
+    if (!fs.existsSync(privateKeyPath)) {
+      throw new Error(`RSA private key not found at: ${privateKeyPath}`);
+    }
+
+    const privateKey = fs.readFileSync(privateKeyPath, "utf8");
+    const sign = crypto.createSign("SHA256"); // Use SHA256 as per Jenga docs
+    sign.update(dataToSign);
+    const signature = sign.sign(privateKey, "base64"); // Use base64 as per Jenga docs
+
+    return signature;
+  } catch (error) {
+    console.error("Error generating RSA signature:", error);
+    throw new Error(`Failed to generate signature: ${error.message}`);
   }
 };
 
@@ -828,6 +878,14 @@ router.get("/my-courses", protect, authorize("student"), async (req, res) => {
     });
 
     console.log("Found enrollments:", enrollments.length);
+    const nullCourseEnrollments = enrollments.filter((e) => !e.courseId);
+    if (nullCourseEnrollments.length > 0) {
+      console.warn(
+        `Found ${nullCourseEnrollments.length} enrollments with null courseId for student ${studentId}`
+      );
+      // Optionally clean up orphaned enrollments
+      // await Enrollment.deleteMany({ _id: { $in: nullCourseEnrollments.map(e => e._id) } });
+    }
     enrollments.forEach((enrollment) => {
       console.log("Enrollment:", {
         id: enrollment._id,
@@ -840,50 +898,53 @@ router.get("/my-courses", protect, authorize("student"), async (req, res) => {
     });
 
     // Transform data to match frontend expectations
-    const transformedEnrollments = enrollments.map((enrollment) => ({
-      _id: enrollment._id,
-      studentId: enrollment.studentId.toString(),
-      courseId: enrollment.courseId._id.toString(),
-      progress: enrollment.progress || 0,
-      status: enrollment.status,
-      enrolledAt: enrollment.createdAt,
-      lastAccessedAt: enrollment.lastAccessedAt,
-      completedAt: enrollment.completedAt,
-      course: {
-        _id: enrollment.courseId._id.toString(),
-        title: enrollment.courseId.title,
-        description: enrollment.courseId.description,
-        shortDescription: enrollment.courseId.shortDescription || "",
-        instructor: enrollment.courseId.instructor
-          ? {
-              _id: enrollment.courseId.instructor._id.toString(),
-              firstName: enrollment.courseId.instructor.firstName,
-              lastName: enrollment.courseId.instructor.lastName,
-              email: enrollment.courseId.instructor.email || "",
-            }
-          : {
-              _id: "",
-              firstName: "Unknown",
-              lastName: "Instructor",
-              email: "",
-            },
-        category: enrollment.courseId.category || "",
-        level: enrollment.courseId.level || "Beginner",
-        duration: {
-          estimatedHours: enrollment.courseId.duration?.estimatedHours || 0,
-          estimatedMinutes: enrollment.courseId.duration?.estimatedMinutes || 0,
+    const transformedEnrollments = enrollments
+      .filter((enrollment) => enrollment.courseId) // Filter out enrollments with null courseId
+      .map((enrollment) => ({
+        _id: enrollment._id,
+        studentId: enrollment.studentId.toString(),
+        courseId: enrollment.courseId._id.toString(),
+        progress: enrollment.progress || 0,
+        status: enrollment.status,
+        enrolledAt: enrollment.createdAt,
+        lastAccessedAt: enrollment.lastAccessedAt,
+        completedAt: enrollment.completedAt,
+        course: {
+          _id: enrollment.courseId._id.toString(),
+          title: enrollment.courseId.title,
+          description: enrollment.courseId.description,
+          shortDescription: enrollment.courseId.shortDescription || "",
+          instructor: enrollment.courseId.instructor
+            ? {
+                _id: enrollment.courseId.instructor._id.toString(),
+                firstName: enrollment.courseId.instructor.firstName,
+                lastName: enrollment.courseId.instructor.lastName,
+                email: enrollment.courseId.instructor.email || "",
+              }
+            : {
+                _id: "",
+                firstName: "Unknown",
+                lastName: "Instructor",
+                email: "",
+              },
+          category: enrollment.courseId.category || "",
+          level: enrollment.courseId.level || "Beginner",
+          duration: {
+            estimatedHours: enrollment.courseId.duration?.estimatedHours || 0,
+            estimatedMinutes:
+              enrollment.courseId.duration?.estimatedMinutes || 0,
+          },
+          pricing: {
+            type: enrollment.courseId.pricing?.type || "free",
+            amount: enrollment.courseId.pricing?.amount || 0,
+            currency: enrollment.courseId.pricing?.currency || "KES",
+          },
+          thumbnail: enrollment.courseId.thumbnail || "",
+          language: enrollment.courseId.language || "English",
+          rating: enrollment.courseId.stats?.averageRating || 0,
+          reviewCount: enrollment.courseId.stats?.totalRatings || 0,
         },
-        pricing: {
-          type: enrollment.courseId.pricing?.type || "free",
-          amount: enrollment.courseId.pricing?.amount || 0,
-          currency: enrollment.courseId.pricing?.currency || "KES",
-        },
-        thumbnail: enrollment.courseId.thumbnail || "",
-        language: enrollment.courseId.language || "English",
-        rating: enrollment.courseId.stats?.averageRating || 0,
-        reviewCount: enrollment.courseId.stats?.totalRatings || 0,
-      },
-    }));
+      }));
 
     res.json({
       success: true,
@@ -1234,6 +1295,39 @@ router.post(
         });
       }
 
+      // Check chain prerequisites if course is part of a chain
+      if (
+        course.chain &&
+        course.chain.chainId &&
+        course.chain.sequenceNumber > 1
+      ) {
+        // Find the previous course in the chain
+        const previousCourse = await ECourse.findOne({
+          "chain.chainId": course.chain.chainId,
+          "chain.sequenceNumber": course.chain.sequenceNumber - 1,
+        });
+
+        if (previousCourse) {
+          // Check if student has completed the previous course
+          const previousEnrollment = await Enrollment.findOne({
+            studentId,
+            courseId: previousCourse._id,
+            status: "completed",
+          });
+
+          if (!previousEnrollment) {
+            return res.status(400).json({
+              success: false,
+              message: `You must complete "${previousCourse.title}" before enrolling in this course`,
+              data: {
+                previousCourseId: previousCourse._id,
+                previousCourseTitle: previousCourse.title,
+              },
+            });
+          }
+        }
+      }
+
       // Check if course is paid
       if (course.pricing.type === "paid") {
         // Validate payment amount
@@ -1279,13 +1373,17 @@ router.post(
           const config = getJengaConfig();
           const accessToken = await getJengaAccessToken();
 
-          // Generate order reference
-          const orderReference = `EC-${Date.now()}-${Math.random()
-            .toString(36)
-            .substr(2, 5)
-            .toUpperCase()}`;
+          // Generate unique order reference (alphanumeric only, no special characters)
+          const orderReference = `EC${
+            student.studentId || studentId.toString()
+          }${Date.now()}`;
 
           // Create payment record for course enrollment
+          const receiptNumber = `RCP${Date.now()}${Math.random()
+            .toString(36)
+            .substr(2, 4)
+            .toUpperCase()}`;
+
           const payment = new Payment({
             branchId,
             courseId,
@@ -1293,6 +1391,8 @@ router.post(
             amount: course.pricing.amount,
             paymentMethod: "equity",
             status: "pending",
+            description: `Course enrollment: ${course.title}`,
+            receiptNumber,
             equityDetails: {
               orderReference,
             },
@@ -1301,50 +1401,117 @@ router.post(
 
           await payment.save();
 
-          // Prepare Jenga checkout data
-          const checkoutData = {
-            token: accessToken,
-            merchantCode: config.merchantCode,
-            currency: "KES",
-            orderAmount: course.pricing.amount.toString(),
-            orderReference,
-            productType: "Service",
-            productDescription: `Course enrollment: ${course.title}`,
-            extraData: payment._id.toString(),
-            paymentTimeLimit: "15mins",
-            customerFirstName,
-            customerLastName,
-            customerPostalCodeZip: "00100", // Default Nairobi postal code
-            customerAddress: "Nairobi, Kenya", // Default address
-            customerEmail,
-            customerPhone: formattedPhone,
-            callbackUrl: `${config.callbackUrl}/${payment._id}`,
-            countryCode: "KE",
-            secondaryReference: student.studentId || studentId.toString(),
+          // Prepare Jenga M-Pesa STK Push request
+          const stkPushData = {
+            order: {
+              orderReference: orderReference,
+              orderAmount: course.pricing.amount,
+              orderCurrency: "KES",
+              source: "APICHECKOUT",
+              countryCode: "KE",
+              description: `Course enrollment for ${course.title.replace(
+                /[^a-zA-Z0-9 ]/g,
+                ""
+              )}`, // Remove special characters
+            },
+            customer: {
+              name: `${customerFirstName} ${customerLastName}`,
+              email: customerEmail,
+              phoneNumber: formattedPhone,
+              identityNumber: student.studentId || studentId.toString(),
+              firstAddress: "",
+              secondAddress: "",
+            },
+            payment: {
+              paymentReference: `MKQR${orderReference}`,
+              paymentCurrency: "KES",
+              channel: "MOBILE",
+              service: "MPESA",
+              provider: "JENGA",
+              callbackUrl: config.callbackUrl,
+              details: {
+                msisdn: formattedPhone,
+                paymentAmount: course.pricing.amount,
+              },
+            },
           };
 
-          // Generate signature: merchantCode + orderReference + currency + orderAmount + callbackUrl
-          const signatureString = `${config.merchantCode}${orderReference}${checkoutData.currency}${checkoutData.orderAmount}${checkoutData.callbackUrl}`;
-          checkoutData.signature = crypto
-            .createHash("sha256")
-            .update(signatureString)
-            .digest("hex");
+          // Generate RSA signature for STK Push
+          // Formula: order.orderReference + payment.paymentCurrency + payment.details.msisdn + payment.details.paymentAmount
+          const signatureString = `${stkPushData.order.orderReference}${stkPushData.payment.paymentCurrency}${stkPushData.payment.details.msisdn}${stkPushData.payment.details.paymentAmount}`;
+          console.log("=== COURSE ENROLLMENT STK PUSH SIGNATURE ===");
+          console.log("Order Reference:", stkPushData.order.orderReference);
+          console.log("Payment Currency:", stkPushData.payment.paymentCurrency);
+          console.log("MSISDN:", stkPushData.payment.details.msisdn);
+          console.log(
+            "Payment Amount:",
+            stkPushData.payment.details.paymentAmount
+          );
+          console.log("Signature String:", signatureString);
 
-          // Store checkout data for redirect
-          payment.equityDetails.checkoutData = checkoutData;
+          const signature = generateJengaSignature(signatureString);
+          console.log("Generated RSA Signature:", signature);
+          console.log("==========================================");
+
+          // Make Jenga STK Push request
+          const stkPushUrl = `${config.baseUrl}/api-checkout/mpesa-stk-push/v3.0/init`;
+          console.log("Jenga STK Push endpoint:", stkPushUrl);
+
+          let stkResponse;
+          try {
+            stkResponse = await axios.post(stkPushUrl, stkPushData, {
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+                Signature: signature,
+              },
+              timeout: 30000, // 30 second timeout
+            });
+            console.log("Successful STK Push response:", stkResponse.data);
+          } catch (stkError) {
+            console.error(
+              "STK Push failed:",
+              stkError.response?.status,
+              stkError.response?.data || stkError.message
+            );
+
+            payment.status = "failed";
+            payment.equityDetails.error = {
+              message: stkError.response?.data?.message || stkError.message,
+              status: stkError.response?.status,
+            };
+            await payment.save();
+
+            return res.status(502).json({
+              success: false,
+              message: "Failed to initiate M-Pesa payment",
+              error: stkError.response?.data?.message || stkError.message,
+            });
+          }
+
+          // Successful request - update payment record
+          payment.equityDetails.stkPushResponse = stkResponse.data;
+          if (stkResponse.data.data?.paymentReference) {
+            payment.equityDetails.transactionRef =
+              stkResponse.data.data.paymentReference;
+          }
           await payment.save();
 
           res.json({
             success: true,
             message:
-              "Equity payment initiated successfully. Redirecting to payment gateway...",
+              stkResponse.data.message ||
+              "M-Pesa STK Push initiated successfully. Check your phone to complete payment.",
             data: {
               paymentId: payment._id,
               orderReference,
-              amount: course.pricing.amount,
+              paymentReference: stkResponse.data.data?.paymentReference,
+              invoiceNumber: stkResponse.data.data?.invoiceNumber,
+              amount: stkResponse.data.data?.amount,
+              charge: stkResponse.data.data?.charge,
+              amountDebited: stkResponse.data.data?.amountDebited,
               phoneNumber: formattedPhone,
               courseTitle: course.title,
-              checkoutData,
             },
           });
         } catch (equityError) {
@@ -1358,7 +1525,8 @@ router.post(
             message: "Failed to initiate payment",
             error:
               equityError.response?.data?.errorMessage ||
-              "Equity payment service unavailable",
+              equityError.response?.data?.message ||
+              "M-Pesa service unavailable",
           });
         }
       } else {
@@ -4248,8 +4416,6 @@ router.post(
  *             type: object
  *             required:
  *               - courseId
- *               - moduleId
- *               - contentId
  *               - startAt
  *               - endAt
  *             properties:
@@ -4292,7 +4458,10 @@ router.post(
   authorize("teacher"),
   [
     body("courseId").isMongoId().withMessage("Valid course ID is required"),
-    body("moduleId").notEmpty().withMessage("Module ID is required"),
+    body("moduleId")
+      .optional()
+      .isMongoId()
+      .withMessage("Valid module ID is required"),
     body("contentId").optional().isString(),
     body("startAt").isISO8601().withMessage("Valid start time is required"),
     body("endAt").isISO8601().withMessage("Valid end time is required"),

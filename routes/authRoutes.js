@@ -865,24 +865,4 @@ router.get("/google/callback", connectGoogleAccount);
  */
 router.delete("/google/disconnect", protect, disconnectGoogleAccount);
 
-/**
- * @swagger
- * /api/auth/google/url:
- *   get:
- *     summary: Get Google OAuth URL for connecting account
- *     tags: [Authentication]
- *     security:
- *       - bearerAuth: []
- */
-router.get("/google/url", protect, getGoogleAuthUrl);
-
-/**
- * @swagger
- * /api/auth/google/callback:
- *   get:
- *     summary: Google OAuth callback
- *     tags: [Authentication]
- */
-router.get("/google/callback", connectGoogleAccount);
-
 module.exports = router;

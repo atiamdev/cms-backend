@@ -275,6 +275,8 @@ const studentSchema = new mongoose.Schema(
               "bank_transfer",
               "cheque",
               "mpesa",
+              "equity",
+              "equity-mpesa",
               "card",
               "online",
             ],

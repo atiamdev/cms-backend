@@ -46,18 +46,21 @@ const scheduleLiveSession = async (req, res) => {
       });
     }
 
-    // Find the module
-    const module = course.modules.find((m) => m._id.toString() === moduleId);
-    if (!module) {
-      return res.status(404).json({
-        success: false,
-        message: "Module not found",
-      });
+    // Find the module if moduleId is provided
+    let module = null;
+    if (moduleId) {
+      module = course.modules.find((m) => m._id.toString() === moduleId);
+      if (!module) {
+        return res.status(404).json({
+          success: false,
+          message: "Module not found",
+        });
+      }
     }
 
     // If contentId is provided, verify it exists; otherwise, use the first content or null
     let content = null;
-    if (contentId) {
+    if (contentId && module) {
       content = module.contents.find((c) => c._id.toString() === contentId);
       if (!content) {
         return res.status(404).json({
@@ -89,12 +92,17 @@ const scheduleLiveSession = async (req, res) => {
     // Create Google Calendar event
     const eventData = await googleCalendarService.createMeetEvent({
       tokens: user.googleTokens,
+      userId: hostUserId,
       summary: content
         ? `${course.title} - ${module.title}: ${content.title}`
-        : `${course.title} - ${module.title}`,
+        : module
+        ? `${course.title} - ${module.title}`
+        : `${course.title} - Live Session`,
       description: content
         ? `Live session for ${content.title}`
-        : `Live session for ${module.title}`,
+        : module
+        ? `Live session for ${module.title}`
+        : `Live session for ${course.title}`,
       startTime: new Date(startAt),
       endTime: new Date(endAt),
       timezone,
@@ -104,7 +112,7 @@ const scheduleLiveSession = async (req, res) => {
     // Save live session to DB
     const liveSessionData = {
       courseId,
-      moduleId,
+      moduleId: moduleId || null,
       contentId: contentId || null,
       hostUserId,
       startAt,
@@ -132,7 +140,8 @@ const scheduleLiveSession = async (req, res) => {
         module,
         content,
         user.googleTokens,
-        timezone
+        timezone,
+        hostUserId
       );
     }
 
@@ -140,16 +149,18 @@ const scheduleLiveSession = async (req, res) => {
     await notificationService.notifyLiveSessionStudents({
       courseId,
       sessionId: liveSession._id,
-      title: `New Live Session: ${module.title}`,
+      title: `New Live Session: ${module ? module.title : course.title}`,
       message: `A live session for "${
-        content ? content.title : module.title
+        content ? content.title : module ? module.title : course.title
       }" has been scheduled for ${new Date(
         startAt
       ).toLocaleString()}. Click to join.`,
       type: "scheduled",
-      actionUrl: contentId
-        ? `/elearning/courses/${courseId}/modules/${moduleId}/content/${contentId}`
-        : `/elearning/courses/${courseId}/modules/${moduleId}`,
+      actionUrl: module
+        ? contentId
+          ? `/elearning/courses/${courseId}/modules/${moduleId}/content/${contentId}`
+          : `/elearning/courses/${courseId}/modules/${moduleId}`
+        : `/elearning/courses/${courseId}`,
     });
 
     res.status(201).json({
@@ -501,7 +512,8 @@ const createRecurringSessions = async (
   module,
   content,
   googleTokens,
-  timezone
+  timezone,
+  userId
 ) => {
   const sessions = [];
   const startDate = new Date(parentSession.startAt);
@@ -579,12 +591,17 @@ const createRecurringSessions = async (
 
       const eventData = await googleCalendarService.createMeetEvent({
         tokens: googleTokens,
+        userId: userId,
         summary: content
           ? `${course.title} - ${module.title}: ${content.title}`
-          : `${course.title} - ${module.title}`,
+          : module
+          ? `${course.title} - ${module.title}`
+          : `${course.title} - Live Session`,
         description: content
           ? `Live session for ${content.title} (Recurring)`
-          : `Live session for ${module.title} (Recurring)`,
+          : module
+          ? `Live session for ${module.title} (Recurring)`
+          : `Live session for ${course.title} (Recurring)`,
         startTime: occurrenceStart,
         endTime: occurrenceEnd,
         timezone,

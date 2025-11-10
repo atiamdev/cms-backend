@@ -148,13 +148,6 @@ const paymentSchema = new mongoose.Schema(
       callbackData: {
         type: mongoose.Schema.Types.Mixed,
       },
-      ipnReceived: {
-        type: Boolean,
-        default: false,
-      },
-      ipnData: {
-        type: mongoose.Schema.Types.Mixed,
-      },
     },
 
     // Manual payment fields

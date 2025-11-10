@@ -29,6 +29,7 @@ class GoogleCalendarService {
    * Create a Google Calendar event with Meet conference
    * @param {Object} params
    * @param {Object} params.tokens - User's OAuth tokens
+   * @param {string} params.userId - User ID for token refresh
    * @param {string} params.summary - Event title
    * @param {string} params.description - Event description
    * @param {Date} params.startTime - Start time
@@ -39,6 +40,7 @@ class GoogleCalendarService {
    */
   async createMeetEvent({
     tokens,
+    userId,
     summary,
     description = "",
     startTime,
@@ -89,6 +91,44 @@ class GoogleCalendarService {
         eventData: response.data,
       };
     } catch (error) {
+      // If token is invalid, try to refresh it
+      if (error.message.includes("invalid_grant") && userId) {
+        try {
+          const refreshedTokens = await this.refreshTokensIfNeeded(tokens);
+
+          // Update user's tokens in database
+          const User = require("../models/User");
+          await User.findByIdAndUpdate(userId, {
+            googleTokens: refreshedTokens,
+          });
+
+          // Retry with refreshed tokens
+          const newOauth2Client = this.getOAuth2Client(refreshedTokens);
+          const retryResponse = await this.calendar.events.insert({
+            auth: newOauth2Client,
+            calendarId: "primary",
+            resource: event,
+            conferenceDataVersion: 1,
+          });
+
+          return {
+            eventId: retryResponse.data.id,
+            meetLink:
+              retryResponse.data.hangoutLink ||
+              retryResponse.data.conferenceData?.entryPoints?.find(
+                (ep) => ep.entryPointType === "video"
+              )?.uri,
+            htmlLink: retryResponse.data.htmlLink,
+            eventData: retryResponse.data,
+          };
+        } catch (refreshError) {
+          console.error("Error refreshing tokens and retrying:", refreshError);
+          throw new Error(
+            `Failed to create Google Meet event: Token refresh failed`
+          );
+        }
+      }
+
       console.error("Error creating Google Meet event:", error);
       throw new Error(`Failed to create Google Meet event: ${error.message}`);
     }

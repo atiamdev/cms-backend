@@ -8,6 +8,11 @@ node_modules/
 .env.test
 .env.production
 
+# RSA Keys (DO NOT COMMIT)
+keys/
+keys/privatekey.pem
+keys/publickey.pem
+
 # Logs
 logs
 *.log

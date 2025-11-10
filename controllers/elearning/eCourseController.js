@@ -115,6 +115,7 @@ class ECourseController {
         settings,
         tags,
         thumbnail,
+        chain,
       } = req.body;
 
       const courseData = {
@@ -130,11 +131,13 @@ class ECourseController {
         settings: settings || {},
         tags: tags || [],
         thumbnail: thumbnail || null,
+        chain: chain || {},
         instructor: req.user._id,
         branchId: req.user.branchId,
         status: "pending_approval",
         approvalStatus: "pending",
       };
+
       const course = new ECourse(courseData);
       await course.save();
 
@@ -176,6 +179,9 @@ class ECourseController {
           message: "Course not found",
         });
       }
+
+      console.log("Course found:", course.title);
+      console.log("Course chain data:", course.chain);
 
       // Check if user has access to this course
       const isInstructor =
@@ -627,7 +633,17 @@ class ECourseController {
         // Admins can update directly
         Object.keys(updates).forEach((key) => {
           if (updates[key] !== undefined) {
-            course[key] = updates[key];
+            if (key === "chain" && updates[key]) {
+              // Handle chain object specially
+              course.chain = {
+                chainId: updates[key].chainId || undefined,
+                sequenceNumber: updates[key].sequenceNumber || 1,
+                isChainFinal: updates[key].isChainFinal ?? true,
+                nextCourseId: updates[key].nextCourseId || null,
+              };
+            } else {
+              course[key] = updates[key];
+            }
           }
         });
 
@@ -920,6 +936,11 @@ class ECourseController {
       // Level filter
       if (req.query.level) {
         filter.level = req.query.level;
+      }
+
+      // Chain filter - for loading courses in a learning path
+      if (req.query.chainId) {
+        filter["chain.chainId"] = req.query.chainId;
       }
 
       // Search filter

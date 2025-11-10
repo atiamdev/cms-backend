@@ -5,6 +5,20 @@ const User = require("../models/User");
 const Branch = require("../models/Branch");
 const AuditLogger = require("../utils/auditLogger");
 
+// Temporary state store for OAuth flows (in production, use Redis/database)
+const oauthStates = new Map();
+
+// Clean up expired states every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [state, data] of oauthStates.entries()) {
+    if (now - data.timestamp > 10 * 60 * 1000) {
+      // 10 minutes expiry
+      oauthStates.delete(state);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // Generate JWT Token
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -1085,11 +1099,21 @@ const getGoogleAuthUrl = async (req, res) => {
       "openid",
     ];
 
+    const crypto = require("crypto");
+    const stateToken = crypto.randomBytes(32).toString("hex");
+
+    // Store state mapping temporarily
+    oauthStates.set(stateToken, {
+      userId: req.user._id.toString(),
+      timestamp: Date.now(),
+      purpose: "google_connect",
+    });
+
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline", // Request refresh token
       prompt: "consent", // Force consent screen to get refresh token
       scope: scopes,
-      state: req.user._id.toString(), // Pass user ID in state
+      state: stateToken, // Use secure state token instead of userId
     });
 
     res.json({
@@ -1111,7 +1135,45 @@ const getGoogleAuthUrl = async (req, res) => {
 // @access  Public (but handled by Google)
 const connectGoogleAccount = async (req, res) => {
   try {
-    const { code, state: userId } = req.query;
+    const { code, state: stateToken } = req.query;
+
+    // Validate state token
+    const stateData = oauthStates.get(stateToken);
+    if (!stateData || stateData.purpose !== "google_connect") {
+      console.warn(`Invalid OAuth state token attempted: ${stateToken}`);
+      return res.redirect(
+        `${
+          process.env.FRONTEND_URL || "http://localhost:3000"
+        }/profile?google=error`
+      );
+    }
+
+    // Check if state token has expired (10 minutes)
+    if (Date.now() - stateData.timestamp > 10 * 60 * 1000) {
+      oauthStates.delete(stateToken);
+      console.warn(`Expired OAuth state token used: ${stateToken}`);
+      return res.redirect(
+        `${
+          process.env.FRONTEND_URL || "http://localhost:3000"
+        }/profile?google=error`
+      );
+    }
+
+    const userId = stateData.userId;
+
+    // Validate that user exists
+    const existingUser = await User.findById(userId);
+    if (!existingUser) {
+      return res.redirect(
+        `${
+          process.env.FRONTEND_URL || "http://localhost:3000"
+        }/profile?google=error`
+      );
+    }
+
+    // Remove state token after use
+    oauthStates.delete(stateToken);
+
     const { google } = require("googleapis");
 
     const oauth2Client = new google.auth.OAuth2(
@@ -1168,6 +1230,10 @@ const connectGoogleAccount = async (req, res) => {
         picture: userInfo.picture,
       },
     });
+
+    console.log(
+      `Google account connected successfully for user: ${userId} (${userInfo.email})`
+    );
 
     // Redirect to frontend with success
     res.redirect(

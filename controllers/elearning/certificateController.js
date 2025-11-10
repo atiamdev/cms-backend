@@ -1,5 +1,5 @@
 const certificateService = require("../../services/certificateService");
-const { Enrollment } = require("../../models/elearning");
+const { Enrollment, ECourse } = require("../../models/elearning");
 const Student = require("../../models/Student");
 const Certificate = require("../../models/elearning/Certificate");
 const { validationResult } = require("express-validator");
@@ -44,6 +44,67 @@ const generateCertificate = async (req, res) => {
         success: false,
         message: "You must complete the course to generate a certificate",
       });
+    }
+
+    // Get course details to check chain requirements
+    const course = await ECourse.findById(courseId);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found",
+      });
+    }
+
+    // Check chain requirements if course is part of a chain
+    if (course.chain && course.chain.chainId && !course.chain.isChainFinal) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "This course is part of a learning chain. Certificate will be issued upon completion of the final course in the chain.",
+        data: {
+          chainId: course.chain.chainId,
+          isChainFinal: false,
+        },
+      });
+    }
+
+    // If this is the final course in a chain, verify all previous courses are completed
+    if (
+      course.chain &&
+      course.chain.chainId &&
+      course.chain.isChainFinal &&
+      course.chain.sequenceNumber > 1
+    ) {
+      // Get all courses in the chain
+      const chainCourses = await ECourse.find({
+        "chain.chainId": course.chain.chainId,
+      }).sort("chain.sequenceNumber");
+
+      // Check if all previous courses in the chain are completed
+      for (const chainCourse of chainCourses) {
+        if (chainCourse.chain.sequenceNumber < course.chain.sequenceNumber) {
+          const prevEnrollment = await Enrollment.findOne({
+            studentId: student._id,
+            courseId: chainCourse._id,
+            status: "completed",
+          });
+
+          if (!prevEnrollment) {
+            return res.status(403).json({
+              success: false,
+              message: `You must complete all courses in the chain. "${chainCourse.title}" is not completed.`,
+              data: {
+                chainId: course.chain.chainId,
+                incompleteCourse: {
+                  id: chainCourse._id,
+                  title: chainCourse.title,
+                  sequenceNumber: chainCourse.chain.sequenceNumber,
+                },
+              },
+            });
+          }
+        }
+      }
     }
 
     // Generate certificate
