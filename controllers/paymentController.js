@@ -5,6 +5,8 @@ const mongoose = require("mongoose");
 const { validationResult } = require("express-validator");
 const axios = require("axios");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
 const {
   canAccessBranchResource,
   getBranchQueryFilter,
@@ -31,10 +33,26 @@ const updateStudentFeesAfterPayment = async (
   checkExisting = false
 ) => {
   const student = await Student.findById(payment.studentId);
-  if (!student || !student.fees) return;
+  if (!student || !student.fees) {
+    console.error("Student or student fees not found:", payment.studentId);
+    return;
+  }
+
+  console.log("=== UPDATING STUDENT FEES ===");
+  console.log("Student ID:", student.studentId);
+  console.log("Payment amount:", payment.amount);
+  console.log("Current totalPaid:", student.fees.totalPaid);
+  console.log("Current totalBalance:", student.fees.totalBalance);
+  console.log("Transaction ref:", transactionRef);
 
   const oldBalance = student.fees.totalBalance;
-  student.fees.totalBalance -= payment.amount;
+  const oldTotalPaid = student.fees.totalPaid;
+
+  // Update totalPaid instead of totalBalance directly
+  // The pre-save middleware will recalculate totalBalance
+  student.fees.totalPaid += payment.amount;
+
+  console.log("New totalPaid after addition:", student.fees.totalPaid);
 
   // Add to payment history
   if (
@@ -63,16 +81,39 @@ const updateStudentFeesAfterPayment = async (
       student.fees.paymentHistory = [];
     }
     student.fees.paymentHistory.push(paymentHistoryEntry);
+    console.log("Added payment history entry");
+  } else {
+    console.log("Payment history entry already exists, skipping");
   }
 
-  await student.save();
+  try {
+    await student.save();
+    console.log("Student record saved successfully");
+
+    // Verify the save by re-fetching
+    const verifyStudent = await Student.findById(payment.studentId);
+    console.log("Verified totalPaid after save:", verifyStudent.fees.totalPaid);
+    console.log(
+      "Verified totalBalance after save:",
+      verifyStudent.fees.totalBalance
+    );
+  } catch (saveError) {
+    console.error("Error saving student record:", saveError);
+    throw saveError;
+  }
 
   console.log("Student fees updated:", {
     studentId: student.studentId,
     oldBalance,
-    newBalance: student.fees.totalBalance,
+    oldTotalPaid,
+    newTotalPaid: student.fees.totalPaid,
+    newBalance:
+      student.fees.totalFeeStructure -
+      student.fees.totalPaid -
+      student.fees.scholarshipAmount,
     amountPaid: payment.amount,
   });
+  console.log("=== END UPDATING STUDENT FEES ===");
 };
 
 // Jenga Configuration
@@ -81,10 +122,10 @@ const getJengaConfig = () => ({
   consumerSecret: process.env.JENGA_CONSUMER_SECRET,
   apiKey: process.env.JENGA_API_KEY,
   callbackUrl: process.env.JENGA_CALLBACK_URL,
-  ipnUrl: process.env.JENGA_IPN_URL,
   accountNumber:
     process.env.JENGA_ACCOUNT_NUMBER || process.env.JENGA_MERCHANT_CODE,
   merchantName: process.env.JENGA_MERCHANT_NAME || "CMS School Management",
+  privateKeyPath: process.env.JENGA_PRIVATE_KEY_PATH || "./keys/privatekey.pem",
   baseUrl:
     process.env.JENGA_ENVIRONMENT === "production"
       ? "https://api.finserve.africa"
@@ -106,6 +147,7 @@ const getJengaAccessToken = async () => {
           "Content-Type": "application/json",
           "Api-Key": config.apiKey,
         },
+        timeout: 30000, // 30 second timeout
       }
     );
 
@@ -117,6 +159,28 @@ const getJengaAccessToken = async () => {
       error.response?.data || error.message
     );
     throw new Error("Failed to get Jenga access token");
+  }
+};
+
+// Generate RSA signature for Jenga API requests
+const generateJengaSignature = (dataToSign) => {
+  try {
+    const config = getJengaConfig();
+    const privateKeyPath = path.resolve(config.privateKeyPath);
+
+    if (!fs.existsSync(privateKeyPath)) {
+      throw new Error(`RSA private key not found at: ${privateKeyPath}`);
+    }
+
+    const privateKey = fs.readFileSync(privateKeyPath, "utf8");
+    const sign = crypto.createSign("SHA256"); // Use SHA256 as per Jenga docs
+    sign.update(dataToSign);
+    const signature = sign.sign(privateKey, "base64"); // Use base64 as per Jenga docs
+
+    return signature;
+  } catch (error) {
+    console.error("Error generating RSA signature:", error);
+    throw new Error(`Failed to generate signature: ${error.message}`);
   }
 };
 
@@ -141,13 +205,14 @@ const initiateEquityPayment = async (req, res) => {
       customerLastName,
       customerEmail,
       customerPhone,
+      customer, // Optional customer object
     } = req.body;
 
     // Validate fee exists and belongs to the user's branch
     const fee = await Fee.findOne({
       _id: feeId,
       branchId: req.user.branchId,
-    }).populate("studentId", "studentId userId");
+    }).populate("studentId", "studentId userId firstName lastName email phone");
 
     if (!fee) {
       return res.status(404).json({
@@ -175,28 +240,25 @@ const initiateEquityPayment = async (req, res) => {
       });
     }
 
-    // Validate required customer details
-    if (
-      !customerFirstName ||
-      !customerLastName ||
-      !customerEmail ||
-      !customerPhone
-    ) {
+    // Validate that we have a phone number for payment (required for M-Pesa)
+    const paymentPhone =
+      customerPhone || customer?.phoneNumber || fee.studentId.phone;
+    if (!paymentPhone) {
       return res.status(400).json({
         success: false,
-        message: "Customer details are required for Equity payment",
+        message: "Phone number is required for M-Pesa payment",
       });
     }
 
     // Format phone number (ensure it starts with country code)
-    const formattedPhone = validateAndFormatPhone(customerPhone);
+    const formattedPhone = validateAndFormatPhone(paymentPhone);
 
     try {
       const config = getJengaConfig();
       const accessToken = await getJengaAccessToken();
 
-      // Generate unique order reference
-      const orderReference = `EQ-${fee.studentId.studentId}-${Date.now()}`;
+      // Generate unique order reference (alphanumeric only, no special characters)
+      const orderReference = `EQ${fee.studentId.studentId}${Date.now()}`;
 
       // Create payment record first
       const payment = new Payment({
@@ -290,34 +352,87 @@ const handleEquityCallback = async (req, res) => {
     const callbackData = req.body;
 
     console.log("=== JENGA M-PESA STK PUSH CALLBACK RECEIVED ===");
-    console.log("Payment ID:", paymentId);
-    console.log("Callback data:", JSON.stringify(callbackData, null, 2));
+    console.log("Payment ID from URL params:", paymentId);
+    console.log("Full callback data:", JSON.stringify(callbackData, null, 2));
+    console.log("Transaction object:", callbackData.transaction);
+    console.log("Transaction reference:", callbackData.transaction?.reference);
+    console.log("Root level reference:", callbackData.reference);
+    console.log("Root level transactionRef:", callbackData.transactionRef);
 
-    // For Jenga M-Pesa STK Push, we need to find payment by orderReference or transactionRef
+    // For Jenga callback, we need to find payment by orderReference or transactionRef
+    // Jenga callback structure: { callbackType, customer, transaction, bank }
     let payment;
 
-    if (callbackData.reference) {
-      // Find by orderReference
+    // Try to find payment using different reference fields
+    if (callbackData.transaction && callbackData.transaction.reference) {
+      console.log(
+        "Searching by transaction.reference:",
+        callbackData.transaction.reference
+      );
+      // Find by transaction reference (from Jenga callback)
+      payment = await Payment.findOne({
+        "equityDetails.orderReference": callbackData.transaction.reference,
+      });
+      console.log("Payment found by transaction.reference:", payment?._id);
+    } else if (callbackData.reference) {
+      console.log("Searching by root reference:", callbackData.reference);
+      // Find by orderReference (fallback)
       payment = await Payment.findOne({
         "equityDetails.orderReference": callbackData.reference,
       });
+      console.log("Payment found by reference:", payment?._id);
     } else if (callbackData.transactionRef) {
-      // Find by transactionRef
+      console.log("Searching by transactionRef:", callbackData.transactionRef);
+      // Find by transactionRef (fallback)
       payment = await Payment.findOne({
         "equityDetails.transactionRef": callbackData.transactionRef,
       });
+      console.log("Payment found by transactionRef:", payment?._id);
     } else if (paymentId && paymentId !== "undefined") {
+      console.log("Searching by paymentId from URL:", paymentId);
       // Fallback to paymentId from URL
       payment = await Payment.findById(paymentId);
+      console.log("Payment found by paymentId:", payment?._id);
     }
 
     if (!payment) {
-      console.error("Payment not found for callback. Searched by:", {
-        reference: callbackData.reference,
-        transactionRef: callbackData.transactionRef,
-        paymentId,
+      console.error("===== PAYMENT NOT FOUND =====");
+      console.error("Searched using:");
+      console.error(
+        "- transaction.reference:",
+        callbackData.transaction?.reference
+      );
+      console.error("- root reference:", callbackData.reference);
+      console.error("- transactionRef:", callbackData.transactionRef);
+      console.error("- paymentId:", paymentId);
+      console.error(
+        "Full callback data:",
+        JSON.stringify(callbackData, null, 2)
+      );
+
+      // Let's also check what payments exist with similar references
+      const allRecentPayments = await Payment.find({
+        method: "equity",
+        createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      }).select(
+        "_id equityDetails.orderReference equityDetails.transactionRef createdAt"
+      );
+      console.error(
+        "Recent Equity payments in DB:",
+        JSON.stringify(allRecentPayments, null, 2)
+      );
+
+      return res.status(404).json({
+        error: "Payment not found",
+        debug: {
+          searchedBy: {
+            transactionReference: callbackData.transaction?.reference,
+            reference: callbackData.reference,
+            transactionRef: callbackData.transactionRef,
+            paymentId,
+          },
+        },
       });
-      return res.status(404).json({ error: "Payment not found" });
     }
 
     console.log("Found payment:", payment._id);
@@ -326,34 +441,41 @@ const handleEquityCallback = async (req, res) => {
     payment.equityDetails.callbackReceived = true;
     payment.equityDetails.callbackData = callbackData;
 
-    // Extract callback parameters from Jenga M-Pesa STK Push format
-    // Jenga callback typically includes: transactionRef, status, amount, etc.
+    // Extract callback parameters from Jenga callback format
+    // Jenga callback structure: { callbackType, customer, transaction: {...}, bank }
+    const transaction = callbackData.transaction || {};
     const {
-      transactionRef,
+      reference: transactionRef,
       status,
       amount,
-      transactionDate,
-      description,
-      reference,
-      ...otherData
-    } = callbackData;
+      date: transactionDate,
+      paymentMode,
+      billNumber,
+      serviceCharge,
+      orderAmount,
+      remarks,
+      ...otherTransactionData
+    } = transaction;
 
     // Check if payment was successful
     // Jenga status might be "SUCCESS", "COMPLETED", or similar
+    // Failed statuses: "FAILED", "ERROR", "DECLINED", "CANCELLED", "TIMEOUT", etc.
     const isSuccessful =
       status === "SUCCESS" || status === "COMPLETED" || status === "success";
 
     if (isSuccessful) {
       // Payment successful
-      console.log("Jenga M-Pesa STK Push payment successful");
+      console.log("Jenga payment successful");
 
       payment.equityDetails.transactionRef = transactionRef;
       payment.equityDetails.transactionDate = transactionDate || new Date();
-      payment.equityDetails.description = description;
-      payment.equityDetails.reference = reference;
+      payment.equityDetails.paymentMode = paymentMode;
+      payment.equityDetails.billNumber = billNumber;
+      payment.equityDetails.serviceCharge = serviceCharge;
       payment.equityDetails.confirmedAmount =
         parseFloat(amount) || payment.amount;
       payment.equityDetails.status = status;
+      payment.equityDetails.remarks = remarks;
       payment.status = "completed";
       payment.verificationStatus = "verified";
       payment.verificationDate = new Date();
@@ -404,10 +526,24 @@ const handleEquityCallback = async (req, res) => {
     } else {
       // Payment failed
       console.log("Jenga M-Pesa STK Push payment failed:", status);
+      console.log(
+        "Full callback data for failed payment:",
+        JSON.stringify(callbackData, null, 2)
+      );
       payment.status = "failed";
       payment.equityDetails.status = status || "FAILED";
       payment.equityDetails.failureReason =
-        callbackData.message || callbackData.error || "Payment failed";
+        transaction?.message ||
+        transaction?.error ||
+        callbackData.message ||
+        callbackData.error ||
+        callbackData?.transaction?.message ||
+        callbackData?.transaction?.error ||
+        "Payment failed";
+      console.log(
+        "Extracted failure reason:",
+        payment.equityDetails.failureReason
+      );
     }
 
     await payment.save();
@@ -547,8 +683,8 @@ const initiateStudentEquityPayment = async (req, res) => {
       const config = getJengaConfig();
       const accessToken = await getJengaAccessToken();
 
-      // Generate unique order reference
-      const orderReference = `EQ-${student.studentId}-${Date.now()}`;
+      // Generate unique order reference (alphanumeric only, no special characters)
+      const orderReference = `EQ${student.studentId}${Date.now()}`;
 
       // Create payment record
       const receiptNumber = `RCP${Date.now()}${Math.random()
@@ -572,111 +708,119 @@ const initiateStudentEquityPayment = async (req, res) => {
 
       await payment.save();
 
-      // Prepare Jenga M-Pesa STK Push request according to API documentation
+      // Get customer details from student info (since this is student payment)
+      const customerDetails = {
+        firstName: student.userId.firstName || "Unknown",
+        lastName: student.userId.lastName || "Student",
+        email: student.userId.email || "student@example.com",
+        phone: student.phone || phoneNumber || "",
+      }; // Prepare Jenga M-Pesa STK Push request according to correct API documentation
       const stkPushData = {
-        merchant: {
-          accountNumber: config.accountNumber,
+        order: {
+          orderReference: orderReference,
+          orderAmount: amount,
+          orderCurrency: "KES",
+          source: "APICHECKOUT",
           countryCode: "KE",
-          name: config.merchantName,
+          description: "Student Fee Payment",
+        },
+        customer: {
+          name: customerDetails.firstName + " " + customerDetails.lastName,
+          email: customerDetails.email,
+          phoneNumber: formattedPhone, // Use the formatted phone for payment
+          identityNumber: student.studentId, // Use student ID as identity number
+          firstAddress: "",
+          secondAddress: "",
         },
         payment: {
-          ref: orderReference,
-          amount: amount.toString(),
-          currency: "KES",
-          telco: "Safaricom",
-          mobileNumber: formattedPhone,
-          date: new Date().toISOString().split("T")[0], // YYYY-MM-DD format
-          callBackUrl: `${config.callbackUrl}/${payment._id}`,
-          pushType: "USSD",
+          paymentReference: `MKQR${orderReference}`,
+          paymentCurrency: "KES",
+          channel: "MOBILE",
+          service: "MPESA",
+          provider: "JENGA",
+          callbackUrl: config.callbackUrl,
+          details: {
+            msisdn: formattedPhone,
+            paymentAmount: amount,
+          },
         },
       };
 
-      // Generate HMAC signature for STK Push according to Jenga documentation
-      // Formula: merchant.accountNumber + payment.ref + payment.mobileNumber + payment.telco + payment.amount + payment.currency
-      const signatureString = `${config.accountNumber}${orderReference}${formattedPhone}${stkPushData.payment.telco}${stkPushData.payment.amount}${stkPushData.payment.currency}`;
-      const signature = crypto
-        .createHmac("sha256", config.consumerSecret)
-        .update(signatureString)
-        .digest("base64");
+      // Generate RSA signature for STK Push using correct formula:
+      // order.orderReference + payment.paymentCurrency + payment.details.msisdn + payment.details.paymentAmount
+      const signatureString = `${stkPushData.order.orderReference}${stkPushData.payment.paymentCurrency}${stkPushData.payment.details.msisdn}${stkPushData.payment.details.paymentAmount}`;
+      console.log("=== SIGNATURE DEBUG ===");
+      console.log("Order Reference:", stkPushData.order.orderReference);
+      console.log("Payment Currency:", stkPushData.payment.paymentCurrency);
+      console.log("MSISDN:", stkPushData.payment.details.msisdn);
+      console.log("Payment Amount:", stkPushData.payment.details.paymentAmount);
+      console.log("Signature String:", signatureString);
+      const signature = generateJengaSignature(signatureString);
+      console.log("Generated RSA Signature:", signature);
+      console.log("=======================");
 
       console.log("Using Jenga access token for STK push:", accessToken);
       console.log("STK Push headers:", {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
-        "Merchant-Code": config.merchantCode,
         Signature: signature,
       });
 
-      // Make Jenga STK Push request. Try several known paths used in
-      // different Jenga/UAT/production deployments until one succeeds.
-      const candidatePaths = ["/v3-apis/payment-api/v3.0/stkussdpush/initiate"];
+      // Make Jenga STK Push request using correct endpoint
+      const stkPushUrl = `${config.baseUrl}/api-checkout/mpesa-stk-push/v3.0/init`;
+      console.log("Jenga STK Push endpoint:", stkPushUrl);
 
-      let stkResponse = null;
-      let endpointUsed = null;
-
-      for (const p of candidatePaths) {
-        try {
-          const url = `${config.baseUrl}${p}`;
-          console.log("Trying Jenga STK Push endpoint:", url);
-          stkResponse = await axios.post(url, stkPushData, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              "Content-Type": "application/json",
-              Signature: signature,
-            },
-          });
-
-          endpointUsed = url;
-          console.log("Successful response from", url, stkResponse.data);
-          break;
-        } catch (err) {
-          console.warn(
-            `Endpoint ${p} failed:`,
-            err.response?.status,
-            err.response?.data || err.message
-          );
-          // try next candidate
-        }
-      }
-
-      if (!stkResponse) {
+      let stkResponse;
+      try {
+        stkResponse = await axios.post(stkPushUrl, stkPushData, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+            Signature: signature,
+          },
+        });
+        console.log("Successful STK Push response:", stkResponse.data);
+      } catch (err) {
+        console.error(
+          "STK Push failed:",
+          err.response?.status,
+          err.response?.data || err.message
+        );
         payment.status = "failed";
         payment.equityDetails.error = {
-          message: "No working Jenga STK Push endpoint",
+          message: err.response?.data?.message || err.message,
+          status: err.response?.status,
         };
-        payment.equityDetails.endpointsTried = candidatePaths;
         await payment.save();
 
         return res.status(502).json({
           success: false,
           message: "Failed to initiate M-Pesa payment",
-          error:
-            "No working Jenga STK Push endpoint (received 404 Resource not found)",
-          attempted: candidatePaths,
+          error: err.response?.data?.message || err.message,
         });
       }
 
-      // Successful request
+      // Successful request - update payment record
       payment.equityDetails.stkPushResponse = stkResponse.data;
-      payment.equityDetails.endpointUsed = endpointUsed;
-      if (stkResponse.data.transactionRef) {
-        payment.equityDetails.transactionRef = stkResponse.data.transactionRef;
+      if (stkResponse.data.data?.paymentReference) {
+        payment.equityDetails.transactionRef =
+          stkResponse.data.data.paymentReference;
       }
       await payment.save();
 
       res.json({
         success: true,
         message:
+          stkResponse.data.message ||
           "M-Pesa STK Push initiated successfully. Check your phone to complete payment.",
         data: {
           paymentId: payment._id,
           orderReference,
-          transactionRef: stkResponse.data.transactionRef,
-          customerMessage:
-            stkResponse.data.message ||
-            stkResponse.data.customerMessage ||
-            null,
-          endpointUsed,
+          paymentReference: stkResponse.data.data?.paymentReference,
+          invoiceNumber: stkResponse.data.data?.invoiceNumber,
+          amount: stkResponse.data.data?.amount,
+          charge: stkResponse.data.data?.charge,
+          amountDebited: stkResponse.data.data?.amountDebited,
         },
       });
     } catch (jengaError) {
@@ -701,85 +845,6 @@ const initiateStudentEquityPayment = async (req, res) => {
       message: "Server error",
       error: error.message,
     });
-  }
-};
-
-// @desc    Handle Equity Bank IPN (Instant Payment Notification)
-// @route   POST /api/fees/payments/equity/ipn
-// @access  Public (Jenga IPN)
-const handleEquityIPN = async (req, res) => {
-  try {
-    const ipnData = req.body;
-
-    console.log("=== EQUITY IPN RECEIVED ===");
-    console.log("IPN data:", JSON.stringify(ipnData, null, 2));
-
-    // Extract IPN details
-    const { transaction, customer, bank } = ipnData;
-    const { reference: orderReference, status } = transaction;
-
-    // Find payment by order reference
-    const payment = await Payment.findOne({
-      "equityDetails.orderReference": orderReference,
-    });
-
-    if (!payment) {
-      console.error("Payment not found for IPN:", orderReference);
-      return res.status(404).json({ error: "Payment not found" });
-    }
-
-    // Update payment with IPN data
-    payment.equityDetails.ipnReceived = true;
-    payment.equityDetails.ipnData = ipnData;
-
-    // Update additional details from IPN
-    payment.equityDetails.transactionId = transaction.reference;
-    payment.equityDetails.transactionDate = transaction.date;
-    payment.equityDetails.paymentMode = transaction.paymentMode;
-    payment.equityDetails.amount = transaction.amount;
-    payment.equityDetails.currency = transaction.currency;
-    payment.equityDetails.billNumber = transaction.billNumber;
-    payment.equityDetails.serviceCharge = transaction.serviceCharge;
-    payment.equityDetails.status = transaction.status;
-    payment.equityDetails.remarks = transaction.remarks;
-
-    // Update payment status based on IPN
-    if (transaction.status === "SUCCESS") {
-      if (payment.status !== "completed") {
-        payment.status = "completed";
-        payment.verificationStatus = "verified";
-        payment.verificationDate = new Date();
-
-        // Update balances if not already done via callback
-        if (!payment.equityDetails.callbackReceived) {
-          await updateStudentFeesAfterPayment(
-            payment,
-            transaction.reference,
-            true
-          );
-
-          // Update Fee record
-          if (payment.feeId) {
-            const fee = await Fee.findById(payment.feeId);
-            if (fee) {
-              fee.amountPaid += payment.amount;
-              await fee.save();
-            }
-          }
-        }
-      }
-    } else if (transaction.status === "FAILED") {
-      payment.status = "failed";
-    }
-
-    await payment.save();
-
-    console.log("Equity IPN processed for payment:", payment._id);
-
-    res.json({ success: true, message: "IPN processed successfully" });
-  } catch (error) {
-    console.error("Equity IPN error:", error);
-    res.status(500).json({ error: "IPN processing failed" });
   }
 };
 
@@ -1376,7 +1441,6 @@ module.exports = {
   initiateEquityPayment,
   initiateStudentEquityPayment,
   handleEquityCallback,
-  handleEquityIPN,
   recordManualPayment,
   verifyPayment,
   getPaymentStatus,

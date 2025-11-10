@@ -97,6 +97,27 @@ const ECourseSchema = new mongoose.Schema(
       },
       prerequisites: [String], // Array of prerequisite descriptions
     },
+    // Course chaining for sequential learning
+    chain: {
+      chainId: {
+        type: String,
+        trim: true,
+      },
+      sequenceNumber: {
+        type: Number,
+        default: 1,
+        min: 1,
+      },
+      isChainFinal: {
+        type: Boolean,
+        default: true,
+      },
+      nextCourseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "ECourse",
+        default: null,
+      },
+    },
     // Course status and visibility
     status: {
       type: String,
@@ -371,6 +392,31 @@ ECourseSchema.methods.submitForApproval = function (userId, notes = "") {
 };
 
 ECourseSchema.methods.approve = function (adminId, notes = "") {
+  // Check if there are pending modifications to apply
+  const pendingModification = this.approvalHistory
+    .filter((entry) => entry.action === "modified")
+    .sort((a, b) => new Date(b.performedAt) - new Date(a.performedAt))[0];
+
+  if (pendingModification && pendingModification.newData) {
+    // Apply the pending changes
+    const newData = pendingModification.newData;
+    Object.keys(newData).forEach((key) => {
+      if (newData[key] !== undefined) {
+        if (key === "chain" && newData[key]) {
+          // Handle chain object specially
+          this.chain = {
+            chainId: newData[key].chainId || undefined,
+            sequenceNumber: newData[key].sequenceNumber || 1,
+            isChainFinal: newData[key].isChainFinal ?? true,
+            nextCourseId: newData[key].nextCourseId || null,
+          };
+        } else {
+          this[key] = newData[key];
+        }
+      }
+    });
+  }
+
   this.approvalStatus = "approved";
   this.approvedBy = adminId;
   this.approvedAt = new Date();
@@ -416,6 +462,7 @@ ECourseSchema.methods.requestModificationApproval = function (
     tags: this.tags,
     thumbnail: this.thumbnail,
     modules: this.modules,
+    chain: this.chain, // Include chain data
   };
 
   this.approvalStatus = "pending";
@@ -490,6 +537,21 @@ ECourseSchema.methods.canPublish = function (user) {
 ECourseSchema.methods.updateStats = async function () {
   // This would be called to update course statistics
   // Implementation would involve querying enrollment and progress data
+};
+
+// Static methods for chain operations
+ECourseSchema.statics.getChainCourses = function (chainId) {
+  return this.find({ "chain.chainId": chainId }).sort("chain.sequenceNumber");
+};
+
+ECourseSchema.statics.getNextCourseInChain = function (
+  chainId,
+  currentSequence
+) {
+  return this.findOne({
+    "chain.chainId": chainId,
+    "chain.sequenceNumber": currentSequence + 1,
+  });
 };
 
 module.exports = mongoose.model("ECourse", ECourseSchema);

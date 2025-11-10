@@ -9,7 +9,7 @@ const liveSessionSchema = new mongoose.Schema(
     },
     moduleId: {
       type: String, // Since modules are embedded, use the module title or _id if available
-      required: true,
+      required: false,
     },
     contentId: {
       type: String, // Content _id within the module (optional)
@@ -30,7 +30,7 @@ const liveSessionSchema = new mongoose.Schema(
     },
     timezone: {
       type: String,
-      default: "UTC",
+      default: "Africa/Nairobi",
     },
     meetLink: {
       type: String,

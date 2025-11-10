@@ -22,6 +22,7 @@ const examRoutes = require("./routes/examRoutes");
 const elearningRoutes = require("./routes/elearningRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const feeRoutes = require("./routes/feeRoutes");
+const paymentsRoutes = require("./routes/paymentsRoutes");
 const expenseRoutes = require("./routes/expenseRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
 const adminRoutes = require("./routes/adminRoutes");
@@ -73,7 +74,12 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "ngrok-skip-browser-warning",
+  ],
 };
 app.use(cors(corsOptions));
 
@@ -118,6 +124,8 @@ app.use("/api/exams", examRoutes);
 app.use("/api/elearning", elearningRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/fees", feeRoutes);
+app.use("/api/payments", paymentsRoutes);
+app.use("/api/receipts", require("./routes/receiptRoutes"));
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/admin", adminRoutes);

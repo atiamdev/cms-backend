@@ -320,7 +320,7 @@ class NotificationService {
         content: message,
         type: "info",
         priority,
-        // No targetAudience - specificRecipients controls visibility for personal notifications
+        targetAudience: null, // Personal notices don't have a general audience
         specificRecipients: [userId], // Target specific user only
         branchId: user.branchId,
         author: {

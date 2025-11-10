@@ -568,60 +568,103 @@ const getExpenseCategories = async (req, res) => {
 // @access  Private (Admin, Secretary)
 const getExpensesSummary = async (req, res) => {
   try {
-    const { period = "month", year, month } = req.query;
+    const { period = "all", year, month } = req.query;
 
     let startDate, endDate;
     const now = new Date();
 
     switch (period) {
       case "today":
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        startDate = new Date(
+          Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        );
         endDate = new Date(
-          now.getFullYear(),
-          now.getMonth(),
-          now.getDate() + 1
+          Date.UTC(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate() + 1,
+            0,
+            0,
+            0,
+            0
+          )
         );
         break;
       case "week":
         const weekStart = new Date(now);
         weekStart.setDate(now.getDate() - now.getDay());
         startDate = new Date(
-          weekStart.getFullYear(),
-          weekStart.getMonth(),
-          weekStart.getDate()
+          Date.UTC(
+            weekStart.getFullYear(),
+            weekStart.getMonth(),
+            weekStart.getDate(),
+            0,
+            0,
+            0,
+            0
+          )
         );
         endDate = new Date(
-          weekStart.getFullYear(),
-          weekStart.getMonth(),
-          weekStart.getDate() + 7
+          Date.UTC(
+            weekStart.getFullYear(),
+            weekStart.getMonth(),
+            weekStart.getDate() + 7,
+            0,
+            0,
+            0,
+            0
+          )
         );
         break;
       case "month":
         const targetYear = year ? parseInt(year) : now.getFullYear();
         const targetMonth = month ? parseInt(month) - 1 : now.getMonth();
-        startDate = new Date(targetYear, targetMonth, 1);
-        endDate = new Date(targetYear, targetMonth + 1, 1);
+
+        // Create dates in UTC to avoid timezone issues
+        startDate = new Date(Date.UTC(targetYear, targetMonth, 1, 0, 0, 0, 0));
+        endDate = new Date(
+          Date.UTC(targetYear, targetMonth + 1, 1, 0, 0, 0, 0)
+        );
         break;
       case "quarter":
         const quarter = Math.floor(now.getMonth() / 3);
-        startDate = new Date(now.getFullYear(), quarter * 3, 1);
-        endDate = new Date(now.getFullYear(), (quarter + 1) * 3, 1);
+        startDate = new Date(
+          Date.UTC(now.getFullYear(), quarter * 3, 1, 0, 0, 0, 0)
+        );
+        endDate = new Date(
+          Date.UTC(now.getFullYear(), (quarter + 1) * 3, 1, 0, 0, 0, 0)
+        );
         break;
       case "year":
         const summaryYear = year ? parseInt(year) : now.getFullYear();
-        startDate = new Date(summaryYear, 0, 1);
-        endDate = new Date(summaryYear + 1, 0, 1);
+        startDate = new Date(Date.UTC(summaryYear, 0, 1, 0, 0, 0, 0));
+        endDate = new Date(Date.UTC(summaryYear + 1, 0, 1, 0, 0, 0, 0));
+        break;
+      case "all":
+        // No date filters for all-time summary
+        startDate = null;
+        endDate = null;
         break;
       default:
-        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-        endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        startDate = new Date(
+          Date.UTC(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+        );
+        endDate = new Date(
+          Date.UTC(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0)
+        );
     }
 
     const summary = await Expense.aggregate([
       {
         $match: {
-          branchId: req.user.branchId,
-          date: { $gte: startDate, $lt: endDate },
+          // Only filter by branch for non-admin users
+          ...(hasAdminPrivileges(req.user)
+            ? {}
+            : { branchId: req.user.branchId }),
+          // Only apply date filter if dates are specified
+          ...(startDate && endDate
+            ? { date: { $gte: startDate, $lt: endDate } }
+            : {}),
         },
       },
       {
@@ -653,8 +696,14 @@ const getExpensesSummary = async (req, res) => {
     const categoryBreakdown = await Expense.aggregate([
       {
         $match: {
-          branchId: req.user.branchId,
-          date: { $gte: startDate, $lt: endDate },
+          // Only filter by branch for non-admin users
+          ...(hasAdminPrivileges(req.user)
+            ? {}
+            : { branchId: req.user.branchId }),
+          // Only apply date filter if dates are specified
+          ...(startDate && endDate
+            ? { date: { $gte: startDate, $lt: endDate } }
+            : {}),
           approvalStatus: "approved",
         },
       },
@@ -672,6 +721,11 @@ const getExpensesSummary = async (req, res) => {
     res.json({
       success: true,
       data: {
+        totalExpenses: summary[0]?.totalAmount || 0,
+        monthlyTotal: summary[0]?.totalAmount || 0, // For current month
+        pendingApproval: summary[0]?.pendingAmount || 0,
+        approvedExpenses: summary[0]?.approvedAmount || 0,
+        // Keep the detailed data for future use
         period: {
           type: period,
           startDate,

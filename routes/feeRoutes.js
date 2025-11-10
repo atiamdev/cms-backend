@@ -16,8 +16,6 @@ const {
 const {
   initiateEquityPayment,
   initiateStudentEquityPayment,
-  handleEquityCallback,
-  handleEquityIPN,
   recordManualPayment,
   verifyPayment,
   getPaymentStatus,
@@ -352,11 +350,6 @@ router.post(
   ],
   initiateEquityPayment
 );
-
-// Equity callback (public endpoint - POST request)
-router.post("/payments/equity/callback/:paymentId", handleEquityCallback);
-// Equity IPN (public endpoint - POST request)
-router.post("/payments/equity/ipn", handleEquityIPN);
 
 // Student Equity Payment Route (no feeId required)
 router.post(

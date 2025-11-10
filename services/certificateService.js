@@ -1,10 +1,10 @@
-const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
 const { User, ECourse } = require("../models/elearning");
 const Student = require("../models/Student");
 const Certificate = require("../models/elearning/Certificate");
 const cloudflareService = require("./cloudflareService");
+const { fillCertificateTemplate } = require("../utils/certificateUtils");
 
 class CertificateService {
   constructor() {
@@ -16,182 +16,19 @@ class CertificateService {
   }
 
   /**
-   * Generate a completion certificate PDF
+   * Generate a completion certificate PDF using template
    * @param {Object} certificateData - Certificate data
    * @returns {Promise<Buffer>} PDF buffer
    */
   async generateCertificatePDF(certificateData) {
-    return new Promise((resolve, reject) => {
-      try {
-        const doc = new PDFDocument({
-          size: "A4",
-          layout: "landscape",
-          margin: 50,
-        });
-
-        const buffers = [];
-
-        doc.on("data", buffers.push.bind(buffers));
-        doc.on("end", () => {
-          const pdfBuffer = Buffer.concat(buffers);
-          resolve(pdfBuffer);
-        });
-
-        doc.on("error", reject);
-
-        // Certificate design
-        this.drawCertificateTemplate(doc, certificateData);
-
-        doc.end();
-      } catch (error) {
-        reject(error);
-      }
-    });
-  }
-
-  /**
-   * Draw the certificate template
-   * @param {PDFDocument} doc - PDF document
-   * @param {Object} data - Certificate data
-   */
-  drawCertificateTemplate(doc, data) {
-    const {
-      studentName,
-      courseTitle,
-      instructorName,
-      completionDate,
-      certificateNumber,
-      verificationCode,
-    } = data;
-
-    // Background color
-    doc.rect(0, 0, doc.page.width, doc.page.height).fill("#f8f9fa");
-
-    // Border
-    doc
-      .rect(20, 20, doc.page.width - 40, doc.page.height - 40)
-      .lineWidth(3)
-      .stroke("#81D338");
-
-    // Header
-    doc
-      .fillColor("#2c3e50")
-      .fontSize(36)
-      .font("Helvetica-Bold")
-      .text("CERTIFICATE OF COMPLETION", 0, 80, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Institution name
-    doc
-      .fillColor("#34495e")
-      .fontSize(24)
-      .font("Helvetica-Bold")
-      .text("ATIAM COLLEGE", 0, 130, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Certificate text
-    doc
-      .fillColor("#2c3e50")
-      .fontSize(16)
-      .font("Helvetica")
-      .text("This is to certify that", 0, 200, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Student name
-    doc
-      .fillColor("#e74c3c")
-      .fontSize(28)
-      .font("Helvetica-Bold")
-      .text(studentName, 0, 230, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Completion text
-    doc
-      .fillColor("#2c3e50")
-      .fontSize(16)
-      .font("Helvetica")
-      .text("has successfully completed the course", 0, 280, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Course title
-    doc
-      .fillColor("#27ae60")
-      .fontSize(22)
-      .font("Helvetica-Bold")
-      .text(`${courseTitle}`, 0, 310, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Instructor and date
-    doc
-      .fillColor("#2c3e50")
-      .fontSize(14)
-      .font("Helvetica")
-      .text(`Instructor: ${instructorName}`, 0, 360, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    doc.text(`Completion Date: ${completionDate}`, 0, 385, {
-      align: "center",
-      width: doc.page.width,
-    });
-
-    // Certificate number
-    doc
-      .fillColor("#7f8c8d")
-      .fontSize(12)
-      .font("Helvetica")
-      .text(`Certificate Number: ${certificateNumber}`, 0, 420, {
-        align: "center",
-        width: doc.page.width,
-      });
-
-    // Verification code
-    doc.text(`Verification Code: ${verificationCode}`, 0, 435, {
-      align: "center",
-      width: doc.page.width,
-    });
-
-    // Footer
-    doc
-      .fillColor("#95a5a6")
-      .fontSize(10)
-      .font("Helvetica")
-      .text(
-        "This certificate is digitally generated and verified by ATIAM CMS",
-        0,
-        doc.page.height - 80,
-        {
-          align: "center",
-          width: doc.page.width,
-        }
-      );
-
-    // Signature line
-    doc
-      .moveTo(100, doc.page.height - 120)
-      .lineTo(250, doc.page.height - 120)
-      .stroke("#2c3e50");
-
-    doc
-      .fillColor("#2c3e50")
-      .fontSize(12)
-      .text("Director", 150, doc.page.height - 110, {
-        align: "center",
-        width: 100,
-      });
+    try {
+      // Use the fillable template instead of generating from scratch
+      const pdfBuffer = await fillCertificateTemplate(certificateData);
+      return pdfBuffer;
+    } catch (error) {
+      console.error("Error generating certificate PDF:", error);
+      throw error;
+    }
   }
 
   /**
@@ -234,6 +71,9 @@ class CertificateService {
       const certificateData = {
         studentName: `${student.userId.firstName} ${student.userId.lastName}`,
         courseTitle: course.title,
+        courseDuration: course.duration?.estimatedHours
+          ? `${course.duration.estimatedHours} hours`
+          : "",
         instructorName: `${course.instructor.firstName} ${course.instructor.lastName}`,
         completionDate: enrollment.completedAt
           ? new Date(enrollment.completedAt).toLocaleDateString("en-US", {

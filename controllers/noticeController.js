@@ -56,7 +56,7 @@ const getStudentNotices = async (req, res) => {
         { publishDate: { $lte: new Date() } },
         {
           $or: [
-            // General notices for this user's audience (must have no specific recipients)
+            // General notices for this user's audience (must have NO specific recipients at all)
             {
               targetAudience: { $in: allowedAudiences },
               specificRecipients: { $exists: false },
@@ -69,7 +69,11 @@ const getStudentNotices = async (req, res) => {
               targetAudience: { $in: allowedAudiences },
               specificRecipients: null,
             },
-            // Notices specifically addressed to this user (regardless of targetAudience)
+            {
+              targetAudience: { $in: allowedAudiences },
+              specificRecipients: [],
+            },
+            // Personal notices addressed to this user (these take precedence over general notices)
             { specificRecipients: { $in: [userId] } },
           ],
         },
