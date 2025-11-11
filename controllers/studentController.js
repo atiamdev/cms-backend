@@ -1145,7 +1145,17 @@ const recordStudentPayment = async (req, res) => {
     }
 
     const { id: studentId } = req.params;
-    const { amount, paymentMethod, referenceNumber, notes } = req.body;
+    let { amount, paymentMethod, referenceNumber, notes } = req.body;
+
+    // Generate reference number if not provided
+    if (!referenceNumber || referenceNumber.trim() === "") {
+      const date = new Date();
+      const year = date.getFullYear().toString().slice(-2);
+      const month = (date.getMonth() + 1).toString().padStart(2, "0");
+      const day = date.getDate().toString().padStart(2, "0");
+      const timestamp = Date.now().toString().slice(-6);
+      referenceNumber = `PAY${year}${month}${day}${timestamp}`;
+    }
 
     // Find the student and verify branch access
     const student = await Student.findOne({
@@ -1450,10 +1460,13 @@ const generateStudentPaymentReceipt = async (req, res) => {
 const downloadStudentPaymentReceipt = async (req, res) => {
   try {
     const { id, reference } = req.params;
+    const { amount, paymentDate } = req.query;
 
     console.log("Download receipt request:", {
       id,
       reference,
+      amount,
+      paymentDate,
       userId: req.user._id,
       userRole: req.user.roles,
       branchId: req.branchId,
@@ -1506,10 +1519,23 @@ const downloadStudentPaymentReceipt = async (req, res) => {
     }
 
     // Find the payment in history by reference number
-    const paymentEntry = student.fees?.paymentHistory?.find(
-      (payment) => payment.referenceNumber === reference
-    );
+    // Find the payment in history
+    let paymentEntry;
 
+    if (reference && reference.trim() !== "" && reference !== "unknown") {
+      // Search by reference number if provided and not "unknown"
+      paymentEntry = student.fees?.paymentHistory?.find(
+        (payment) => payment.referenceNumber === reference
+      );
+    } else if (req.query.amount && req.query.paymentDate) {
+      // Search by amount and payment date if reference is empty or "unknown"
+      paymentEntry = student.fees?.paymentHistory?.find(
+        (payment) =>
+          payment.amount === parseFloat(req.query.amount) &&
+          new Date(payment.paymentDate).getTime() ===
+            new Date(req.query.paymentDate).getTime()
+      );
+    }
     console.log(
       "Payment entry found:",
       paymentEntry

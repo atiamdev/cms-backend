@@ -84,6 +84,15 @@ const getStudentNotices = async (req, res) => {
             { expiryDate: { $gt: new Date() } },
           ],
         },
+        // Exclude notices hidden by this user
+        {
+          $or: [
+            { hiddenBy: { $exists: false } },
+            { hiddenBy: null },
+            { hiddenBy: { $size: 0 } },
+            { hiddenBy: { $not: { $elemMatch: { userId } } } },
+          ],
+        },
       ],
     };
 
@@ -257,7 +266,22 @@ const getAllNotices = async (req, res) => {
     const userId = req.user.id;
     const { page = 1, limit = 20, type, priority, targetAudience } = req.query;
 
-    const filter = { branchId };
+    const filter = {
+      branchId,
+      // Exclude notices hidden by this user
+      $or: [
+        { hiddenBy: { $exists: false } },
+        { hiddenBy: null },
+        { hiddenBy: { $size: 0 } },
+        {
+          hiddenBy: {
+            $not: {
+              $elemMatch: { userId: new mongoose.Types.ObjectId(userId) },
+            },
+          },
+        },
+      ],
+    };
 
     if (type) filter.type = type;
     if (priority) filter.priority = priority;
@@ -528,6 +552,84 @@ const deleteNotice = async (req, res) => {
   }
 };
 
+// Hide notice for current user
+const hideNotice = async (req, res) => {
+  try {
+    const { noticeId } = req.params;
+    const userId = req.user.id;
+
+    const notice = await Notice.findById(noticeId);
+    if (!notice) {
+      return res.status(404).json({
+        success: false,
+        message: "Notice not found",
+      });
+    }
+
+    // Check if user is in the same branch
+    if (notice.branchId.toString() !== req.user.branchId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    notice.hideForUser(userId);
+    await notice.save();
+
+    res.json({
+      success: true,
+      message: "Notice hidden successfully",
+    });
+  } catch (error) {
+    console.error("Hide notice error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while hiding notice",
+      error: error.message,
+    });
+  }
+};
+
+// Unhide notice for current user
+const unhideNotice = async (req, res) => {
+  try {
+    const { noticeId } = req.params;
+    const userId = req.user.id;
+
+    const notice = await Notice.findById(noticeId);
+    if (!notice) {
+      return res.status(404).json({
+        success: false,
+        message: "Notice not found",
+      });
+    }
+
+    // Check if user is in the same branch
+    if (notice.branchId.toString() !== req.user.branchId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    notice.unhideForUser(userId);
+    await notice.save();
+
+    res.json({
+      success: true,
+      message: "Notice unhidden successfully",
+    });
+  } catch (error) {
+    console.error("Unhide notice error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while unhiding notice",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getStudentNotices,
   markNoticeAsRead,
@@ -536,4 +638,6 @@ module.exports = {
   createNotice,
   updateNotice,
   deleteNotice,
+  hideNotice,
+  unhideNotice,
 };

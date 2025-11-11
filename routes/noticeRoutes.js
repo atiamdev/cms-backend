@@ -8,6 +8,8 @@ const {
   createNotice,
   updateNotice,
   deleteNotice,
+  hideNotice,
+  unhideNotice,
 } = require("../controllers/noticeController");
 const {
   protect,
@@ -125,6 +127,56 @@ router.post("/:noticeId/read", protect, markNoticeAsRead);
  *         description: All notices marked as read successfully
  */
 router.put("/mark-all-read", protect, markAllNoticesAsRead);
+
+/**
+ * @swagger
+ * /notices/{noticeId}/hide:
+ *   post:
+ *     summary: Hide a notice for the current user
+ *     tags: [Notices]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: noticeId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Notice ID
+ *     responses:
+ *       200:
+ *         description: Notice hidden successfully
+ *       404:
+ *         description: Notice not found
+ *       403:
+ *         description: Access denied
+ */
+router.post("/:noticeId/hide", protect, hideNotice);
+
+/**
+ * @swagger
+ * /notices/{noticeId}/unhide:
+ *   post:
+ *     summary: Unhide a notice for the current user
+ *     tags: [Notices]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: noticeId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Notice ID
+ *     responses:
+ *       200:
+ *         description: Notice unhidden successfully
+ *       404:
+ *         description: Notice not found
+ *       403:
+ *         description: Access denied
+ */
+router.post("/:noticeId/unhide", protect, unhideNotice);
 
 /**
  * @swagger
