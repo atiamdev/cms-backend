@@ -92,6 +92,18 @@ const noticeSchema = new mongoose.Schema(
         },
       },
     ],
+    hiddenBy: [
+      {
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+        },
+        hiddenAt: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
   },
   {
     timestamps: true,
@@ -135,12 +147,35 @@ noticeSchema.methods.isReadByUser = function (userId) {
   );
 };
 
+// Virtual for hidden status by user
+noticeSchema.methods.isHiddenByUser = function (userId) {
+  return this.hiddenBy.some(
+    (hidden) => hidden.userId.toString() === userId.toString()
+  );
+};
+
 // Method to mark as read by user
 noticeSchema.methods.markAsReadByUser = function (userId) {
   const userObjectId = new mongoose.Types.ObjectId(userId);
   if (!this.isReadByUser(userObjectId)) {
     this.readBy.push({ userId: userObjectId });
   }
+};
+
+// Method to hide notice for user
+noticeSchema.methods.hideForUser = function (userId) {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  if (!this.isHiddenByUser(userObjectId)) {
+    this.hiddenBy.push({ userId: userObjectId });
+  }
+};
+
+// Method to unhide notice for user
+noticeSchema.methods.unhideForUser = function (userId) {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  this.hiddenBy = this.hiddenBy.filter(
+    (hidden) => hidden.userId.toString() !== userObjectId.toString()
+  );
 };
 
 module.exports = mongoose.model("Notice", noticeSchema);

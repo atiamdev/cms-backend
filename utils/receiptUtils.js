@@ -132,113 +132,114 @@ const fillReceiptTemplate = async (receiptData) => {
         "Template has no form fields. Using text overlay approach..."
       );
 
-      // Since template has no form fields, we'll overlay text on the PDF
-      const pages = pdfDoc.getPages();
-      const firstPage = pages[0];
-      const { width, height } = firstPage.getSize();
+      // // Since template has no form fields, we'll overlay text on the PDF
+      // const pages = pdfDoc.getPages();
+      // const firstPage = pages[0];
+      // const { width, height } = firstPage.getSize();
 
-      // Create a new PDF with text overlay
-      const newPdfDoc = await PDFDocument.create();
-      const [copiedPage] = await newPdfDoc.copyPages(pdfDoc, [0]);
-      newPdfDoc.addPage(copiedPage);
+      // // Create a new PDF with text overlay
+      // const newPdfDoc = await PDFDocument.create();
+      // const [copiedPage] = await newPdfDoc.copyPages(pdfDoc, [0]);
+      // newPdfDoc.addPage(copiedPage);
 
-      const newPage = newPdfDoc.getPages()[0];
-      const font = await newPdfDoc.embedFont(StandardFonts.Helvetica);
-      const boldFont = await newPdfDoc.embedFont(StandardFonts.HelveticaBold);
+      // const newPage = newPdfDoc.getPages()[0];
+      // const font = await newPdfDoc.embedFont(StandardFonts.Helvetica);
+      // const boldFont = await newPdfDoc.embedFont(StandardFonts.CourierBold);
 
       // Define positions for text overlay
       // These coordinates may need to be adjusted based on your template layout
-      const textPositions = {
-        studentName: { x: 150, y: height - 150, size: 12 },
-        receiptNo: { x: 150, y: height - 180, size: 12 },
-        date: { x: 400, y: height - 180, size: 12 },
-        admissionNo: { x: 150, y: height - 210, size: 12 },
-        course: { x: 150, y: height - 240, size: 12 },
-        amount: { x: 150, y: height - 270, size: 12 },
-        amountWords: { x: 150, y: height - 300, size: 10 },
-        receivedBy: { x: 150, y: height - 330, size: 12 },
-      };
+      //   const textPositions = {
+      //     studentName: { x: 150, y: height - 150, size: 12 },
+      //     receiptNo: { x: 150, y: height - 180, size: 12 },
+      //     date: { x: 400, y: height - 180, size: 12 },
+      //     admissionNo: { x: 150, y: height - 210, size: 12 },
+      //     course: { x: 150, y: height - 240, size: 12 },
+      //     amount: { x: 150, y: height - 270, size: 12 },
+      //     amountWords: { x: 150, y: height - 300, size: 10 },
+      //     receivedBy: { x: 150, y: height - 330, size: 12 },
+      //   };
 
-      // Draw text on the PDF
-      newPage.drawText(receiptData.studentName || "N/A", {
-        x: textPositions.studentName.x,
-        y: textPositions.studentName.y,
-        size: textPositions.studentName.size,
-        font: boldFont,
-        color: rgb(0, 0, 0),
-      });
+      //   // Draw text on the PDF
+      //   newPage.drawText(receiptData.studentName || "N/A", {
+      //     x: textPositions.studentName.x,
+      //     y: textPositions.studentName.y,
+      //     size: textPositions.studentName.size,
+      //     font: boldFont,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      newPage.drawText(receiptData.receiptNumber || "N/A", {
-        x: textPositions.receiptNo.x,
-        y: textPositions.receiptNo.y,
-        size: textPositions.receiptNo.size,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
+      //   newPage.drawText(receiptData.receiptNumber || "N/A", {
+      //     x: textPositions.receiptNo.x,
+      //     y: textPositions.receiptNo.y,
+      //     size: textPositions.receiptNo.size,
+      //     font: font,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      const formattedDate = receiptData.paymentDate
-        ? new Date(receiptData.paymentDate).toLocaleDateString()
-        : "N/A";
-      newPage.drawText(formattedDate, {
-        x: textPositions.date.x,
-        y: textPositions.date.y,
-        size: textPositions.date.size,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
+      //   const formattedDate = receiptData.paymentDate
+      //     ? new Date(receiptData.paymentDate).toLocaleDateString()
+      //     : "N/A";
+      //   newPage.drawText(formattedDate, {
+      //     x: textPositions.date.x,
+      //     y: textPositions.date.y,
+      //     size: textPositions.date.size,
+      //     font: font,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      newPage.drawText(receiptData.admissionNumber || "N/A", {
-        x: textPositions.admissionNo.x,
-        y: textPositions.admissionNo.y,
-        size: textPositions.admissionNo.size,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
+      //   newPage.drawText(receiptData.admissionNumber || "N/A", {
+      //     x: textPositions.admissionNo.x,
+      //     y: textPositions.admissionNo.y,
+      //     size: textPositions.admissionNo.size,
+      //     font: font,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      newPage.drawText(receiptData.course || "N/A", {
-        x: textPositions.course.x,
-        y: textPositions.course.y,
-        size: textPositions.course.size,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
+      //   newPage.drawText(receiptData.course || "N/A", {
+      //     x: textPositions.course.x,
+      //     y: textPositions.course.y,
+      //     size: textPositions.course.size,
+      //     font: font,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      const amountText = `KES ${
-        typeof receiptData.amount === "number"
-          ? receiptData.amount.toLocaleString()
-          : "0"
-      }`;
-      newPage.drawText(amountText, {
-        x: textPositions.amount.x,
-        y: textPositions.amount.y,
-        size: textPositions.amount.size,
-        font: boldFont,
-        color: rgb(0, 0, 0),
-      });
+      //   const amountText = `KES ${
+      //     typeof receiptData.amount === "number"
+      //       ? receiptData.amount.toLocaleString()
+      //       : "0"
+      //   }`;
+      //   newPage.drawText(amountText, {
+      //     x: textPositions.amount.x,
+      //     y: textPositions.amount.y,
+      //     size: textPositions.amount.size,
+      //     font: boldFont,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      const amount =
-        typeof receiptData.amount === "number" ? receiptData.amount : 0;
-      const amountInWords = numberToWords(amount);
-      newPage.drawText(`${amountInWords} Kenya Shillings Only`, {
-        x: textPositions.amountWords.x,
-        y: textPositions.amountWords.y,
-        size: textPositions.amountWords.size,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
+      //   const amount =
+      //     typeof receiptData.amount === "number" ? receiptData.amount : 0;
+      //   const amountInWords = numberToWords(amount);
+      //   newPage.drawText(`${amountInWords} Kenya Shillings Only`, {
+      //     x: textPositions.amountWords.x,
+      //     y: textPositions.amountWords.y,
+      //     size: textPositions.amountWords.size,
+      //     font: font,
+      //     color: rgb(0.46, 0.79, 0.18),
+      //   });
 
-      newPage.drawText(receiptData.receivedBy || "System", {
-        x: textPositions.receivedBy.x,
-        y: textPositions.receivedBy.y,
-        size: textPositions.receivedBy.size,
-        font: font,
-        color: rgb(0, 0, 0),
-      });
+      //   newPage.drawText(receiptData.receivedBy || "System", {
+      //     x: textPositions.receivedBy.x,
+      //     y: textPositions.receivedBy.y,
+      //     size: textPositions.receivedBy.size,
+      //     font: font,
+      //     color: rgb(0, 0, 0),
+      //   });
 
-      console.log("Text overlay complete, saving PDF...");
-      const savedPdf = await newPdfDoc.save();
-      console.log("PDF saved, size:", savedPdf.length, "bytes");
-      return savedPdf;
+      //   console.log("Text overlay complete, saving PDF...");
+      //   const savedPdf = await newPdfDoc.save();
+      //   console.log("PDF saved, size:", savedPdf.length, "bytes");
+      //   return savedPdf;
+      // }
     }
 
     // If template has form fields, fill them
