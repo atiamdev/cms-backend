@@ -7,6 +7,7 @@ const {
   getStudent,
   updateStudent,
   deleteStudent,
+  suspendStudent,
   addAcademicRecord,
   addGrade,
   updateAttendance,
@@ -20,6 +21,7 @@ const {
   generateStudentPaymentReceipt,
   downloadStudentPaymentReceipt,
   getStudentCourseMaterials,
+  getStudentWhatsappGroups,
 } = require("../controllers/studentController");
 const {
   protect,
@@ -327,6 +329,11 @@ const gradeValidation = [
 
 // Apply middleware to all routes
 router.use(protect);
+
+// Routes that don't need branch auth (student self-access routes)
+router.get("/me", getCurrentStudent);
+router.get("/whatsapp-groups", getStudentWhatsappGroups);
+
 router.use(branchAuth);
 
 /**
@@ -965,5 +972,54 @@ router.get(
 // @route   GET /api/students/courses/:courseId/materials
 // @access  Private (Student)
 router.get("/courses/:courseId/materials", protect, getStudentCourseMaterials);
+
+/**
+ * @swagger
+ * /students/{id}/suspend:
+ *   patch:
+ *     summary: Suspend student (Admin only)
+ *     tags: [Student Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Student ID
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 description: Reason for suspension
+ *     responses:
+ *       200:
+ *         description: Student suspended successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/SuccessResponse'
+ *       400:
+ *         description: Student already suspended
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Admin access required
+ *       404:
+ *         description: Student not found
+ */
+router.patch(
+  "/:id/suspend",
+  requireAdmin,
+  validateBranchOwnership(Student),
+  logBranchAdminAction("SUSPEND_STUDENT"),
+  suspendStudent
+);
 
 module.exports = router;

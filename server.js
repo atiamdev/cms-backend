@@ -13,6 +13,7 @@ require("dotenv").config();
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const branchRoutes = require("./routes/branchRoutes");
+const departmentRoutes = require("./routes/departmentRoutes");
 const userRoutes = require("./routes/userRoutes");
 const studentRoutes = require("./routes/studentRoutes");
 const teacherRoutes = require("./routes/teacherRoutes");
@@ -30,6 +31,12 @@ const financialReportRoutes = require("./routes/financialReportRoutes");
 const systemAnalyticsRoutes = require("./routes/systemAnalyticsRoutes");
 const globalSettingsRoutes = require("./routes/globalSettingsRoutes");
 const noticeRoutes = require("./routes/noticeRoutes");
+
+// Landing page content routes
+const newsRoutes = require("./routes/newsRoutes");
+const eventRoutes = require("./routes/eventRoutes");
+const staffRoutes = require("./routes/staffRoutes");
+const publicCourseRoutes = require("./routes/publicCourseRoutes");
 
 // Import middleware
 const errorHandler = require("./middlewares/errorHandler");
@@ -57,10 +64,13 @@ const corsOptions = {
     const allowedOrigins = [
       process.env.CMS_FRONTEND_URL || "http://localhost:3000",
       process.env.ELEARNING_FRONTEND_URL || "http://localhost:3001",
+      process.env.LANDING_PAGE_URL || "http://localhost:5173", // Landing page URL
       "http://localhost:3000",
       "http://localhost:3001",
+      "http://localhost:5173", // Vite dev server default
       "https://portal.atiamcollege.com",
       "https://www.atiamcollege.com",
+      "https://atiamcollege.com", // Landing page domain
     ];
 
     // Check if the origin is in the allowed list
@@ -137,6 +147,13 @@ app.use("/api/notices", noticeRoutes);
 app.use("/api/security", require("./routes/securityRoutes"));
 app.use("/api/audit", require("./routes/auditRoutes"));
 app.use("/api/branch-admins", require("./routes/branchAdminRoutes"));
+app.use("/api/departments", departmentRoutes);
+
+// Landing page content routes
+app.use("/api/landing/news", newsRoutes);
+app.use("/api/landing/events", eventRoutes);
+app.use("/api/landing/staff", staffRoutes);
+app.use("/api/landing/courses", publicCourseRoutes);
 
 // 404 handler
 app.use("*", (req, res) => {

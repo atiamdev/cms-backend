@@ -80,6 +80,7 @@ const getCourses = async (req, res) => {
       category,
       search,
       isActive,
+      departmentId,
     } = req.query;
 
     // Debug: Log the branchId to see if it's being set correctly
@@ -100,6 +101,11 @@ const getCourses = async (req, res) => {
     // Filter by category
     if (category) {
       query.category = category;
+    }
+
+    // Filter by department
+    if (departmentId) {
+      query.departmentId = departmentId;
     }
 
     // Filter by active status - only apply filter if explicitly provided
@@ -128,7 +134,6 @@ const getCourses = async (req, res) => {
     console.log("Total courses in database (all branches):", totalCoursesInDB);
 
     const courses = await Course.find(query)
-      .populate("prerequisites", "code name")
       .limit(limit * 1)
       .skip((page - 1) * limit)
       .sort({ level: 1, code: 1 });
@@ -171,7 +176,7 @@ const getCourse = async (req, res) => {
     const course = await Course.findOne({
       _id: id,
       branchId: req.branchId,
-    }).populate("prerequisites", "code name");
+    });
 
     if (!course) {
       return res.status(404).json({
@@ -206,7 +211,7 @@ const updateCourse = async (req, res) => {
       { _id: id, branchId: req.branchId },
       { ...updateData, updatedAt: Date.now() },
       { new: true, runValidators: true }
-    ).populate("prerequisites", "code name");
+    );
 
     if (!course) {
       return res.status(404).json({
@@ -290,10 +295,7 @@ const getCoursesByLevel = async (req, res) => {
 // @access  Private (Admin only) - temporary debug endpoint
 const debugGetAllCourses = async (req, res) => {
   try {
-    const courses = await Course.find({}).populate(
-      "prerequisites",
-      "code name"
-    );
+    const courses = await Course.find({});
 
     console.log("DEBUG: All courses in database:", courses.length);
 

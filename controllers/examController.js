@@ -691,9 +691,6 @@ exports.getUpcomingExams = async (req, res) => {
       });
     }
 
-    console.log("Student found:", student._id);
-    console.log("Student courses:", student.courses);
-
     // Get current date for filtering upcoming exams
     const now = new Date();
     const nextWeek = new Date();

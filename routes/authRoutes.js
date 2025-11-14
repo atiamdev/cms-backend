@@ -2,6 +2,7 @@ const express = require("express");
 const { body } = require("express-validator");
 const {
   register,
+  registerECourseStudent,
   login,
   getMe,
   refreshToken,
@@ -176,6 +177,47 @@ const registerValidation = [
     .withMessage("Status must be active, inactive, suspended, or pending"),
 ];
 
+const registerECourseValidation = [
+  body("email")
+    .isEmail()
+    .normalizeEmail()
+    .withMessage("Please provide a valid email"),
+  body("password")
+    .isLength({ min: 6 })
+    .withMessage("Password must be at least 6 characters long")
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage(
+      "Password must contain at least one lowercase letter, one uppercase letter, and one number"
+    ),
+  body("firstName")
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage("First name must be between 2 and 50 characters"),
+  body("lastName")
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage("Last name must be between 2 and 50 characters"),
+  body("referralSource.source")
+    .optional()
+    .isIn([
+      "banner",
+      "billboard",
+      "flyers",
+      "social_media",
+      "friend",
+      "family",
+      "other",
+    ])
+    .withMessage("Invalid referral source"),
+  body("referralSource.otherDescription")
+    .optional()
+    .if(body("referralSource.source").equals("other"))
+    .notEmpty()
+    .withMessage(
+      "Other description is required when referral source is 'other'"
+    ),
+];
+
 const loginValidation = [
   body("email")
     .isEmail()
@@ -281,6 +323,97 @@ router.post(
     next();
   },
   register
+);
+
+/**
+ * @swagger
+ * /auth/register-ecourse:
+ *   post:
+ *     summary: Register a new e-course student
+ *     tags: [Authentication]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *               - firstName
+ *               - lastName
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: User's email address
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 description: User's password (min 6 chars, must contain uppercase, lowercase, and number)
+ *               firstName:
+ *                 type: string
+ *                 description: User's first name
+ *               lastName:
+ *                 type: string
+ *                 description: User's last name
+ *               profileDetails:
+ *                 type: object
+ *                 description: Additional profile information
+ *               referralSource:
+ *                 type: object
+ *                 properties:
+ *                   source:
+ *                     type: string
+ *                     enum: [banner, billboard, flyers, social_media, friend, family, other]
+ *                   otherDescription:
+ *                     type: string
+ *             example:
+ *               email: student@example.com
+ *               password: Password123
+ *               firstName: John
+ *               lastName: Doe
+ *               referralSource:
+ *                 source: social_media
+ *     responses:
+ *       201:
+ *         description: E-course student registered successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "E-course student registered successfully. Please check your email to verify your account."
+ *                 user:
+ *                   $ref: '#/components/schemas/User'
+ *                 student:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                     studentId:
+ *                       type: string
+ *                     admissionNumber:
+ *                       type: string
+ *                     studentType:
+ *                       type: string
+ *                       example: ecourse
+ *       400:
+ *         description: Validation error or user already exists
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ */
+router.post(
+  "/register-ecourse",
+  registerECourseValidation,
+  registerECourseStudent
 );
 
 /**
