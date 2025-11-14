@@ -7,6 +7,11 @@ const courseSchema = new mongoose.Schema(
       ref: "Branch",
       required: [true, "Branch reference is required"],
     },
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      required: false, // Optional for backward compatibility
+    },
     code: {
       type: String,
       required: [true, "Course code is required"],
@@ -43,8 +48,14 @@ const courseSchema = new mongoose.Schema(
     },
     prerequisites: [
       {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Course",
+        type: String,
+        trim: true,
+      },
+    ],
+    objectives: [
+      {
+        type: String,
+        trim: true,
       },
     ],
     syllabus: {
@@ -306,6 +317,17 @@ const courseSchema = new mongoose.Schema(
     updatedAt: {
       type: Date,
       default: Date.now,
+    },
+    whatsappGroupLink: {
+      type: String,
+      trim: true,
+      validate: {
+        validator: function (v) {
+          // Basic URL validation for WhatsApp links
+          return !v || /^https?:\/\/(chat\.whatsapp\.com|wa\.me)\/.+$/.test(v);
+        },
+        message: "WhatsApp group link must be a valid WhatsApp URL",
+      },
     },
   },
   {

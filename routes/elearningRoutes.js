@@ -98,12 +98,6 @@ const getJengaAccessToken = async () => {
   try {
     const config = getJengaConfig();
 
-    console.log("=== JENGA ACCESS TOKEN REQUEST ===");
-    console.log("Base URL:", config.baseUrl);
-    console.log("Merchant Code:", config.merchantCode);
-    console.log("API Key:", config.apiKey ? "Set" : "Missing");
-    console.log("Consumer Secret:", config.consumerSecret ? "Set" : "Missing");
-
     const response = await axios.post(
       `${config.baseUrl}/authentication/api/v3/authenticate/merchant`,
       {
@@ -119,8 +113,6 @@ const getJengaAccessToken = async () => {
       }
     );
 
-    console.log("Access token obtained successfully for e-learning");
-    console.log("Token:", response.data.accessToken ? "Received" : "Missing");
     return response.data.accessToken;
   } catch (error) {
     console.error("=== JENGA ACCESS TOKEN ERROR ===");
@@ -637,11 +629,6 @@ router.post(
 
       const { title } = req.body;
 
-      console.log("=== Video Upload Debug ===");
-      console.log("File size:", req.file.size);
-      console.log("File type:", req.file.mimetype);
-      console.log("Title:", title);
-
       // Upload to Cloudflare Stream
       const uploadResult = await cloudflareService.uploadToStream(
         req.file.buffer,
@@ -726,11 +713,6 @@ router.post(
       }
 
       const key = `${uploadFolder}/${filename}`;
-
-      console.log("=== File Upload Debug ===");
-      console.log("File size:", req.file.size);
-      console.log("File type:", req.file.mimetype);
-      console.log("Upload key:", key);
 
       // Upload to Cloudflare R2
       const uploadResult = await cloudflareService.uploadFile(req.file.buffer, {
@@ -840,10 +822,6 @@ router.get("/my-courses", protect, authorize("student"), async (req, res) => {
   try {
     // Find student by user ID
     const student = await Student.findOne({ userId: req.user.id });
-    console.log(
-      "Student lookup result for my-courses:",
-      student ? { id: student._id, userId: student.userId } : "No student found"
-    );
     if (!student) {
       return res.status(404).json({
         success: false,
@@ -853,48 +831,9 @@ router.get("/my-courses", protect, authorize("student"), async (req, res) => {
 
     const studentId = student._id;
 
-    console.log(
-      "Fetching enrolled courses for student:",
-      studentId,
-      "userId:",
-      req.user.id
-    );
-
-    // DEBUG: Check all enrollments
-    const allEnrollments = await Enrollment.find({}).limit(10);
-    console.log(
-      "All enrollments in DB (first 10):",
-      allEnrollments.map((e) => ({
-        id: e._id,
-        studentId: e.studentId,
-        courseId: e.courseId,
-        status: e.status,
-      }))
-    );
-
     // Fetch real enrollments from database
     const enrollments = await Enrollment.getStudentEnrollments(studentId, {
       status: ["active", "approved", "completed"], // Only active enrollments
-    });
-
-    console.log("Found enrollments:", enrollments.length);
-    const nullCourseEnrollments = enrollments.filter((e) => !e.courseId);
-    if (nullCourseEnrollments.length > 0) {
-      console.warn(
-        `Found ${nullCourseEnrollments.length} enrollments with null courseId for student ${studentId}`
-      );
-      // Optionally clean up orphaned enrollments
-      // await Enrollment.deleteMany({ _id: { $in: nullCourseEnrollments.map(e => e._id) } });
-    }
-    enrollments.forEach((enrollment) => {
-      console.log("Enrollment:", {
-        id: enrollment._id,
-        courseId: enrollment.courseId ? enrollment.courseId._id : "null",
-        courseTitle: enrollment.courseId ? enrollment.courseId.title : "null",
-        status: enrollment.status,
-        progress: enrollment.progress,
-        populated: !!enrollment.courseId,
-      });
     });
 
     // Transform data to match frontend expectations
@@ -1439,23 +1378,11 @@ router.post(
           // Generate RSA signature for STK Push
           // Formula: order.orderReference + payment.paymentCurrency + payment.details.msisdn + payment.details.paymentAmount
           const signatureString = `${stkPushData.order.orderReference}${stkPushData.payment.paymentCurrency}${stkPushData.payment.details.msisdn}${stkPushData.payment.details.paymentAmount}`;
-          console.log("=== COURSE ENROLLMENT STK PUSH SIGNATURE ===");
-          console.log("Order Reference:", stkPushData.order.orderReference);
-          console.log("Payment Currency:", stkPushData.payment.paymentCurrency);
-          console.log("MSISDN:", stkPushData.payment.details.msisdn);
-          console.log(
-            "Payment Amount:",
-            stkPushData.payment.details.paymentAmount
-          );
-          console.log("Signature String:", signatureString);
 
           const signature = generateJengaSignature(signatureString);
-          console.log("Generated RSA Signature:", signature);
-          console.log("==========================================");
 
           // Make Jenga STK Push request
           const stkPushUrl = `${config.baseUrl}/api-checkout/mpesa-stk-push/v3.0/init`;
-          console.log("Jenga STK Push endpoint:", stkPushUrl);
 
           let stkResponse;
           try {
@@ -1467,7 +1394,6 @@ router.post(
               },
               timeout: 30000, // 30 second timeout
             });
-            console.log("Successful STK Push response:", stkResponse.data);
           } catch (stkError) {
             console.error(
               "STK Push failed:",
@@ -2000,12 +1926,6 @@ router.get(
     try {
       // Find student by user ID
       const student = await Student.findOne({ userId: req.user.id });
-      console.log(
-        "Student lookup result for student-quizzes:",
-        student
-          ? { id: student._id, userId: student.userId }
-          : "No student found"
-      );
       if (!student) {
         return res.status(404).json({
           success: false,
@@ -2015,41 +1935,18 @@ router.get(
 
       const studentId = student._id;
 
-      console.log(
-        "Fetching quizzes for student:",
-        studentId,
-        "userId:",
-        req.user.id
-      );
-
       // Fetch enrollments for e-courses
       const enrollments = await Enrollment.getStudentEnrollments(studentId, {
         status: ["active", "approved", "completed"],
       });
 
-      console.log(
-        "Found e-course enrollments for quizzes:",
-        enrollments.length
-      );
-      enrollments.forEach((enrollment) => {
-        console.log("E-course enrollment for quizzes:", {
-          id: enrollment._id,
-          courseId: enrollment.courseId._id,
-          courseTitle: enrollment.courseId.title,
-          status: enrollment.status,
-        });
-      });
-
       // Get regular courses from student profile
       const regularCourseIds = student.courses || [];
-      console.log(
-        "Found regular courses for quizzes:",
-        regularCourseIds.length
-      );
-      console.log("Regular course IDs:", regularCourseIds);
 
-      // Combine all course IDs
-      const ecourseIds = enrollments.map((e) => e.courseId);
+      // Combine all course IDs (filter out null courseIds)
+      const ecourseIds = enrollments
+        .filter((e) => e.courseId) // Only include enrollments with valid courseId
+        .map((e) => e.courseId);
       const allCourseIds = [...ecourseIds, ...regularCourseIds];
 
       if (allCourseIds.length === 0) {
@@ -2058,8 +1955,6 @@ router.get(
           data: [],
         });
       }
-
-      console.log("All course IDs for quizzes:", allCourseIds);
 
       // Fetch quizzes from all enrolled courses (both e-courses and regular courses)
       const quizzes = await Quiz.find({
@@ -2087,35 +1982,12 @@ router.get(
         }
       }
 
-      console.log("Found quizzes:", quizzes.length);
-      quizzes.forEach((quiz) => {
-        console.log("Quiz:", {
-          id: quiz._id,
-          title: quiz.title,
-          courseId: quiz.courseId,
-          courseType: quiz.courseType,
-          isPublished: quiz.isPublished,
-        });
-      });
-
       // Get student's attempts for these quizzes
       const quizIds = quizzes.map((q) => q._id);
       const attempts = await QuizAttempt.find({
         quizId: { $in: quizIds },
         studentId: studentId,
       }).sort({ createdAt: -1 });
-
-      console.log("Found attempts:", attempts.length);
-      attempts.forEach((attempt) => {
-        console.log("Attempt:", {
-          id: attempt._id,
-          quizId: attempt.quizId,
-          studentId: attempt.studentId,
-          submittedAt: attempt.submittedAt,
-          totalScore: attempt.totalScore,
-          percentageScore: attempt.percentageScore,
-        });
-      });
 
       // Group attempts by quiz
       const attemptsByQuiz = attempts.reduce((acc, attempt) => {

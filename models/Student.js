@@ -12,6 +12,11 @@ const studentSchema = new mongoose.Schema(
       ref: "Branch",
       required: [true, "Branch reference is required"],
     },
+    departmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      required: false, // Optional for backward compatibility
+    },
     studentId: {
       type: String,
       required: [true, "Student ID is required"],
@@ -23,6 +28,12 @@ const studentSchema = new mongoose.Schema(
       required: [true, "Admission number is required"],
       trim: true,
       uppercase: true,
+    },
+    studentType: {
+      type: String,
+      enum: ["regular", "ecourse"],
+      default: "regular",
+      required: true,
     },
     currentClassId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -39,6 +50,28 @@ const studentSchema = new mongoose.Schema(
       type: Date,
       required: [true, "Enrollment date is required"],
       default: Date.now,
+    },
+    referralSource: {
+      source: {
+        type: String,
+        enum: [
+          "banner",
+          "billboard",
+          "flyers",
+          "social_media",
+          "friend",
+          "family",
+          "other",
+        ],
+        required: false,
+      },
+      otherDescription: {
+        type: String,
+        trim: true,
+        required: function () {
+          return this.source === "other";
+        },
+      },
     },
     academicStatus: {
       type: String,
@@ -175,7 +208,13 @@ const studentSchema = new mongoose.Schema(
       emergencyContact: {
         name: { type: String, trim: true },
         relationship: { type: String, trim: true },
-        phone: { type: String, required: true, trim: true },
+        phone: {
+          type: String,
+          trim: true,
+          required: function () {
+            return this.studentType !== "ecourse";
+          },
+        },
         alternatePhone: { type: String, trim: true },
       },
     },

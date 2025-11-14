@@ -4,6 +4,8 @@ const Student = require("../models/Student");
 const User = require("../models/User");
 const Branch = require("../models/Branch");
 const Class = require("../models/Class");
+const Department = require("../models/Department");
+const Course = require("../models/Course");
 const CloudflareService = require("../services/cloudflareService");
 const { generateId, generateAdmissionNumber } = require("../utils/helpers");
 const {
@@ -51,6 +53,7 @@ const createStudent = async (req, res) => {
       // Student specific data
       currentClassId,
       enrollmentDate,
+      referralSource,
       photoUrl, // Add photo URL
       parentGuardianInfo,
       medicalInfo,
@@ -184,9 +187,6 @@ const createStudent = async (req, res) => {
             verificationUrl
           ),
         });
-        console.log(
-          `Verification email sent successfully to student: ${createdUser.email}`
-        );
       } catch (emailError) {
         console.error("Student verification email sending failed:", emailError);
         // Don't fail registration if email fails
@@ -211,6 +211,7 @@ const createStudent = async (req, res) => {
       admissionNumber,
       // currentClassId will be set later when assigning to a class
       enrollmentDate: enrollmentDate || new Date(),
+      referralSource,
       photoUrl: photoUrl, // Add photo URL from upload
       parentGuardianInfo,
       medicalInfo,
@@ -248,7 +249,6 @@ const createStudent = async (req, res) => {
     if (createdUser && !existingUser && error.name !== "ValidationError") {
       try {
         await User.findByIdAndDelete(createdUser._id);
-        console.log("Cleaned up orphaned user after student creation failure");
       } catch (cleanupError) {
         console.error("Error cleaning up orphaned user:", cleanupError);
       }
@@ -287,17 +287,25 @@ const getStudents = async (req, res) => {
       status,
       classId,
       courseId,
+      departmentId,
       search,
-      sortBy = "createdAt",
-      sortOrder = "desc",
       branchId, // Allow superadmin to filter by specific branch
+      includeEcourse, // Allow fetching e-course students
     } = req.query;
-
-    console.log("getStudents called with courseId:", courseId);
 
     // Apply branch-based filtering
     const branchFilter = getBranchQueryFilter(req.user, branchId);
     const query = { ...branchFilter };
+
+    // Only exclude e-course students if not explicitly requested
+    // For e-course students, allow cross-branch access for admins
+    if (includeEcourse !== "true") {
+      query.studentType = { $ne: "ecourse" };
+    } else if (includeEcourse === "true" && !isSuperAdmin(req.user)) {
+      // For non-superadmin users fetching e-course students, allow cross-branch access
+      // Remove branch restriction for e-course students
+      delete query.branchId;
+    }
 
     // Filter by academic status
     if (status) {
@@ -314,7 +322,10 @@ const getStudents = async (req, res) => {
       query.courses = { $in: [new mongoose.Types.ObjectId(courseId)] };
     }
 
-    console.log("Final query:", JSON.stringify(query, null, 2));
+    // Filter by department
+    if (departmentId) {
+      query.departmentId = new mongoose.Types.ObjectId(departmentId);
+    }
 
     // Build aggregation pipeline for search
     const pipeline = [
@@ -352,6 +363,14 @@ const getStudents = async (req, res) => {
           as: "branchInfo",
         },
       },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "departmentId",
+          foreignField: "_id",
+          as: "departmentInfo",
+        },
+      },
     ];
 
     // Add search filter
@@ -369,9 +388,8 @@ const getStudents = async (req, res) => {
       });
     }
 
-    // Add sorting
-    const sortDirection = sortOrder === "desc" ? -1 : 1;
-    pipeline.push({ $sort: { [sortBy]: sortDirection } });
+    // Default sorting by creation date (newest first)
+    pipeline.push({ $sort: { createdAt: -1 } });
 
     // Add pagination
     pipeline.push(
@@ -492,6 +510,7 @@ const getCurrentStudent = async (req, res) => {
           },
           studentId: 1,
           admissionNumber: 1,
+          studentType: 1,
           currentClassId: 1,
           courses: 1,
           enrollmentDate: 1,
@@ -541,18 +560,61 @@ const getStudent = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const student = await Student.findOne({
+    // First, try to find the student with branch restriction
+    let student = await Student.findOne({
       _id: id,
       branchId: req.branchId,
     }).populate([
       { path: "userId", select: "firstName lastName email profileDetails" },
       { path: "currentClassId", select: "name capacity" },
       { path: "branchId", select: "name configuration" },
+      { path: "courses", select: "name description duration price" },
       {
         path: "academicRecords.subjects.teacherId",
         select: "firstName lastName",
       },
     ]);
+
+    // If not found and user has admin privileges, try to find e-course student across branches
+    if (
+      !student &&
+      (req.user.hasRole("admin") || req.user.hasRole("superadmin"))
+    ) {
+      student = await Student.findOne({
+        _id: id,
+        studentType: "ecourse",
+      }).populate([
+        { path: "userId", select: "firstName lastName email profileDetails" },
+        { path: "currentClassId", select: "name capacity" },
+        { path: "branchId", select: "name configuration" },
+        { path: "courses", select: "name description duration price" },
+        {
+          path: "academicRecords.subjects.teacherId",
+          select: "firstName lastName",
+        },
+      ]);
+    }
+
+    // If student found, populate enrollment progress for each course
+    if (student && student.courses && student.courses.length > 0) {
+      const Enrollment = require("../models/elearning/Enrollment");
+      const enrollments = await Enrollment.find({
+        studentId: student._id,
+        courseId: { $in: student.courses.map((c) => c._id) },
+      }).select("courseId progress status");
+
+      // Add progress to each course
+      student.courses = student.courses.map((course) => {
+        const enrollment = enrollments.find(
+          (e) => e.courseId.toString() === course._id.toString()
+        );
+        return {
+          ...course.toObject(),
+          progress: enrollment ? enrollment.progress : 0,
+          enrollmentStatus: enrollment ? enrollment.status : "not_enrolled",
+        };
+      });
+    }
 
     if (!student) {
       return res.status(404).json({
@@ -663,11 +725,6 @@ const updateStudent = async (req, res) => {
       });
 
       await student.save();
-
-      // Log for audit purposes
-      console.log(
-        `Student ${student.studentId} status changed from ${oldStatus} to ${newStatus} by user ${req.user._id}`
-      );
     }
 
     // Update user profile if provided
@@ -738,7 +795,6 @@ const deleteStudent = async (req, res) => {
       const cloudflareService = new CloudflareService();
       try {
         await cloudflareService.deleteFile(student.photoUrl);
-        console.log("Student photo deleted from Cloudflare:", student.photoUrl);
       } catch (photoError) {
         console.error("Error deleting student photo:", photoError);
         // Don't fail the entire deletion if photo deletion fails
@@ -1221,11 +1277,6 @@ const recordStudentPayment = async (req, res) => {
       { new: true, runValidators: true }
     ).populate("userId", "firstName lastName email phone");
 
-    // Log the payment activity
-    console.log(
-      `Payment recorded: ${amount} for student ${student.studentId} by ${req.user.firstName} ${req.user.lastName}`
-    );
-
     res.status(200).json({
       success: true,
       message: "Payment recorded successfully",
@@ -1258,17 +1309,6 @@ const getStudentPaymentHistory = async (req, res) => {
   try {
     const { id } = req.params;
 
-    console.log("Getting payment history for student:", id);
-    console.log(
-      "User:",
-      req.user.firstName,
-      req.user.lastName,
-      "Role:",
-      req.user.roles
-    );
-    console.log("User branchId:", req.user.branchId);
-    console.log("Request branchId:", req.branchId);
-
     // Find student with payment history (use branchId from middleware)
     const student = await Student.findOne({
       _id: id,
@@ -1280,16 +1320,6 @@ const getStudentPaymentHistory = async (req, res) => {
         { path: "branchId", select: "name configuration" },
       ])
       .select("studentId fees userId currentClassId branchId createdAt");
-
-    console.log("Found student:", student ? student.studentId : "Not found");
-
-    if (student) {
-      console.log("Student fees data:", JSON.stringify(student.fees, null, 2));
-      console.log(
-        "Payment history length:",
-        student.fees?.paymentHistory?.length || 0
-      );
-    }
 
     if (!student) {
       return res.status(404).json({
@@ -1317,8 +1347,6 @@ const getStudentPaymentHistory = async (req, res) => {
           : null,
       totalPayments: paymentHistory.length,
     };
-
-    console.log("Calculated fee summary:", JSON.stringify(feeSummary, null, 2));
 
     res.json({
       success: true,
@@ -1352,14 +1380,6 @@ const generateStudentPaymentReceipt = async (req, res) => {
   try {
     const { id, reference } = req.params;
 
-    console.log("Download receipt request:", {
-      id,
-      reference,
-      userId: req.user._id,
-      userRole: req.user.roles,
-      branchId: req.branchId,
-    });
-
     // Find student with payment history
     const student = await Student.findOne({
       _id: id,
@@ -1369,20 +1389,6 @@ const generateStudentPaymentReceipt = async (req, res) => {
       { path: "currentClassId", select: "name" },
       { path: "branchId", select: "name address phone email configuration" },
     ]);
-
-    console.log(
-      "Found student:",
-      student
-        ? {
-            id: student._id,
-            studentId: student.studentId,
-            userId: student.userId?._id,
-            branchId: student.branchId?._id,
-            hasFees: !!student.fees,
-            paymentHistoryLength: student.fees?.paymentHistory?.length || 0,
-          }
-        : "Not found"
-    );
 
     if (!student) {
       return res.status(404).json({
@@ -1405,17 +1411,6 @@ const generateStudentPaymentReceipt = async (req, res) => {
     // Find the payment in history by reference number
     const paymentEntry = student.fees?.paymentHistory?.find(
       (payment) => payment.referenceNumber === reference
-    );
-
-    console.log(
-      "Payment entry found:",
-      paymentEntry
-        ? {
-            referenceNumber: paymentEntry.referenceNumber,
-            amount: paymentEntry.amount,
-            paymentDate: paymentEntry.paymentDate,
-          }
-        : "Not found"
     );
 
     if (!paymentEntry) {
@@ -1462,16 +1457,6 @@ const downloadStudentPaymentReceipt = async (req, res) => {
     const { id, reference } = req.params;
     const { amount, paymentDate } = req.query;
 
-    console.log("Download receipt request:", {
-      id,
-      reference,
-      amount,
-      paymentDate,
-      userId: req.user._id,
-      userRole: req.user.roles,
-      branchId: req.branchId,
-    });
-
     // For students, find their own record regardless of branch filtering
     let query = { _id: id };
     if (!req.user.roles.includes("student")) {
@@ -1485,20 +1470,6 @@ const downloadStudentPaymentReceipt = async (req, res) => {
       { path: "currentClassId", select: "name" },
       { path: "branchId", select: "name address phone email configuration" },
     ]);
-
-    console.log(
-      "Found student:",
-      student
-        ? {
-            id: student._id,
-            studentId: student.studentId,
-            userId: student.userId?._id,
-            branchId: student.branchId?._id,
-            hasFees: !!student.fees,
-            paymentHistoryLength: student.fees?.paymentHistory?.length || 0,
-          }
-        : "Not found"
-    );
 
     if (!student) {
       return res.status(404).json({
@@ -1536,16 +1507,6 @@ const downloadStudentPaymentReceipt = async (req, res) => {
             new Date(req.query.paymentDate).getTime()
       );
     }
-    console.log(
-      "Payment entry found:",
-      paymentEntry
-        ? {
-            referenceNumber: paymentEntry.referenceNumber,
-            amount: paymentEntry.amount,
-            paymentDate: paymentEntry.paymentDate,
-          }
-        : "Not found"
-    );
 
     if (!paymentEntry) {
       return res.status(404).json({
@@ -1572,12 +1533,8 @@ const downloadStudentPaymentReceipt = async (req, res) => {
       receivedBy: "Admin",
     };
 
-    console.log("Generating receipt with template...");
-
     // Generate PDF using the fillable template
     const pdfBytes = await fillReceiptTemplate(receiptData);
-
-    console.log("PDF generated successfully, size:", pdfBytes.length, "bytes");
 
     // Set response headers for PDF download
     res.setHeader("Content-Type", "application/pdf");
@@ -1601,8 +1558,6 @@ const downloadStudentPaymentReceipt = async (req, res) => {
     });
   }
 };
-
-const Course = require("../models/Course");
 
 // @desc    Get course materials for enrolled student
 // @route   GET /api/students/courses/:courseId/materials
@@ -1683,6 +1638,111 @@ const getStudentCourseMaterials = async (req, res) => {
   }
 };
 
+const getStudentWhatsappGroups = async (req, res) => {
+  try {
+    // Get current student
+    const student = await Student.findOne({ userId: req.user._id })
+      .populate("departmentId", "name code whatsappGroupLink")
+      .populate("courses", "name code level whatsappGroupLink");
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const whatsappGroups = [];
+
+    // Add department WhatsApp group if exists
+    if (student.departmentId && student.departmentId.whatsappGroupLink) {
+      whatsappGroups.push({
+        type: "department",
+        name: student.departmentId.name,
+        code: student.departmentId.code,
+        link: student.departmentId.whatsappGroupLink,
+      });
+    }
+
+    // Add course WhatsApp groups if they exist
+    if (student.courses && student.courses.length > 0) {
+      student.courses.forEach((course) => {
+        if (course.whatsappGroupLink) {
+          whatsappGroups.push({
+            type: "course",
+            name: course.name,
+            code: course.code,
+            level: course.level,
+            link: course.whatsappGroupLink,
+          });
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      data: whatsappGroups,
+    });
+  } catch (error) {
+    console.error("Get student WhatsApp groups error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch WhatsApp group links",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Suspend a student
+// @route   PATCH /api/students/:id/suspend
+// @access  Private (Admin, Secretary)
+const suspendStudent = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const student = await Student.findOne({ _id: id });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    // Check if student is already suspended
+    if (student.academicStatus === "suspended") {
+      return res.status(400).json({
+        success: false,
+        message: "Student is already suspended",
+      });
+    }
+
+    // Update student status to suspended
+    student.academicStatus = "suspended";
+    student.statusHistory.push({
+      oldStatus: student.academicStatus,
+      newStatus: "suspended",
+      changedBy: req.user._id,
+      changeReason: req.body.reason || "Suspended by admin",
+      changedAt: new Date(),
+    });
+
+    await student.save();
+
+    res.json({
+      success: true,
+      message: "Student suspended successfully",
+      data: student,
+    });
+  } catch (error) {
+    console.error("Suspend student error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during student suspension",
+    });
+  }
+};
+
 module.exports = {
   createStudent,
   getStudents,
@@ -1703,4 +1763,6 @@ module.exports = {
   generateStudentPaymentReceipt,
   downloadStudentPaymentReceipt,
   getStudentCourseMaterials,
+  getStudentWhatsappGroups,
+  suspendStudent,
 };

@@ -377,9 +377,6 @@ const getUserLiveSessions = async (req, res) => {
     const userId = req.user._id;
     const { status = "scheduled", upcoming = true } = req.query;
 
-    console.log("getUserLiveSessions called for userId:", userId);
-    console.log("User roles:", req.user.roles);
-
     let courseIds = [];
 
     // If user is a student, get courses they're enrolled in

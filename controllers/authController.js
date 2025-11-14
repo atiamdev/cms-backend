@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const { validationResult } = require("express-validator");
 const User = require("../models/User");
 const Branch = require("../models/Branch");
+const Student = require("../models/Student");
 const AuditLogger = require("../utils/auditLogger");
 
 // Temporary state store for OAuth flows (in production, use Redis/database)
@@ -255,6 +256,165 @@ const register = async (req, res) => {
   }
 };
 
+// @desc    Register a new e-course student
+// @route   POST /api/auth/register-ecourse
+// @access  Public
+const registerECourseStudent = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: "Validation errors",
+        errors: errors.array(),
+      });
+    }
+
+    const {
+      email,
+      password,
+      firstName,
+      lastName,
+      profileDetails,
+      referralSource,
+    } = req.body;
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "User with this email already exists",
+      });
+    }
+
+    // Get the default e-course branch (create one if it doesn't exist)
+    let ecourseBranch = await Branch.findOne({ name: "E-Course Branch" });
+    if (!ecourseBranch) {
+      ecourseBranch = await Branch.create({
+        name: "E-Course Branch",
+        code: "ECOURSE",
+        address: "Online",
+        phone: "N/A",
+        email: "ecourse@atiamcollege.com",
+        status: "active",
+        configuration: {
+          studentIdPrefix: "EC",
+          admissionNumberPrefix: "EC-ADM",
+        },
+      });
+    }
+
+    // Create user
+    const crypto = require("crypto");
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+
+    const user = await User.create({
+      email,
+      password,
+      firstName,
+      lastName,
+      roles: ["student"],
+      branchId: ecourseBranch._id,
+      profileDetails,
+      status: "pending",
+      emailVerified: false,
+      emailVerificationToken: verificationToken,
+    });
+
+    // Create student record
+    const Student = require("../models/Student");
+    const { generateId, generateAdmissionNumber } = require("../utils/helpers");
+
+    // Generate admission number
+    const admissionNumber = await generateAdmissionNumber(ecourseBranch);
+
+    // Generate unique student ID
+    let studentId;
+    let attempts = 0;
+    const maxAttempts = 5;
+
+    do {
+      studentId = generateId("EC", 6);
+      const existingStudent = await Student.findOne({
+        studentId,
+        branchId: ecourseBranch._id,
+      });
+      if (!existingStudent) break;
+      attempts++;
+    } while (attempts < maxAttempts);
+
+    if (attempts >= maxAttempts) {
+      // Clean up user if student creation fails
+      await User.findByIdAndDelete(user._id);
+      return res.status(500).json({
+        success: false,
+        message: "Unable to generate unique student ID. Please try again.",
+      });
+    }
+
+    // Create student record
+    const student = await Student.create({
+      userId: user._id,
+      branchId: ecourseBranch._id,
+      studentId,
+      admissionNumber,
+      studentType: "ecourse",
+      enrollmentDate: new Date(),
+      referralSource,
+      academicStatus: "active",
+    });
+
+    // Send verification email
+    try {
+      const { sendEmail, emailTemplates } = require("../utils/emailService");
+      const baseUrl = process.env.CMS_FRONTEND_URL || "http://localhost:3000";
+      const verificationUrl = `${baseUrl}/verify-email?token=${verificationToken}`;
+
+      await sendEmail({
+        to: user.email,
+        ...emailTemplates.emailVerification(
+          `${user.firstName} ${user.lastName}`,
+          verificationUrl
+        ),
+      });
+    } catch (emailError) {
+      console.error("Verification email sending failed:", emailError);
+      // Don't fail registration if email fails
+    }
+
+    res.status(201).json({
+      success: true,
+      message:
+        "E-course student registered successfully. Please check your email to verify your account.",
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        fullName: user.fullName,
+        roles: user.roles,
+        branchId: user.branchId.toString(),
+        status: user.status,
+        emailVerified: user.emailVerified,
+        profileDetails: user.profileDetails,
+      },
+      student: {
+        id: student._id,
+        studentId: student.studentId,
+        admissionNumber: student.admissionNumber,
+        studentType: student.studentType,
+      },
+    });
+  } catch (error) {
+    console.error("E-course student registration error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during e-course student registration",
+    });
+  }
+};
+
 // @desc    Verify user email
 // @route   GET /api/auth/verify-email
 // @access  Public
@@ -452,6 +612,20 @@ const login = async (req, res) => {
     const token = generateToken(user._id);
     const refreshToken = generateRefreshToken(user._id);
 
+    // Get student type if user is a student
+    let studentType = null;
+    if (user.roles.includes("student")) {
+      try {
+        const student = await Student.findOne({ userId: user._id }).select(
+          "studentType"
+        );
+        studentType = student ? student.studentType : "regular";
+      } catch (error) {
+        console.error("Error fetching student type:", error);
+        studentType = "regular"; // Default fallback
+      }
+    }
+
     res.json({
       success: true,
       message: "Login successful",
@@ -472,6 +646,7 @@ const login = async (req, res) => {
         status: user.status,
         profileDetails: user.profileDetails,
         lastLogin: user.lastLogin,
+        studentType: studentType,
       },
       token,
       refreshToken,
@@ -511,6 +686,20 @@ const getMe = async (req, res) => {
       "name configuration"
     );
 
+    // Get student type if user is a student
+    let studentType = null;
+    if (user.roles.includes("student")) {
+      try {
+        const student = await Student.findOne({ userId: user._id }).select(
+          "studentType"
+        );
+        studentType = student ? student.studentType : "regular";
+      } catch (error) {
+        console.error("Error fetching student type in getMe:", error);
+        studentType = "regular"; // Default fallback
+      }
+    }
+
     res.json({
       success: true,
       user: {
@@ -534,6 +723,7 @@ const getMe = async (req, res) => {
         googleProfile: user.googleProfile,
         lastLogin: user.lastLogin,
         createdAt: user.createdAt,
+        studentType: studentType,
       },
     });
   } catch (error) {
@@ -1281,6 +1471,7 @@ const disconnectGoogleAccount = async (req, res) => {
 
 module.exports = {
   register,
+  registerECourseStudent,
   login,
   getMe,
   refreshToken,
