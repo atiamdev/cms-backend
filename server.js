@@ -7,6 +7,7 @@ const { swaggerSetup } = require("./config/swagger");
 const http = require("http");
 
 const socketIo = require("socket.io");
+const webpush = require("web-push");
 
 require("dotenv").config();
 
@@ -37,6 +38,7 @@ const newsRoutes = require("./routes/newsRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const publicCourseRoutes = require("./routes/publicCourseRoutes");
+const pushRoutes = require("./routes/pushRoutes");
 
 // Import middleware
 const errorHandler = require("./middlewares/errorHandler");
@@ -154,6 +156,7 @@ app.use("/api/landing/news", newsRoutes);
 app.use("/api/landing/events", eventRoutes);
 app.use("/api/landing/staff", staffRoutes);
 app.use("/api/landing/courses", publicCourseRoutes);
+app.use("/api/push", pushRoutes);
 
 // 404 handler
 app.use("*", (req, res) => {
@@ -185,6 +188,18 @@ const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   await connectDB();
+
+  // Set up web-push
+  const vapidKeys = webpush.generateVAPIDKeys();
+  console.log("VAPID Public Key:", vapidKeys.publicKey);
+
+  process.env.VAPID_PUBLIC_KEY = vapidKeys.publicKey;
+
+  webpush.setVapidDetails(
+    "mailto:admin@atiamcollege.com",
+    vapidKeys.publicKey,
+    vapidKeys.privateKey
+  );
 
   // Create HTTP server
   const server = http.createServer(app);
