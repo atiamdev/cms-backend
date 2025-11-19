@@ -37,10 +37,15 @@ class AuditLogger {
     category,
   }) {
     try {
+      // Handle missing user gracefully
       const logData = {
-        userId: user._id || user.id,
-        userName: user.name || `${user.firstName} ${user.lastName}`.trim(),
-        userEmail: user.email,
+        userId: user?._id || user?.id || null,
+        userName:
+          user?.name ||
+          (user?.firstName && user?.lastName
+            ? `${user.firstName} ${user.lastName}`.trim()
+            : "System"),
+        userEmail: user?.email || "system@unknown",
         action,
         resourceType,
         resourceId,
