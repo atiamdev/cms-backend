@@ -7,8 +7,17 @@ const router = express.Router();
 
 // Get VAPID public key
 router.get("/vapid-public-key", (req, res) => {
-  // In production, this should be from env
-  const publicKey = process.env.VAPID_PUBLIC_KEY || "BDefaultKeyForDev";
+  const publicKey = process.env.VAPID_PUBLIC_KEY;
+
+  if (!publicKey) {
+    console.error("VAPID_PUBLIC_KEY not set in environment");
+    return res.status(503).json({
+      error: "Push notifications not configured",
+      message:
+        "VAPID keys have not been generated yet. Please restart the server.",
+    });
+  }
+
   res.json({ publicKey });
 });
 
