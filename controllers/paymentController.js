@@ -904,7 +904,7 @@ const recordManualPayment = async (req, res) => {
       paymentMethod,
       paymentDate: paymentDate || new Date(),
       status: "completed",
-      verificationStatus: "unverified", // Manual payments need verification
+      verificationStatus: "verified", // Secretary-recorded payments are automatically verified
       manualPaymentDetails: {
         referenceNumber,
         bankName,

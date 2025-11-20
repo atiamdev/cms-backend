@@ -406,13 +406,14 @@ const getFinancialAnalytics = async (startDate, endDate) => {
   );
 
   const [payments, allPayments, expenses, feeCollection] = await Promise.all([
-    // Payments within date range with successful status
+    // Payments within date range - count completed payments
+    // For manual payments: status should be "completed" (regardless of verificationStatus)
+    // For automated payments: status should be "completed" or "SUCCESS"
     Payment.aggregate([
       {
         $match: {
           createdAt: { $gte: startDate, $lte: endDate },
-          // Include all successful payment statuses
-          // Don't filter by verificationStatus - include all completed/successful payments
+          // Include completed and SUCCESS status (don't require verification for manual payments)
           status: { $in: ["completed", "SUCCESS", "verified"] },
         },
       },
