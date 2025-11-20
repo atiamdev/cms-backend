@@ -39,6 +39,7 @@ const eventRoutes = require("./routes/eventRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const publicCourseRoutes = require("./routes/publicCourseRoutes");
 const pushRoutes = require("./routes/pushRoutes");
+const studentApplicationRoutes = require("./routes/studentApplicationRoutes");
 
 // Import middleware
 const errorHandler = require("./middlewares/errorHandler");
@@ -129,6 +130,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/branches", branchRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/students", studentRoutes);
+app.use("/api/applications", studentApplicationRoutes); // Student applications
 app.use("/api/teachers", teacherRoutes);
 app.use("/api/teacher", teacherRoutes); // For teacher-specific routes
 app.use("/api/courses", courseRoutes);
