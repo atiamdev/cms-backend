@@ -657,6 +657,91 @@ router.put(
 
 /**
  * @swagger
+ * /students/bulk:
+ *   delete:
+ *     summary: Bulk delete students
+ *     tags: [Student Management]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - ids
+ *             properties:
+ *               ids:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *                 description: Array of student IDs to delete
+ *     responses:
+ *       200:
+ *         description: Students deleted successfully
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Access denied
+ */
+router.delete(
+  "/bulk",
+  canAccessStudents,
+  branchAuth,
+  logBranchAdminAction("BULK_DELETE_STUDENTS"),
+  async (req, res) => {
+    try {
+      const { ids } = req.body;
+
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Student IDs array is required",
+        });
+      }
+
+      // Verify all students belong to user's branch
+      const students = await Student.find({
+        _id: { $in: ids },
+        branchId: req.branchId,
+      });
+
+      if (students.length !== ids.length) {
+        return res.status(403).json({
+          success: false,
+          message: "Some students do not belong to your branch or do not exist",
+        });
+      }
+
+      // Delete all students
+      await Student.deleteMany({ _id: { $in: ids } });
+
+      // Also delete associated user accounts
+      const User = require("../models/User");
+      const userIds = students.map((s) => s.userId).filter(Boolean);
+      if (userIds.length > 0) {
+        await User.deleteMany({ _id: { $in: userIds } });
+      }
+
+      res.json({
+        success: true,
+        message: `Successfully deleted ${ids.length} student(s)`,
+        deletedCount: ids.length,
+      });
+    } catch (error) {
+      console.error("Bulk delete students error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Server error during bulk deletion",
+        error: error.message,
+      });
+    }
+  }
+);
+
+/**
+ * @swagger
  * /students/{id}:
  *   delete:
  *     summary: Delete student (Admin only)
@@ -686,7 +771,7 @@ router.put(
  */
 router.delete(
   "/:id",
-  requireAdmin,
+  canAccessStudents,
   validateBranchOwnership(Student),
   logBranchAdminAction("DELETE_STUDENT"),
   deleteStudent

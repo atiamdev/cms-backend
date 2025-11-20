@@ -18,6 +18,7 @@ const {
   connectGoogleAccount,
   disconnectGoogleAccount,
   verifyEmail,
+  verifyPassword,
 } = require("../controllers/authController");
 const {
   protect,
@@ -586,6 +587,42 @@ router.post("/refresh", refreshToken);
  *               $ref: '#/components/schemas/Error'
  */
 router.post("/logout", protect, logout);
+
+/**
+ * @swagger
+ * /auth/verify-password:
+ *   post:
+ *     summary: Verify user password
+ *     tags: [Authentication]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - password
+ *             properties:
+ *               password:
+ *                 type: string
+ *                 format: password
+ *                 description: User's password to verify
+ *     responses:
+ *       200:
+ *         description: Password verified successfully
+ *       401:
+ *         description: Invalid password
+ *       400:
+ *         description: Password not provided
+ */
+router.post(
+  "/verify-password",
+  protect,
+  [body("password").notEmpty().withMessage("Password is required")],
+  verifyPassword
+);
 
 /**
  * @swagger

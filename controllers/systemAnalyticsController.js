@@ -369,12 +369,66 @@ const getUserAnalytics = async (startDate, endDate) => {
 };
 
 const getFinancialAnalytics = async (startDate, endDate) => {
-  const [payments, expenses, feeCollection] = await Promise.all([
+  // Debug: Check payment statuses in the database
+  const paymentStatusCheck = await Payment.aggregate([
+    {
+      $group: {
+        _id: { status: "$status", verificationStatus: "$verificationStatus" },
+        count: { $sum: 1 },
+        totalAmount: { $sum: "$amount" },
+      },
+    },
+  ]);
+  console.log(
+    "Payment status breakdown:",
+    JSON.stringify(paymentStatusCheck, null, 2)
+  );
+
+  // Debug: Check all payments in the date range
+  const paymentsInRange = await Payment.countDocuments({
+    createdAt: { $gte: startDate, $lte: endDate },
+  });
+  console.log("Total payments in date range:", paymentsInRange);
+
+  // Debug: Check expense approval statuses
+  const expenseStatusCheck = await Expense.aggregate([
+    {
+      $group: {
+        _id: "$approvalStatus",
+        count: { $sum: 1 },
+        totalAmount: { $sum: "$amount" },
+      },
+    },
+  ]);
+  console.log(
+    "Expense status breakdown:",
+    JSON.stringify(expenseStatusCheck, null, 2)
+  );
+
+  const [payments, allPayments, expenses, feeCollection] = await Promise.all([
+    // Payments within date range with successful status
     Payment.aggregate([
       {
         $match: {
           createdAt: { $gte: startDate, $lte: endDate },
-          status: "completed",
+          // Include all successful payment statuses
+          // Don't filter by verificationStatus - include all completed/successful payments
+          status: { $in: ["completed", "SUCCESS", "verified"] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalAmount: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+    // All completed payments (no date filter) for debugging
+    Payment.aggregate([
+      {
+        $match: {
+          status: { $in: ["completed", "SUCCESS", "verified"] },
         },
       },
       {
@@ -418,12 +472,20 @@ const getFinancialAnalytics = async (startDate, endDate) => {
   ]);
 
   const paymentData = payments[0] || { totalAmount: 0, count: 0 };
+  const allPaymentData = allPayments[0] || { totalAmount: 0, count: 0 };
   const expenseData = expenses[0] || { totalAmount: 0, count: 0 };
   const feeData = feeCollection[0] || {
     totalAmount: 0,
     paidAmount: 0,
     count: 0,
   };
+
+  console.log("Financial Analytics Debug:");
+  console.log("- Date range:", startDate, "to", endDate);
+  console.log("- Payment data (in range):", paymentData);
+  console.log("- All payments (no date filter):", allPaymentData);
+  console.log("- Expense data:", expenseData);
+  console.log("- Fee data:", feeData);
 
   return {
     totalRevenue: paymentData.totalAmount,
@@ -707,13 +769,12 @@ const getSecretaryDashboardStats = async (req, res) => {
     const receiptGrowth = paymentGrowth;
 
     // 4. Pending Tasks
+    const StudentApplication = require("../models/StudentApplication");
     const [newStudents, pendingPayments, expiredFees] = await Promise.all([
-      // New students registered in last 7 days
-      Student.countDocuments({
+      // Pending student applications
+      StudentApplication.countDocuments({
         ...branchFilter,
-        createdAt: {
-          $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-        },
+        status: "pending",
       }),
       // Fees with outstanding balance (unpaid, partially_paid, or overdue)
       Fee.countDocuments({

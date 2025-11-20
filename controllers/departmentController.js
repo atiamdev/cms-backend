@@ -496,7 +496,7 @@ const getDepartmentStatistics = async (req, res) => {
     // Build match condition
     const matchCondition = {};
     if (branchId) {
-      matchCondition.branchId = mongoose.Types.ObjectId(branchId);
+      matchCondition.branchId = new mongoose.Types.ObjectId(branchId);
     }
 
     // If user is not superadmin, filter by their branch

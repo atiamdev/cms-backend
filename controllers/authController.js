@@ -1469,6 +1469,55 @@ const disconnectGoogleAccount = async (req, res) => {
   }
 };
 
+// @desc    Verify user password
+// @route   POST /api/auth/verify-password
+// @access  Private
+const verifyPassword = async (req, res) => {
+  try {
+    const { password } = req.body;
+    const userId = req.user._id;
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required",
+      });
+    }
+
+    // Get user with password field
+    const user = await User.findById(userId).select("+password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Verify password
+    const isMatch = await user.matchPassword(password);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid password",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Password verified successfully",
+    });
+  } catch (error) {
+    console.error("Verify password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during password verification",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   register,
   registerECourseStudent,
@@ -1484,6 +1533,7 @@ module.exports = {
   getPendingUsers, // Add this
   bulkActivateUsers, // Add this
   verifyEmail,
+  verifyPassword,
   connectGoogleAccount,
   getGoogleAuthUrl,
   disconnectGoogleAccount,
