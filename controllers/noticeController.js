@@ -1,5 +1,115 @@
 const Notice = require("../models/Notice");
 const mongoose = require("mongoose");
+const pushController = require("./pushController");
+const User = require("../models/User");
+
+// Helper function to send push notifications for a notice
+const sendPushNotificationsForNotice = async (notice, branchId) => {
+  try {
+    console.log(
+      "[Push] Preparing to send notifications for notice:",
+      notice._id
+    );
+
+    // Don't send push for fee reminders (they're automated)
+    if (notice.type === "fee_reminder") {
+      console.log("[Push] Skipping push for fee reminder");
+      return;
+    }
+
+    // Determine target users based on audience
+    let targetUserIds = [];
+
+    if (notice.specificRecipients && notice.specificRecipients.length > 0) {
+      // Send to specific recipients
+      targetUserIds = notice.specificRecipients;
+      console.log(
+        "[Push] Targeting specific recipients:",
+        targetUserIds.length
+      );
+    } else {
+      // Send to all users matching target audience and branch
+      const query = { branchId: branchId };
+
+      switch (notice.targetAudience) {
+        case "students":
+          query.roles = "student";
+          break;
+        case "teachers":
+          query.roles = "teacher";
+          break;
+        case "staff":
+          query.roles = { $in: ["secretary", "branchadmin", "admin"] };
+          break;
+        case "parents":
+          query.roles = "parent";
+          break;
+        case "all":
+        default:
+          // Don't filter by role - send to all users in branch
+          break;
+      }
+
+      const users = await User.find(query).select("_id");
+      targetUserIds = users.map((u) => u._id);
+      console.log(
+        "[Push] Targeting audience:",
+        notice.targetAudience,
+        "Users:",
+        targetUserIds.length
+      );
+    }
+
+    if (targetUserIds.length === 0) {
+      console.log("[Push] No target users found");
+      return;
+    }
+
+    // Prepare push notification payload
+    // Determine URL based on target audience
+    let noticeUrl = "/notices"; // default
+    switch (notice.targetAudience) {
+      case "students":
+        noticeUrl = "/student/notices";
+        break;
+      case "teachers":
+        noticeUrl = "/teacher/announcements";
+        break;
+      case "staff":
+        noticeUrl = "/admin/notices";
+        break;
+      case "parents":
+        noticeUrl = "/parent/notices";
+        break;
+      case "all":
+      default:
+        noticeUrl = "/notices";
+        break;
+    }
+
+    const payload = {
+      title: notice.title,
+      body:
+        notice.content.substring(0, 100) +
+        (notice.content.length > 100 ? "..." : ""),
+      icon: "/logo.png",
+      tag: `notice-${notice._id}`,
+      type: notice.type,
+      noticeId: notice._id.toString(),
+      url: noticeUrl,
+    };
+
+    // Send push notifications
+    const result = await pushController.sendNotification(
+      targetUserIds,
+      payload
+    );
+    console.log("[Push] Notifications sent:", result);
+  } catch (error) {
+    console.error("[Push] Error sending notifications:", error);
+    throw error;
+  }
+};
 
 // Get notices for the current user based on their role
 const getStudentNotices = async (req, res) => {
@@ -12,6 +122,9 @@ const getStudentNotices = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
+
+    // Support for polling - get notices published after a specific timestamp
+    const since = req.query.since;
 
     // Define which target audiences this user can see
     let allowedAudiences = ["all"];
@@ -49,11 +162,21 @@ const getStudentNotices = async (req, res) => {
     // All users can see:
     // 1. General notices based on their role's allowed audiences (where specificRecipients is empty/null)
     // 2. Personal notices specifically addressed to them (regardless of targetAudience)
+    // Build base query conditions
+    const baseConditions = [
+      { branchId: branchId },
+      { isActive: true },
+      { publishDate: { $lte: new Date() } },
+    ];
+
+    // Add since filter if provided (for notification polling)
+    if (since) {
+      baseConditions.push({ publishDate: { $gt: new Date(since) } });
+    }
+
     query = {
       $and: [
-        { branchId: branchId },
-        { isActive: true },
-        { publishDate: { $lte: new Date() } },
+        ...baseConditions,
         {
           $or: [
             // General notices for this user's audience (must have NO specific recipients at all)
@@ -264,24 +387,44 @@ const getAllNotices = async (req, res) => {
   try {
     const branchId = req.user.branchId;
     const userId = req.user.id;
+    const userRole = req.user.roles[0];
     const { page = 1, limit = 20, type, priority, targetAudience } = req.query;
 
     const filter = {
       branchId,
-      // Exclude notices hidden by this user
+      // Only show notices that either:
+      // 1. Have no specific recipients (general announcements)
+      // 2. Have this user in the specific recipients list
       $or: [
-        { hiddenBy: { $exists: false } },
-        { hiddenBy: null },
-        { hiddenBy: { $size: 0 } },
+        { specificRecipients: { $exists: false } },
+        { specificRecipients: null },
+        { specificRecipients: { $size: 0 } },
+        { specificRecipients: new mongoose.Types.ObjectId(userId) },
+      ],
+      // Exclude notices hidden by this user
+      $and: [
         {
-          hiddenBy: {
-            $not: {
-              $elemMatch: { userId: new mongoose.Types.ObjectId(userId) },
+          $or: [
+            { hiddenBy: { $exists: false } },
+            { hiddenBy: null },
+            { hiddenBy: { $size: 0 } },
+            {
+              hiddenBy: {
+                $not: {
+                  $elemMatch: { userId: new mongoose.Types.ObjectId(userId) },
+                },
+              },
             },
-          },
+          ],
         },
       ],
     };
+
+    // Secretaries should not see auto-generated fee reminders
+    // These are private messages to students about their payments
+    if (userRole === "secretary") {
+      filter.type = { $ne: "fee_reminder" };
+    }
 
     if (type) filter.type = type;
     if (priority) filter.priority = priority;
@@ -358,8 +501,8 @@ const createNotice = async (req, res) => {
         allowedAudiences = ["all", "students", "teachers", "staff", "parents"];
         break;
       case "secretary":
-        // Secretaries can target students, staff, and parents in their branch
-        allowedAudiences = ["students", "staff", "parents", "all"];
+        // Secretaries can target students, teachers, staff, and parents in their branch
+        allowedAudiences = ["students", "teachers", "staff", "parents", "all"];
         break;
       case "teacher":
         // Teachers can only target their students and parents
@@ -437,6 +580,21 @@ const createNotice = async (req, res) => {
     const savedNotice = await notice.save();
 
     console.log("Notice saved successfully:", savedNotice._id);
+    console.log("Notice details:", {
+      title: savedNotice.title,
+      type: savedNotice.type,
+      targetAudience: savedNotice.targetAudience,
+      branchId: req.user.branchId,
+    });
+
+    // Send push notifications to targeted users (non-blocking)
+    console.log("[Push] About to call sendPushNotificationsForNotice...");
+    sendPushNotificationsForNotice(savedNotice, req.user.branchId).catch(
+      (error) => {
+        console.error("[Push] Error sending notifications:", error);
+        // Don't fail the notice creation if push notifications fail
+      }
+    );
 
     res.status(201).json({
       success: true,

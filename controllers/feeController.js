@@ -241,6 +241,57 @@ const assignFeesToStudents = async (req, res) => {
 
         await fee.save();
         assignedFees.push(fee);
+
+        // Send push notification for new fee assignment
+        try {
+          const populatedStudent = await Student.findById(student._id).populate(
+            "userId"
+          );
+          if (populatedStudent && populatedStudent.userId) {
+            const pushController = require("./pushController");
+            const {
+              storeNotificationAsNotice,
+            } = require("../utils/notificationStorage");
+            const moment = require("moment-timezone");
+            const dueDate = moment(fee.dueDate).format("MMM D, YYYY");
+
+            const payload = {
+              title: "New Fee Assignment",
+              body: `Fee of KES ${fee.totalAmountDue.toLocaleString()} is due by ${dueDate}`,
+              icon: "/logo.png",
+              tag: `fee-assigned-${fee._id}`,
+              type: "fee-assigned",
+              feeId: fee._id.toString(),
+              amount: fee.totalAmountDue,
+              dueDate: fee.dueDate,
+              url: "/student/fees",
+            };
+
+            // Store as notice
+            await storeNotificationAsNotice({
+              userIds: [populatedStudent.userId._id],
+              title: payload.title,
+              content: payload.body,
+              type: "fee_reminder",
+              priority: "high",
+              branchId: populatedStudent.branchId,
+              targetAudience: "students",
+            });
+
+            await pushController.sendNotification(
+              [populatedStudent.userId._id],
+              payload
+            );
+            console.log(
+              `[Fee] Sent assignment notification to student ${populatedStudent.userId._id}`
+            );
+          }
+        } catch (notifError) {
+          console.error(
+            "[Fee] Error sending assignment notification:",
+            notifError
+          );
+        }
       } catch (error) {
         assignmentErrors.push({
           studentId: student._id,
@@ -536,6 +587,8 @@ const getBranchStudentFeeSummaries = async (req, res) => {
 
     if (search) {
       studentQuery.$or = [
+        { firstName: new RegExp(search, "i") },
+        { lastName: new RegExp(search, "i") },
         { "profileDetails.firstName": new RegExp(search, "i") },
         { "profileDetails.lastName": new RegExp(search, "i") },
         { "profileDetails.studentId": new RegExp(search, "i") },

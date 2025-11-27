@@ -8,6 +8,9 @@ const mongoose = require("mongoose");
 const { validationResult } = require("express-validator");
 const quizSchedulingService = require("../../services/quizSchedulingService");
 const quizQuestionService = require("../../services/quizQuestionService");
+const {
+  storeNotificationAsNotice,
+} = require("../../utils/notificationStorage");
 const moment = require("moment-timezone");
 
 /**
@@ -251,6 +254,81 @@ const createQuiz = async (req, res) => {
     // Schedule the quiz end if it has an end time
     if (savedQuiz.schedule?.availableUntil && savedQuiz.isPublished) {
       quizSchedulingService.scheduleQuizEnd(savedQuiz);
+    }
+
+    // Send push notification to students when quiz is published
+    if (savedQuiz.isPublished) {
+      try {
+        const pushController = require("../../controllers/pushController");
+
+        // Get enrolled students based on course type
+        let studentUserIds = [];
+        if (detectedCourseType === "ecourse") {
+          const enrollments = await Enrollment.find({
+            courseId: savedQuiz.courseId,
+          }).populate({
+            path: "studentId",
+            populate: { path: "userId" },
+          });
+          studentUserIds = enrollments
+            .map((e) => e.studentId?.userId?._id)
+            .filter(Boolean);
+        } else {
+          // For regular courses, get students from associated class
+          const Class = require("../../models/Class");
+          const classes = await Class.find({
+            "subjects.courseId": savedQuiz.courseId,
+            status: "active",
+          }).populate({
+            path: "students.studentId",
+            populate: { path: "userId" },
+          });
+
+          studentUserIds = classes.flatMap((cls) =>
+            cls.students
+              .filter((s) => s.status === "active" && s.studentId?.userId)
+              .map((s) => s.studentId.userId._id)
+          );
+        }
+
+        if (studentUserIds.length > 0) {
+          const dueText = savedQuiz.schedule?.dueDate
+            ? ` - Due ${moment(savedQuiz.schedule.dueDate).format(
+                "MMM D, HH:mm"
+              )}`
+            : "";
+
+          const payload = {
+            title: `New Quiz: ${savedQuiz.title}`,
+            body: `A new quiz has been published${dueText}`,
+            icon: "/logo.png",
+            tag: `quiz-created-${savedQuiz._id}`,
+            type: "quiz-created",
+            quizId: savedQuiz._id.toString(),
+            courseId: savedQuiz.courseId.toString(),
+            quizTitle: savedQuiz.title,
+            url: `/student/quizzes/${savedQuiz._id}`,
+          };
+
+          // Store as notice
+          await storeNotificationAsNotice({
+            userIds: studentUserIds,
+            title: payload.title,
+            content: payload.body,
+            type: "academic",
+            priority: "medium",
+            targetAudience: "students",
+          });
+
+          await pushController.sendNotification(studentUserIds, payload);
+
+          console.log(
+            `[Quiz] Sent creation notification to ${studentUserIds.length} students`
+          );
+        }
+      } catch (error) {
+        console.error("[Quiz] Error sending creation notification:", error);
+      }
     }
 
     res.status(201).json({
@@ -2325,6 +2403,7 @@ const gradeQuizAttempt = async (req, res) => {
     if (attempt.status === "submitted") {
       try {
         const notificationService = require("../../services/notificationService");
+        const pushController = require("../../controllers/pushController");
         const student = await require("../../models/Student")
           .findById(attempt.studentId)
           .populate("userId");
@@ -2341,6 +2420,7 @@ const gradeQuizAttempt = async (req, res) => {
           else if (score >= 70) grade = "C";
           else if (score >= 60) grade = "D";
 
+          // Send in-app notification
           await notificationService.notifyQuizResult({
             studentId: student._id,
             quizId: attempt.quizId,
@@ -2349,9 +2429,41 @@ const gradeQuizAttempt = async (req, res) => {
             grade,
             actionUrl: `/student/quizzes/${attempt.quizId}/results`,
           });
-          console.log(
-            `Quiz result notification sent to student ${student.userId._id} for quiz ${quiz.title}`
-          );
+
+          // Send push notification
+          if (student.userId) {
+            const payload = {
+              title: `Quiz Graded: ${quiz.title}`,
+              body: `You scored ${score}% (Grade: ${grade})`,
+              icon: "/logo.png",
+              tag: `quiz-graded-${attempt._id}`,
+              type: "quiz-graded",
+              quizId: attempt.quizId.toString(),
+              attemptId: attempt._id.toString(),
+              score: score,
+              grade: grade,
+              url: `/student/quizzes/${attempt.quizId}/results`,
+            };
+
+            // Store as notice
+            await storeNotificationAsNotice({
+              userIds: [student.userId._id],
+              title: payload.title,
+              content: payload.body,
+              type: "academic",
+              priority: "medium",
+              branchId: student.branchId,
+              targetAudience: "students",
+            });
+
+            await pushController.sendNotification(
+              [student.userId._id],
+              payload
+            );
+            console.log(
+              `[Quiz] Sent grading notification to student ${student.userId._id} for quiz ${quiz.title}`
+            );
+          }
         }
       } catch (notifError) {
         console.error("Error sending quiz result notification:", notifError);
