@@ -472,6 +472,7 @@ const getMyProfile = async (req, res) => {
           "firstName lastName email status profileDetails roles createdAt updatedAt",
       },
       { path: "branchId", select: "name configuration" },
+      { path: "department", select: "name code description" },
       {
         path: "classes.classId",
         select: "name capacity grade level academicTerm students",

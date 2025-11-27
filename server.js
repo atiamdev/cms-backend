@@ -191,17 +191,8 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   await connectDB();
 
-  // Set up web-push
-  const vapidKeys = webpush.generateVAPIDKeys();
-  console.log("VAPID Public Key:", vapidKeys.publicKey);
-
-  process.env.VAPID_PUBLIC_KEY = vapidKeys.publicKey;
-
-  webpush.setVapidDetails(
-    "mailto:admin@atiamcollege.com",
-    vapidKeys.publicKey,
-    vapidKeys.privateKey
-  );
+  // VAPID keys are configured in pushController.js
+  // Do not generate new keys here as it will break existing subscriptions
 
   // Create HTTP server
   const server = http.createServer(app);
@@ -247,6 +238,52 @@ const startServer = async () => {
     const quizSchedulingService = require("./services/quizSchedulingService");
   } catch (error) {
     console.error("Error initializing quiz scheduling service:", error.message);
+  }
+
+  // Initialize push notification schedulers
+  try {
+    const classReminderService = require("./services/classReminderService");
+    classReminderService.initializeClassReminderScheduler();
+  } catch (error) {
+    console.error("Error initializing class reminder service:", error.message);
+  }
+
+  try {
+    const liveSessionReminderService = require("./services/liveSessionReminderService");
+    liveSessionReminderService.initializeLiveSessionReminderScheduler();
+  } catch (error) {
+    console.error(
+      "Error initializing live session reminder service:",
+      error.message
+    );
+  }
+
+  try {
+    const feeReminderService = require("./services/feeReminderService");
+    feeReminderService.initializeFeeReminderScheduler();
+  } catch (error) {
+    console.error("Error initializing fee reminder service:", error.message);
+  }
+
+  // Initialize teacher notification schedulers
+  try {
+    const teacherClassReminderService = require("./services/teacherClassReminderService");
+    teacherClassReminderService.initializeTeacherClassReminderScheduler();
+  } catch (error) {
+    console.error(
+      "Error initializing teacher class reminder service:",
+      error.message
+    );
+  }
+
+  try {
+    const gradingReminderService = require("./services/gradingReminderService");
+    gradingReminderService.initializeGradingReminderScheduler();
+  } catch (error) {
+    console.error(
+      "Error initializing grading reminder service:",
+      error.message
+    );
   }
 
   server.listen(PORT, () => {

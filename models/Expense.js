@@ -165,6 +165,9 @@ expenseSchema.index({
   description: "text",
   "vendor.name": "text",
   notes: "text",
+  category: "text",
+  subcategory: "text",
+  receiptNumber: "text",
 });
 
 // Virtual for formatted amount

@@ -41,9 +41,9 @@ const teacherSchema = new mongoose.Schema(
       default: "full_time",
     },
     department: {
-      type: String,
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
       required: [true, "Department is required"],
-      trim: true,
     },
     designation: {
       type: String,

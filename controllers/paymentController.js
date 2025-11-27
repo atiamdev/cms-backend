@@ -551,6 +551,7 @@ const handleEquityCallback = async (req, res) => {
     // Send payment status notification
     try {
       const notificationService = require("../services/notificationService");
+      const pushController = require("./pushController");
       const student = await Student.findById(payment.studentId).populate(
         "userId"
       );
@@ -569,6 +570,7 @@ const handleEquityCallback = async (req, res) => {
           description = fee ? `Fee: ${fee.feeType}` : "Fee payment";
         }
 
+        // Send in-app notification
         await notificationService.notifyPaymentStatus({
           userId: student.userId._id,
           paymentId: payment._id,
@@ -580,6 +582,69 @@ const handleEquityCallback = async (req, res) => {
               ? `/student/payments/${payment._id}/receipt`
               : `/student/payments/${payment._id}`,
         });
+
+        // Send push notification
+        if (payment.status === "completed") {
+          const {
+            storeNotificationAsNotice,
+          } = require("../utils/notificationStorage");
+          const payload = {
+            title: "✅ Payment Successful",
+            body: `Your payment of KES ${payment.amount.toLocaleString()} has been received`,
+            icon: "/logo.png",
+            tag: `payment-success-${payment._id}`,
+            type: "payment-success",
+            paymentId: payment._id.toString(),
+            amount: payment.amount,
+            url: `/student/payments/${payment._id}/receipt`,
+          };
+
+          // Store as notice
+          await storeNotificationAsNotice({
+            userIds: [student.userId._id],
+            title: payload.title,
+            content: payload.body,
+            type: "info",
+            priority: "high",
+            branchId: student.branchId,
+            targetAudience: "students",
+          });
+
+          await pushController.sendNotification([student.userId._id], payload);
+          console.log(
+            `[Payment] Sent success notification to student ${student.userId._id}`
+          );
+        } else if (payment.status === "failed") {
+          const {
+            storeNotificationAsNotice,
+          } = require("../utils/notificationStorage");
+          const payload = {
+            title: "❌ Payment Failed",
+            body: `Your payment of KES ${payment.amount.toLocaleString()} was not successful`,
+            icon: "/logo.png",
+            tag: `payment-failed-${payment._id}`,
+            type: "payment-failed",
+            paymentId: payment._id.toString(),
+            amount: payment.amount,
+            url: `/student/payments/${payment._id}`,
+          };
+
+          // Store as notice
+          await storeNotificationAsNotice({
+            userIds: [student.userId._id],
+            title: payload.title,
+            content: payload.body,
+            type: "urgent",
+            priority: "high",
+            branchId: student.branchId,
+            targetAudience: "students",
+          });
+
+          await pushController.sendNotification([student.userId._id], payload);
+          console.log(
+            `[Payment] Sent failure notification to student ${student.userId._id}`
+          );
+        }
       }
     } catch (notifError) {
       console.error("Error sending Equity payment notification:", notifError);
@@ -1264,46 +1329,45 @@ const getUnpaidStudents = async (req, res) => {
         continue;
       }
 
-      // Find installments due this month or overdue
-      const currentMonthInstallments = installmentPlan.schedule.filter(
-        (installment) => {
-          const dueDate = new Date(installment.dueDate);
-          const installmentMonth = dueDate.getMonth();
-          const installmentYear = dueDate.getFullYear();
-
-          // Include current month and any overdue installments
-          return (
-            (installmentYear === currentYear &&
-              installmentMonth <= currentMonth) ||
-            installmentYear < currentYear ||
-            (installmentYear === currentYear && installmentMonth < currentMonth)
-          );
-        }
-      );
-
-      // Find unpaid installments
-      const unpaidInstallments = currentMonthInstallments.filter(
+      // Get ALL unpaid installments (regardless of due date)
+      const allUnpaidInstallments = installmentPlan.schedule.filter(
         (installment) => installment.status !== "paid"
       );
 
-      if (unpaidInstallments.length > 0) {
-        // Get the earliest unpaid installment
-        const currentInstallment = unpaidInstallments.sort(
-          (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
-        )[0];
+      if (allUnpaidInstallments.length === 0) {
+        continue; // Skip students with no unpaid installments
+      }
 
-        // Calculate days overdue
+      // Find the current installment (next unpaid that is due or overdue)
+      const dueOrOverdueInstallments = allUnpaidInstallments.filter(
+        (installment) => {
+          const dueDate = new Date(installment.dueDate);
+          return dueDate <= currentDate; // Due today or overdue
+        }
+      );
+
+      // If no overdue installments, get the next upcoming unpaid installment
+      const currentInstallment =
+        dueOrOverdueInstallments.length > 0
+          ? dueOrOverdueInstallments.sort(
+              (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+            )[0]
+          : allUnpaidInstallments.sort(
+              (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+            )[0];
+
+      // Only show students with at least one installment due or overdue
+      if (dueOrOverdueInstallments.length > 0) {
+        // Calculate days overdue for the current installment
         const dueDate = new Date(currentInstallment.dueDate);
         const daysOverdue = Math.max(
           0,
           Math.floor((currentDate - dueDate) / (1000 * 60 * 60 * 24))
         );
 
-        // Calculate total outstanding
-        const totalOutstanding = unpaidInstallments.reduce(
-          (sum, inst) => sum + inst.amount,
-          0
-        );
+        // Total outstanding is the remaining balance (totalBalance from student.fees)
+        // This represents: totalFeeStructure - totalPaid
+        const totalOutstanding = student.fees.totalBalance || 0;
 
         unpaidStudents.push({
           _id: student._id,
@@ -1362,15 +1426,34 @@ const sendPaymentReminders = async (req, res) => {
       try {
         // Get current unpaid installment
         const installmentPlan = student.fees.installmentPlan;
+        const currentDate = new Date();
+
         const unpaidInstallments = installmentPlan.schedule.filter(
           (inst) => inst.status !== "paid"
         );
 
         if (unpaidInstallments.length === 0) continue;
 
-        const currentInstallment = unpaidInstallments.sort(
-          (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
-        )[0];
+        // Get the current installment that is due or overdue
+        const dueOrOverdueInstallments = unpaidInstallments.filter(
+          (installment) => {
+            const dueDate = new Date(installment.dueDate);
+            return dueDate <= currentDate; // Due today or overdue
+          }
+        );
+
+        // If no overdue installments, get the next upcoming unpaid installment
+        const currentInstallment =
+          dueOrOverdueInstallments.length > 0
+            ? dueOrOverdueInstallments.sort(
+                (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+              )[0]
+            : unpaidInstallments.sort(
+                (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+              )[0];
+
+        // Get the actual remaining balance (totalBalance)
+        const totalOutstanding = student.fees.totalBalance || 0;
 
         // Create payment reminder notice
         const notice = new Notice({
@@ -1386,9 +1469,7 @@ Installment Details:
 
 Please make the payment before the due date to avoid late fees.
 
-Total Outstanding: KES ${unpaidInstallments
-            .reduce((sum, inst) => sum + inst.amount, 0)
-            .toLocaleString()}
+Total Outstanding Balance: KES ${totalOutstanding.toLocaleString()}
 
 Thank you,
 ${req.user.firstName} ${req.user.lastName}

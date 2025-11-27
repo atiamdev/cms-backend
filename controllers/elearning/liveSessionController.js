@@ -2,7 +2,11 @@ const { LiveSession, ECourse, Enrollment } = require("../../models/elearning");
 const User = require("../../models/User");
 const googleCalendarService = require("../../services/googleCalendarService");
 const notificationService = require("../../services/notificationService");
+const {
+  storeNotificationAsNotice,
+} = require("../../utils/notificationStorage");
 const { validationResult } = require("express-validator");
+const moment = require("moment-timezone");
 
 // @desc    Schedule a live session for a course content
 // @route   POST /api/elearning/live-sessions
@@ -162,6 +166,59 @@ const scheduleLiveSession = async (req, res) => {
           : `/elearning/courses/${courseId}/modules/${moduleId}`
         : `/elearning/courses/${courseId}`,
     });
+
+    // Send push notifications to enrolled students
+    try {
+      const pushController = require("../../controllers/pushController");
+      const studentUserIds =
+        attendeeEmails.length > 0
+          ? await (async () => {
+              const enrollments = await Enrollment.find({
+                courseId: liveSession.courseId,
+              }).populate({
+                path: "studentId",
+                populate: { path: "userId" },
+              });
+              return enrollments
+                .map((e) => e.studentId?.userId?._id)
+                .filter(Boolean);
+            })()
+          : [];
+
+      if (studentUserIds.length > 0) {
+        const sessionTime = moment(startAt).format("MMM D, HH:mm");
+        const payload = {
+          title: "New Live Session Scheduled",
+          body: `${course.title} - ${sessionTime}`,
+          icon: "/logo.png",
+          tag: `live-session-${liveSession._id}`,
+          type: "live-session-created",
+          sessionId: liveSession._id.toString(),
+          courseId: courseId.toString(),
+          courseTitle: course.title,
+          meetLink: eventData.meetLink,
+          startTime: sessionTime,
+          url: `/student/courses/${courseId}/live-sessions`,
+        };
+
+        // Store as notice
+        await storeNotificationAsNotice({
+          userIds: studentUserIds,
+          title: payload.title,
+          content: payload.body,
+          type: "academic",
+          priority: "high",
+          targetAudience: "students",
+        });
+
+        await pushController.sendNotification(studentUserIds, payload);
+        console.log(
+          `[Live Session] Sent creation notification to ${studentUserIds.length} students`
+        );
+      }
+    } catch (error) {
+      console.error("[Live Session] Error sending push notification:", error);
+    }
 
     res.status(201).json({
       success: true,
