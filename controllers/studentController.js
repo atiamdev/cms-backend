@@ -792,9 +792,8 @@ const deleteStudent = async (req, res) => {
 
     // Delete student photo from Cloudflare if it exists
     if (student.photoUrl) {
-      const cloudflareService = new CloudflareService();
       try {
-        await cloudflareService.deleteFile(student.photoUrl);
+        await CloudflareService.deleteFile(student.photoUrl);
       } catch (photoError) {
         console.error("Error deleting student photo:", photoError);
         // Don't fail the entire deletion if photo deletion fails
