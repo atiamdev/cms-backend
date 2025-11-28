@@ -62,6 +62,15 @@ exports.subscribe = async (req, res) => {
     });
   } catch (error) {
     console.error("[Push] Error saving subscription:", error);
+
+    // Handle duplicate key error (subscription already exists)
+    if (error.code === 11000) {
+      return res.status(200).json({
+        success: true,
+        message: "Subscription already exists",
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Failed to save subscription",
