@@ -97,6 +97,27 @@ exports.unsubscribe = async (req, res) => {
   }
 };
 
+// Check if user has valid subscription
+exports.checkSubscription = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const subscription = await PushSubscription.findOne({ user: userId });
+
+    res.status(200).json({
+      success: true,
+      hasValidSubscription: !!subscription,
+    });
+  } catch (error) {
+    console.error("[Push] Error checking subscription:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to check subscription",
+      error: error.message,
+    });
+  }
+};
+
 // Get user's subscriptions
 exports.getSubscriptions = async (req, res) => {
   try {
@@ -121,6 +142,12 @@ exports.getSubscriptions = async (req, res) => {
 // Send push notification to specific users
 exports.sendNotification = async (userIds, payload) => {
   try {
+    // Skip push notifications in development mode
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[Push] Skipping push notifications in development mode");
+      return { success: 0, failed: 0 };
+    }
+
     console.log("[Push] ==========================================");
     console.log("[Push] Sending notifications to users:", userIds.length);
     console.log("[Push] User IDs:", userIds);
@@ -145,9 +172,9 @@ exports.sendNotification = async (userIds, payload) => {
       return { success: 0, failed: 0 };
     }
 
-    // Send notifications to all subscriptions
-    const results = await Promise.allSettled(
-      subscriptions.map(async (sub) => {
+    // Helper function to send with retry
+    const sendWithRetry = async (sub, maxRetries = 3) => {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           const pushSubscription = {
             endpoint: sub.endpoint,
@@ -155,7 +182,7 @@ exports.sendNotification = async (userIds, payload) => {
           };
 
           console.log(
-            "[Push] Sending to endpoint:",
+            `[Push] Sending to endpoint (attempt ${attempt}/${maxRetries}):`,
             sub.endpoint.substring(0, 80)
           );
           console.log("[Push] Keys present:", {
@@ -167,7 +194,7 @@ exports.sendNotification = async (userIds, payload) => {
             pushSubscription,
             JSON.stringify(payload),
             {
-              timeout: 10000, // 10 second timeout
+              timeout: 15000, // Increased to 15 seconds
               TTL: 3600, // 1 hour time to live
             }
           );
@@ -184,28 +211,58 @@ exports.sendNotification = async (userIds, payload) => {
           );
           return { success: true };
         } catch (error) {
-          console.error("[Push] Failed to send to subscription:");
+          console.error(`[Push] Attempt ${attempt} failed for subscription:`);
           console.error("[Push] Error message:", error.message);
           console.error("[Push] Error status code:", error.statusCode);
           console.error("[Push] Error body:", error.body);
           console.error("[Push] Error code:", error.code);
           console.error("[Push] Endpoint:", sub.endpoint.substring(0, 80));
 
-          // If subscription is invalid (410, 404) or network timeout, remove it
-          if (
-            error.statusCode === 410 ||
-            error.statusCode === 404 ||
-            error.code === "ETIMEDOUT" ||
-            error.code === "ECONNREFUSED"
-          ) {
-            console.log("[Push] Removing invalid/unreachable subscription");
+          // Check if this is a permanent failure
+          const isPermanentFailure =
+            error.statusCode === 410 || // Gone - subscription expired
+            error.statusCode === 404 || // Not Found
+            error.statusCode === 400 || // Bad Request - invalid subscription
+            error.statusCode === 413; // Payload Too Large
+
+          if (isPermanentFailure) {
+            console.log(
+              "[Push] Permanent failure - removing invalid subscription"
+            );
+            console.log(
+              "[Push] User should re-subscribe on next app visit. Subscription removed for user:",
+              sub.user
+            );
             await PushSubscription.deleteOne({ _id: sub._id });
+            return { success: false, error: error.message, permanent: true };
           }
 
-          return { success: false, error: error.message };
+          // For temporary failures (timeouts, network issues), retry if attempts remain
+          if (attempt < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Exponential backoff, max 10s
+            console.log(`[Push] Temporary failure - retrying in ${delay}ms...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+
+          // Max retries reached for temporary failure
+          console.log("[Push] Max retries reached for temporary failure");
+          return { success: false, error: error.message, permanent: false };
         }
-      })
-    );
+      }
+    };
+
+    // Send notifications with concurrency limit to avoid overwhelming the server
+    const CONCURRENT_LIMIT = 5;
+    const results = [];
+
+    for (let i = 0; i < subscriptions.length; i += CONCURRENT_LIMIT) {
+      const batch = subscriptions.slice(i, i + CONCURRENT_LIMIT);
+      const batchResults = await Promise.allSettled(
+        batch.map((sub) => sendWithRetry(sub))
+      );
+      results.push(...batchResults);
+    }
 
     const successCount = results.filter(
       (r) => r.status === "fulfilled" && r.value.success
@@ -301,6 +358,41 @@ exports.testNotification = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to send test notification",
+      error: error.message,
+    });
+  }
+};
+
+// Cleanup old/invalid subscriptions
+exports.cleanupSubscriptions = async () => {
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    // Remove subscriptions that haven't been used in 30 days
+    const result = await PushSubscription.deleteMany({
+      lastUsed: { $lt: thirtyDaysAgo },
+    });
+
+    console.log("[Push] Cleaned up subscriptions:", result.deletedCount);
+  } catch (error) {
+    console.error("[Push] Error cleaning up subscriptions:", error);
+  }
+};
+
+// Get VAPID public key (no auth required for subscription)
+exports.getVapidPublicKey = async (req, res) => {
+  try {
+    console.log("[Push] VAPID public key requested");
+
+    res.status(200).json({
+      success: true,
+      publicKey: VAPID_PUBLIC_KEY,
+    });
+  } catch (error) {
+    console.error("[Push] Error getting VAPID public key:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get VAPID public key",
       error: error.message,
     });
   }
