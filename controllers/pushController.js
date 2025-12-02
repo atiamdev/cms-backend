@@ -1,312 +1,72 @@
-const webPush = require("web-push");
-const PushSubscription = require("../models/PushSubscription");
+const OneSignal = require("@onesignal/node-onesignal");
 
-// VAPID keys configuration
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-const VAPID_MAILTO =
-  process.env.VAPID_MAILTO || "mailto:admin@atiamcollege.edu";
+// OneSignal Configuration
+const ONESIGNAL_APP_ID =
+  process.env.ONESIGNAL_APP_ID || "c2149a7f-6c68-4edf-9ebe-7293c5aaeb36";
+const ONESIGNAL_API_KEY = process.env.ONESIGNAL_API_KEY;
 
-if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-  console.error(
-    "[Push] FATAL ERROR: VAPID keys are missing in environment variables."
-  );
-  console.error(
-    "[Push] Please set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in .env file."
-  );
-} else {
-  // Set VAPID details for web-push
-  webPush.setVapidDetails(VAPID_MAILTO, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+let client;
 
-  console.log("[Push] VAPID Configuration:");
-  console.log("[Push] Public Key:", VAPID_PUBLIC_KEY);
-  console.log(
-    "[Push] Public Key (first 20):",
-    VAPID_PUBLIC_KEY.substring(0, 20)
-  );
-}
-
-// Subscribe to push notifications
-exports.subscribe = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const subscription = req.body;
-
-    console.log("[Push] Received subscription request for user:", userId);
-
-    // Validate subscription object
-    if (!subscription || !subscription.endpoint || !subscription.keys) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid subscription object",
-      });
-    }
-
-    // Use findOneAndUpdate with upsert to handle race conditions atomically
-    const savedSubscription = await PushSubscription.findOneAndUpdate(
-      { endpoint: subscription.endpoint },
-      {
-        $set: {
-          user: userId,
-          endpoint: subscription.endpoint,
-          keys: subscription.keys,
-          expirationTime: subscription.expirationTime,
-          userAgent: req.headers["user-agent"],
-          lastUsed: new Date(),
-        },
-      },
-      {
-        upsert: true, // Create if doesn't exist
-        new: true, // Return updated document
-        setDefaultsOnInsert: true,
-      }
+try {
+  if (ONESIGNAL_API_KEY) {
+    const configuration = OneSignal.createConfiguration({
+      restApiKey: ONESIGNAL_API_KEY,
+    });
+    client = new OneSignal.DefaultApi(configuration);
+    console.log("[OneSignal] Client initialized with REST API Key");
+  } else {
+    console.warn(
+      "[OneSignal] API Key missing. Push notifications will not work."
     );
-
-    console.log("[Push] Saved/updated subscription");
-
-    res.status(201).json({
-      success: true,
-      message: "Subscription saved successfully",
-      data: savedSubscription,
-    });
-  } catch (error) {
-    console.error("[Push] Error saving subscription:", error);
-
-    // Handle duplicate key error (subscription already exists)
-    if (error.code === 11000) {
-      return res.status(200).json({
-        success: true,
-        message: "Subscription already exists",
-      });
-    }
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to save subscription",
-      error: error.message,
-    });
   }
-};
-
-// Unsubscribe from push notifications
-exports.unsubscribe = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    console.log("[Push] Unsubscribe request for user:", userId);
-
-    // Delete all subscriptions for this user
-    const result = await PushSubscription.deleteMany({ user: userId });
-
-    console.log("[Push] Deleted subscriptions:", result.deletedCount);
-
-    res.status(200).json({
-      success: true,
-      message: "Unsubscribed successfully",
-      deletedCount: result.deletedCount,
-    });
-  } catch (error) {
-    console.error("[Push] Error unsubscribing:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to unsubscribe",
-      error: error.message,
-    });
-  }
-};
-
-// Check if user has valid subscription
-exports.checkSubscription = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    const subscription = await PushSubscription.findOne({ user: userId });
-
-    res.status(200).json({
-      success: true,
-      hasValidSubscription: !!subscription,
-    });
-  } catch (error) {
-    console.error("[Push] Error checking subscription:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to check subscription",
-      error: error.message,
-    });
-  }
-};
-
-// Get user's subscriptions
-exports.getSubscriptions = async (req, res) => {
-  try {
-    const userId = req.user._id;
-
-    const subscriptions = await PushSubscription.find({ user: userId });
-
-    res.status(200).json({
-      success: true,
-      data: subscriptions,
-    });
-  } catch (error) {
-    console.error("[Push] Error getting subscriptions:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to get subscriptions",
-      error: error.message,
-    });
-  }
-};
+} catch (error) {
+  console.error("[OneSignal] Error initializing client:", error);
+}
 
 // Send push notification to specific users
 exports.sendNotification = async (userIds, payload) => {
   try {
-    // Check if VAPID keys are configured
-    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-      console.log(
-        "[Push] Skipping push notifications: VAPID keys not configured"
-      );
+    if (!client) {
+      console.warn("[OneSignal] Client not initialized, skipping notification");
       return { success: 0, failed: 0 };
     }
 
-    console.log("[Push] ==========================================");
-    console.log("[Push] Sending notifications to users:", userIds.length);
-    console.log("[Push] User IDs:", userIds);
-    console.log("[Push] Payload:", payload);
+    console.log("[OneSignal] Sending notification to users:", userIds);
 
-    // Get all subscriptions for these users
-    const subscriptions = await PushSubscription.find({
-      user: { $in: userIds },
-    });
+    // Convert user IDs to strings
+    const externalUserIds = userIds.map((id) => id.toString());
 
-    console.log("[Push] Found subscriptions:", subscriptions.length);
+    const notification = new OneSignal.Notification();
+    notification.app_id = ONESIGNAL_APP_ID;
 
-    if (subscriptions.length > 0) {
-      console.log(
-        "[Push] First subscription endpoint:",
-        subscriptions[0].endpoint.substring(0, 80)
-      );
-    }
-
-    if (subscriptions.length === 0) {
-      console.log("[Push] No subscriptions found for users");
-      return { success: 0, failed: 0 };
-    }
-
-    // Helper function to send with retry
-    const sendWithRetry = async (sub, maxRetries = 3) => {
-      // Handle Mock Subscriptions (for localhost development)
-      if (sub.endpoint.includes("localhost/mock-endpoint")) {
-        console.log(`[Push] Detected MOCK subscription for user ${sub.user}`);
-        console.log(`[Push] Simulating successful send to: ${sub.endpoint}`);
-
-        // Update last used timestamp
-        sub.lastUsed = Date.now();
-        await sub.save();
-
-        return { success: true, mock: true };
-      }
-
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          const pushSubscription = {
-            endpoint: sub.endpoint,
-            keys: sub.keys,
-          };
-
-          console.log(
-            `[Push] Sending to endpoint (attempt ${attempt}/${maxRetries}):`,
-            sub.endpoint.substring(0, 80)
-          );
-          console.log("[Push] Keys present:", {
-            p256dh: !!sub.keys.p256dh,
-            auth: !!sub.keys.auth,
-          });
-
-          const result = await webPush.sendNotification(
-            pushSubscription,
-            JSON.stringify(payload),
-            {
-              timeout: 15000, // Increased to 15 seconds
-              TTL: 3600, // 1 hour time to live
-            }
-          );
-
-          console.log("[Push] Send result status:", result.statusCode);
-
-          // Update last used timestamp
-          sub.lastUsed = Date.now();
-          await sub.save();
-
-          console.log(
-            "[Push] Notification sent successfully to:",
-            sub.endpoint.substring(0, 50)
-          );
-          return { success: true };
-        } catch (error) {
-          console.error(`[Push] Attempt ${attempt} failed for subscription:`);
-          console.error("[Push] Error message:", error.message);
-          console.error("[Push] Error status code:", error.statusCode);
-          console.error("[Push] Error body:", error.body);
-          console.error("[Push] Error code:", error.code);
-          console.error("[Push] Endpoint:", sub.endpoint.substring(0, 80));
-
-          // Check if this is a permanent failure
-          const isPermanentFailure =
-            error.statusCode === 410 || // Gone - subscription expired
-            error.statusCode === 404 || // Not Found
-            error.statusCode === 400 || // Bad Request - invalid subscription
-            error.statusCode === 413; // Payload Too Large
-
-          if (isPermanentFailure) {
-            console.log(
-              "[Push] Permanent failure - removing invalid subscription"
-            );
-            console.log(
-              "[Push] User should re-subscribe on next app visit. Subscription removed for user:",
-              sub.user
-            );
-            await PushSubscription.deleteOne({ _id: sub._id });
-            return { success: false, error: error.message, permanent: true };
-          }
-
-          // For temporary failures (timeouts, network issues), retry if attempts remain
-          if (attempt < maxRetries) {
-            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // Exponential backoff, max 10s
-            console.log(`[Push] Temporary failure - retrying in ${delay}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            continue;
-          }
-
-          // Max retries reached for temporary failure
-          console.log("[Push] Max retries reached for temporary failure");
-          return { success: false, error: error.message, permanent: false };
-        }
-      }
+    // Use include_aliases for external user IDs (new OneSignal format)
+    notification.include_aliases = {
+      external_id: externalUserIds,
     };
+    notification.target_channel = "push";
 
-    // Send notifications with concurrency limit to avoid overwhelming the server
-    const CONCURRENT_LIMIT = 5;
-    const results = [];
+    // Content
+    notification.headings = { en: payload.title || "New Notification" };
+    notification.contents = { en: payload.body || payload.content || "" };
 
-    for (let i = 0; i < subscriptions.length; i += CONCURRENT_LIMIT) {
-      const batch = subscriptions.slice(i, i + CONCURRENT_LIMIT);
-      const batchResults = await Promise.allSettled(
-        batch.map((sub) => sendWithRetry(sub))
-      );
-      results.push(...batchResults);
+    // Data
+    if (payload.data) {
+      notification.data = payload.data;
     }
 
-    const successCount = results.filter(
-      (r) => r.status === "fulfilled" && r.value.success
-    ).length;
-    const failedCount = results.length - successCount;
+    // URL
+    if (payload.url || (payload.data && payload.data.url)) {
+      notification.url = payload.url || payload.data.url;
+    }
 
-    console.log("[Push] Notification results:", { successCount, failedCount });
+    const response = await client.createNotification(notification);
+    console.log("[OneSignal] Notification sent successfully:", response);
 
-    return { success: successCount, failed: failedCount };
+    return { success: userIds.length, failed: 0 };
   } catch (error) {
-    console.error("[Push] Error sending notifications:", error);
-    throw error;
+    console.error("[OneSignal] Error sending notification:", error);
+    // Don't throw, just return failure
+    return { success: 0, failed: userIds.length };
   }
 };
 
@@ -317,115 +77,52 @@ exports.sendToRole = async (role, payload) => {
     const users = await User.find({ role: role }).select("_id");
     const userIds = users.map((u) => u._id);
 
+    if (userIds.length === 0) {
+      return { success: 0, failed: 0 };
+    }
+
     return await exports.sendNotification(userIds, payload);
   } catch (error) {
-    console.error("[Push] Error sending to role:", error);
+    console.error("[OneSignal] Error sending to role:", error);
     throw error;
   }
 };
 
-// Debug: Inspect subscription data
-exports.debugSubscription = async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const subscriptions = await PushSubscription.find({ user: userId });
-
-    if (subscriptions.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "No subscriptions found for user",
-      });
-    }
-
-    const sub = subscriptions[0];
-
-    res.status(200).json({
-      success: true,
-      data: {
-        endpoint: sub.endpoint,
-        keys: {
-          p256dh: sub.keys.p256dh
-            ? `${sub.keys.p256dh.substring(0, 20)}...`
-            : null,
-          auth: sub.keys.auth ? `${sub.keys.auth.substring(0, 20)}...` : null,
-        },
-        keysLength: {
-          p256dh: sub.keys.p256dh?.length || 0,
-          auth: sub.keys.auth?.length || 0,
-        },
-        userAgent: sub.userAgent,
-        createdAt: sub.createdAt,
-        lastUsed: sub.lastUsed,
-      },
-    });
-  } catch (error) {
-    console.error("[Push] Error debugging subscription:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to debug subscription",
-      error: error.message,
-    });
-  }
+// Deprecated endpoints - kept for compatibility but do nothing
+exports.subscribe = async (req, res) => {
+  res.status(200).json({ success: true, message: "Handled by OneSignal" });
 };
 
-// Test push notification endpoint (for testing)
+exports.unsubscribe = async (req, res) => {
+  res.status(200).json({ success: true, message: "Handled by OneSignal" });
+};
+
+exports.checkSubscription = async (req, res) => {
+  res.status(200).json({ success: true, hasValidSubscription: true });
+};
+
+exports.getVapidPublicKey = async (req, res) => {
+  res.status(200).json({ success: true, publicKey: "ONESIGNAL_HANDLED" });
+};
+
+exports.getSubscriptions = async (req, res) => {
+  res.status(200).json({ success: true, data: [] });
+};
+
+exports.debugSubscription = async (req, res) => {
+  res.status(200).json({ success: true, data: {} });
+};
+
 exports.testNotification = async (req, res) => {
   try {
     const userId = req.user._id;
-
-    const result = await exports.sendNotification([userId], {
+    await exports.sendNotification([userId], {
       title: "Test Notification",
-      body: "This is a test push notification",
-      icon: "/logo.png",
-      tag: "test",
+      body: "This is a test notification from OneSignal",
+      data: { type: "test" },
     });
-
-    res.status(200).json({
-      success: true,
-      message: "Test notification sent",
-      result,
-    });
+    res.status(200).json({ success: true, message: "Test notification sent" });
   } catch (error) {
-    console.error("[Push] Error sending test notification:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to send test notification",
-      error: error.message,
-    });
-  }
-};
-
-// Cleanup old/invalid subscriptions
-exports.cleanupSubscriptions = async () => {
-  try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-    // Remove subscriptions that haven't been used in 30 days
-    const result = await PushSubscription.deleteMany({
-      lastUsed: { $lt: thirtyDaysAgo },
-    });
-
-    console.log("[Push] Cleaned up subscriptions:", result.deletedCount);
-  } catch (error) {
-    console.error("[Push] Error cleaning up subscriptions:", error);
-  }
-};
-
-// Get VAPID public key (no auth required for subscription)
-exports.getVapidPublicKey = async (req, res) => {
-  try {
-    console.log("[Push] VAPID public key requested");
-
-    res.status(200).json({
-      success: true,
-      publicKey: VAPID_PUBLIC_KEY,
-    });
-  } catch (error) {
-    console.error("[Push] Error getting VAPID public key:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to get VAPID public key",
-      error: error.message,
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
