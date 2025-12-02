@@ -2,20 +2,29 @@ const webPush = require("web-push");
 const PushSubscription = require("../models/PushSubscription");
 
 // VAPID keys configuration
-const VAPID_PUBLIC_KEY =
-  "BBr0VkdehxZ3eefpocvLQI2uRsTHt-QH5yj-4ode9imj1bkwcvIXK4LcljZq83B6eNieBFd0Ij-S6VMSmXtLQu4";
-const VAPID_PRIVATE_KEY = "0PYfLTNYNm26OsA2n3ou7Oi4NS4zEPvEz0PXQUAWDMw";
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_MAILTO =
+  process.env.VAPID_MAILTO || "mailto:admin@atiamcollege.edu";
 
-// Set VAPID details for web-push
-webPush.setVapidDetails(
-  "mailto:admin@atiamcollege.edu",
-  VAPID_PUBLIC_KEY,
-  VAPID_PRIVATE_KEY
-);
+if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+  console.error(
+    "[Push] FATAL ERROR: VAPID keys are missing in environment variables."
+  );
+  console.error(
+    "[Push] Please set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in .env file."
+  );
+} else {
+  // Set VAPID details for web-push
+  webPush.setVapidDetails(VAPID_MAILTO, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
-console.log("[Push] VAPID Configuration:");
-console.log("[Push] Public Key:", VAPID_PUBLIC_KEY);
-console.log("[Push] Public Key (first 20):", VAPID_PUBLIC_KEY.substring(0, 20));
+  console.log("[Push] VAPID Configuration:");
+  console.log("[Push] Public Key:", VAPID_PUBLIC_KEY);
+  console.log(
+    "[Push] Public Key (first 20):",
+    VAPID_PUBLIC_KEY.substring(0, 20)
+  );
+}
 
 // Subscribe to push notifications
 exports.subscribe = async (req, res) => {
@@ -151,9 +160,11 @@ exports.getSubscriptions = async (req, res) => {
 // Send push notification to specific users
 exports.sendNotification = async (userIds, payload) => {
   try {
-    // Skip push notifications in development mode
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[Push] Skipping push notifications in development mode");
+    // Check if VAPID keys are configured
+    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+      console.log(
+        "[Push] Skipping push notifications: VAPID keys not configured"
+      );
       return { success: 0, failed: 0 };
     }
 
@@ -183,6 +194,18 @@ exports.sendNotification = async (userIds, payload) => {
 
     // Helper function to send with retry
     const sendWithRetry = async (sub, maxRetries = 3) => {
+      // Handle Mock Subscriptions (for localhost development)
+      if (sub.endpoint.includes("localhost/mock-endpoint")) {
+        console.log(`[Push] Detected MOCK subscription for user ${sub.user}`);
+        console.log(`[Push] Simulating successful send to: ${sub.endpoint}`);
+
+        // Update last used timestamp
+        sub.lastUsed = Date.now();
+        await sub.save();
+
+        return { success: true, mock: true };
+      }
+
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
           const pushSubscription = {

@@ -10,28 +10,26 @@ const moment = require("moment-timezone");
  */
 async function checkTeacherClassReminders() {
   try {
-    console.log("[Teacher Class Reminder] Checking for upcoming classes...");
-
     const now = moment().tz("Africa/Nairobi");
     const thirtyMinutesFromNow = moment(now).add(30, "minutes");
 
     const targetDay = thirtyMinutesFromNow.format("dddd").toLowerCase();
     const targetTime = thirtyMinutesFromNow.format("HH:mm");
 
-    console.log(
-      "[Teacher Class Reminder] Current time:",
-      now.format("YYYY-MM-DD HH:mm")
-    );
-    console.log(
-      "[Teacher Class Reminder] Target time:",
-      thirtyMinutesFromNow.format("YYYY-MM-DD HH:mm")
-    );
-    console.log(
-      "[Teacher Class Reminder] Looking for classes on:",
-      targetDay,
-      "at around",
-      targetTime
-    );
+    // console.log(
+    //   "[Teacher Class Reminder] Current time:",
+    //   now.format("YYYY-MM-DD HH:mm")
+    // );
+    // console.log(
+    //   "[Teacher Class Reminder] Target time:",
+    //   thirtyMinutesFromNow.format("YYYY-MM-DD HH:mm")
+    // );
+    // console.log(
+    //   "[Teacher Class Reminder] Looking for classes on:",
+    //   targetDay,
+    //   "at around",
+    //   targetTime
+    // );
 
     // Find active classes with schedules
     const classes = await Class.find({
@@ -139,7 +137,7 @@ async function checkTeacherClassReminders() {
       }
     }
 
-    console.log("[Teacher Class Reminder] Check complete");
+    // console.log("[Teacher Class Reminder] Check complete");
   } catch (error) {
     console.error(
       "[Teacher Class Reminder] Error in checkTeacherClassReminders:",
@@ -153,20 +151,20 @@ async function checkTeacherClassReminders() {
  * Runs every 5 minutes to check for upcoming classes
  */
 function initializeTeacherClassReminderScheduler() {
-  console.log("[Teacher Class Reminder] Initializing scheduler...");
+  // console.log("[Teacher Class Reminder] Initializing scheduler...");
 
   // Run every 5 minutes
   cron.schedule("*/5 * * * *", () => {
     checkTeacherClassReminders();
   });
 
-  console.log(
-    "[Teacher Class Reminder] Scheduler initialized - checking every 5 minutes"
-  );
+  // console.log(
+  //   "[Teacher Class Reminder] Scheduler initialized - checking every 5 minutes"
+  // );
 
   // Run once on startup (after 30 seconds)
   setTimeout(() => {
-    console.log("[Teacher Class Reminder] Running initial check...");
+    // console.log("[Teacher Class Reminder] Running initial check...");
     checkTeacherClassReminders();
   }, 30000);
 }

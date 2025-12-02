@@ -40,6 +40,10 @@ const noticeSchema = new mongoose.Schema(
       enum: ["all", "students", "teachers", "staff", "parents"],
       default: "all",
     },
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+    },
     specificRecipients: [
       {
         type: mongoose.Schema.Types.ObjectId,

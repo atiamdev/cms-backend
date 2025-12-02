@@ -1365,9 +1365,22 @@ const getUnpaidStudents = async (req, res) => {
           Math.floor((currentDate - dueDate) / (1000 * 60 * 60 * 24))
         );
 
-        // Total outstanding is the remaining balance (totalBalance from student.fees)
-        // This represents: totalFeeStructure - totalPaid
-        const totalOutstanding = student.fees.totalBalance || 0;
+        // Total outstanding is the remaining balance after scholarship deduction
+        // This represents: (totalFeeStructure - scholarshipAmount) - totalPaid
+        const scholarshipAmount =
+          student.scholarshipPercentage > 0
+            ? Math.round(
+                (student.fees.totalFeeStructure *
+                  student.scholarshipPercentage) /
+                  100
+              )
+            : 0;
+        const effectiveFeeStructure =
+          student.fees.totalFeeStructure - scholarshipAmount;
+        const totalOutstanding = Math.max(
+          0,
+          effectiveFeeStructure - student.fees.totalPaid
+        );
 
         unpaidStudents.push({
           _id: student._id,

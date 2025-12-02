@@ -31,20 +31,20 @@ async function checkUpcomingClasses() {
     const targetDay = threeHoursFromNow.format("dddd").toLowerCase();
     const targetTime = threeHoursFromNow.format("HH:mm");
 
-    console.log(
-      "[Class Reminder] Current time:",
-      now.format("YYYY-MM-DD HH:mm")
-    );
-    console.log(
-      "[Class Reminder] Target time:",
-      threeHoursFromNow.format("YYYY-MM-DD HH:mm")
-    );
-    console.log(
-      "[Class Reminder] Looking for classes on:",
-      targetDay,
-      "at around",
-      targetTime
-    );
+    // console.log(
+    //   "[Class Reminder] Current time:",
+    //   now.format("YYYY-MM-DD HH:mm")
+    // );
+    // console.log(
+    //   "[Class Reminder] Target time:",
+    //   threeHoursFromNow.format("YYYY-MM-DD HH:mm")
+    // );
+    // console.log(
+    //   "[Class Reminder] Looking for classes on:",
+    //   targetDay,
+    //   "at around",
+    //   targetTime
+    // );
 
     // Find active classes with schedules
     const classes = await Class.find({
@@ -155,16 +155,16 @@ async function checkUpcomingClasses() {
  * Runs every 10 minutes to check for upcoming classes
  */
 function initializeClassReminderScheduler() {
-  console.log("[Class Reminder] Initializing class reminder scheduler...");
+  // console.log("[Class Reminder] Initializing class reminder scheduler...");
 
   // Run every 10 minutes
   cron.schedule("*/10 * * * *", () => {
     checkUpcomingClasses();
   });
 
-  console.log(
-    "[Class Reminder] Scheduler initialized - checking every 10 minutes"
-  );
+  // console.log(
+  //   "[Class Reminder] Scheduler initialized - checking every 10 minutes"
+  // );
 
   // Run once on startup (after 30 seconds)
   setTimeout(() => {

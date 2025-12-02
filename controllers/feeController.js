@@ -68,6 +68,85 @@ const getFeeStructures = async (req, res) => {
   }
 };
 
+// @desc    Get all fees for a branch
+// @route   GET /api/fees
+// @access  Private (Admin, Secretary)
+const getFees = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      studentId,
+      status,
+      branchId, // Allow superadmin to filter by specific branch
+    } = req.query;
+
+    // Apply branch-based filtering
+    const branchFilter = getBranchQueryFilter(req.user, branchId);
+    const query = { ...branchFilter };
+
+    if (studentId) query.studentId = studentId;
+    if (status) query.status = status;
+
+    const fees = await Fee.find(query)
+      .populate("studentId", "studentId userId")
+      .populate("userId", "firstName lastName")
+      .sort({ createdAt: -1 })
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Fee.countDocuments(query);
+
+    // Format the response to match what the frontend expects
+    const formattedFees = fees.map((fee) => {
+      // Recalculate balance to ensure it includes scholarship deductions
+      const effectiveBalance =
+        fee.totalAmountDue -
+        fee.amountPaid -
+        fee.discountAmount -
+        fee.scholarshipAmount +
+        fee.lateFeeApplied;
+      // Effective amount due after scholarship
+      const effectiveDueAmount = fee.totalAmountDue - fee.scholarshipAmount;
+
+      return {
+        _id: fee._id,
+        studentId: fee.studentId?.studentId || "N/A",
+        studentName: fee.studentId?.userId
+          ? `${fee.studentId.userId.firstName} ${fee.studentId.userId.lastName}`
+          : "Unknown Student",
+        dueAmount: effectiveDueAmount, // Show effective amount due after scholarship
+        paidAmount: fee.amountPaid,
+        balanceAmount: effectiveBalance,
+        status: fee.status,
+        academicYear: fee.academicYear,
+        academicTerm: fee.academicTerm,
+        scholarshipAmount: fee.scholarshipAmount,
+        originalDueAmount: fee.totalAmountDue, // Keep original for reference
+      };
+    });
+
+    res.json({
+      success: true,
+      data: formattedFees,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1,
+      },
+    });
+  } catch (error) {
+    console.error("Get fees error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
 // @desc    Create fee structure
 // @route   POST /api/fees/structures
 // @access  Private (Admin)
@@ -221,6 +300,12 @@ const assignFeesToStudents = async (req, res) => {
           continue;
         }
 
+        const totalAmountDue = feeStructure.totalAmount;
+        const scholarshipAmount =
+          student.scholarshipPercentage > 0
+            ? Math.round((totalAmountDue * student.scholarshipPercentage) / 100)
+            : 0;
+
         const fee = new Fee({
           branchId: req.user.branchId,
           studentId: student._id,
@@ -228,9 +313,10 @@ const assignFeesToStudents = async (req, res) => {
           academicYear: feeStructure.academicYear,
           academicTerm: feeStructure.academicTerm,
           feeComponents: feeStructure.feeComponents,
-          totalAmountDue: feeStructure.totalAmount,
+          totalAmountDue: totalAmountDue,
           discountAmount: applyDiscount ? discountAmount || 0 : 0,
           discountReason: applyDiscount ? discountReason : "",
+          scholarshipAmount: scholarshipAmount,
           dueDate: feeStructure.dueDate,
           isInstallmentPlan: feeStructure.allowInstallments,
           installmentSchedule: feeStructure.allowInstallments
@@ -633,10 +719,17 @@ const getBranchStudentFeeSummaries = async (req, res) => {
 
         const studentId = studentProfile._id;
 
-        // Use the fees data from the Student document instead of Fee collection
-        const totalExpected = studentProfile.fees?.totalFeeStructure || 0;
+        // Calculate effective amounts accounting for scholarships
+        const totalFeeStructure = studentProfile.fees?.totalFeeStructure || 0;
+        const scholarshipAmount =
+          studentProfile.scholarshipPercentage > 0
+            ? Math.round(
+                (totalFeeStructure * studentProfile.scholarshipPercentage) / 100
+              )
+            : 0;
+        const effectiveExpected = totalFeeStructure - scholarshipAmount;
         const totalPaid = studentProfile.fees?.totalPaid || 0;
-        const balance = studentProfile.fees?.totalBalance || 0;
+        const effectiveBalance = effectiveExpected - totalPaid;
 
         return {
           student: {
@@ -648,9 +741,9 @@ const getBranchStudentFeeSummaries = async (req, res) => {
             class: studentProfile.currentClassId,
           },
           feeSummary: {
-            totalExpected,
+            totalExpected: effectiveExpected,
             totalPaid,
-            balance,
+            balance: effectiveBalance,
             feesCount: studentProfile.courses?.length || 0, // Number of courses = number of fees
           },
         };
@@ -831,6 +924,7 @@ const sendFeeReminders = async (req, res) => {
 
 module.exports = {
   getFeeStructures,
+  getFees,
   createFeeStructure,
   assignFeesToStudents,
   getStudentFees,

@@ -2,6 +2,7 @@ const Notice = require("../models/Notice");
 const mongoose = require("mongoose");
 const pushController = require("./pushController");
 const User = require("../models/User");
+const Teacher = require("../models/Teacher");
 
 // Helper function to send push notifications for a notice
 const sendPushNotificationsForNotice = async (notice, branchId) => {
@@ -485,6 +486,7 @@ const createNotice = async (req, res) => {
       type,
       priority,
       targetAudience,
+      courseId,
       publishDate,
       expiryDate,
     } = req.body;
@@ -557,6 +559,35 @@ const createNotice = async (req, res) => {
       });
     }
 
+    // Validate courseId for teachers
+    if (userRole === "teacher" && courseId) {
+      const teacher = await Teacher.findOne({
+        userId: req.user._id,
+        branchId: req.user.branchId,
+      }).populate("classes.courses");
+
+      if (!teacher) {
+        return res.status(404).json({
+          success: false,
+          message: "Teacher profile not found",
+        });
+      }
+
+      // Check if the teacher teaches this course
+      const teachesCourse = teacher.classes.some((classAssignment) =>
+        classAssignment.courses.some(
+          (course) => course._id.toString() === courseId
+        )
+      );
+
+      if (!teachesCourse) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only create announcements for courses you teach",
+        });
+      }
+    }
+
     const noticeData = {
       branchId: req.user.branchId,
       title,
@@ -565,6 +596,7 @@ const createNotice = async (req, res) => {
       priority: priority || "medium",
       targetAudience:
         targetAudience || (userRole === "teacher" ? "students" : "all"),
+      courseId: courseId || undefined,
       publishDate: publishDate || new Date(),
       expiryDate,
       author: {

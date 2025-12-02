@@ -3,6 +3,7 @@ const Payment = require("../models/Payment");
 const Expense = require("../models/Expense");
 const Student = require("../models/Student");
 const Branch = require("../models/Branch");
+const Scholarship = require("../models/Scholarship");
 const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
 const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
@@ -69,13 +70,20 @@ const getComprehensiveReport = async (req, res) => {
     // Expense Analysis
     const expenseData = await getExpenseAnalysis(dateFilter, branchFilter);
 
+    // Scholarships Analysis
+    const scholarshipsData = await getScholarshipsAnalysis(
+      dateFilter,
+      branchFilter
+    );
+
     // Financial Summary
     const summary = {
       totalRevenue: revenueData.totalPaid,
       totalExpenses: expenseData.totalExpenses,
-      netProfit: revenueData.totalPaid - expenseData.totalExpenses,
+      approvedExpenses: expenseData.approvedExpenses,
+      netProfit: revenueData.totalPaid - expenseData.approvedExpenses,
       profitMargin:
-        ((revenueData.totalPaid - expenseData.totalExpenses) /
+        ((revenueData.totalPaid - expenseData.approvedExpenses) /
           revenueData.totalPaid) *
           100 || 0,
       period: { startDate, endDate },
@@ -119,6 +127,7 @@ const getComprehensiveReport = async (req, res) => {
       summary,
       revenue: revenueData,
       expenses: expenseData,
+      scholarships: scholarshipsData,
       monthlyTrends,
       branchReports,
       paymentMethods,
@@ -286,17 +295,17 @@ const getFinancialKPIs = async (req, res) => {
       },
       {
         name: "Net Profit",
-        value: currentRevenue.totalPaid - currentExpenses.totalExpenses,
+        value: currentRevenue.totalPaid - currentExpenses.approvedExpenses,
         trend:
-          currentRevenue.totalPaid - currentExpenses.totalExpenses >
-          previousRevenue.totalPaid - previousExpenses.totalExpenses
+          currentRevenue.totalPaid - currentExpenses.approvedExpenses >
+          previousRevenue.totalPaid - previousExpenses.approvedExpenses
             ? "up"
             : "down",
         trendPercentage:
           ((currentRevenue.totalPaid -
-            currentExpenses.totalExpenses -
-            (previousRevenue.totalPaid - previousExpenses.totalExpenses)) /
-            (previousRevenue.totalPaid - previousExpenses.totalExpenses)) *
+            currentExpenses.approvedExpenses -
+            (previousRevenue.totalPaid - previousExpenses.approvedExpenses)) /
+            (previousRevenue.totalPaid - previousExpenses.approvedExpenses)) *
             100 || 0,
         period: "Monthly",
       },
@@ -396,6 +405,60 @@ async function getRevenueAnalysis(dateFilter, branchFilter) {
       fees.totalFeeCollection > 0
         ? (fees.totalOverdue / fees.totalFeeCollection) * 100
         : 0,
+  };
+}
+
+async function getScholarshipsAnalysis(dateFilter, branchFilter) {
+  const scholarshipMatch = { isActive: true, ...branchFilter };
+  if (Object.keys(dateFilter).length > 0) {
+    scholarshipMatch.assignedDate = dateFilter;
+  }
+
+  const scholarshipAggregation = await Scholarship.aggregate([
+    { $match: scholarshipMatch },
+    {
+      $group: {
+        _id: null,
+        totalScholarships: { $sum: 1 },
+        totalPercentage: { $sum: "$percentage" },
+        averagePercentage: { $avg: "$percentage" },
+      },
+    },
+  ]);
+
+  // Get total scholarship amount from fees
+  const feeScholarshipMatch = {
+    scholarshipAmount: { $gt: 0 },
+    ...branchFilter,
+  };
+  if (Object.keys(dateFilter).length > 0) {
+    feeScholarshipMatch.createdAt = dateFilter;
+  }
+
+  const feeScholarshipAggregation = await Fee.aggregate([
+    { $match: feeScholarshipMatch },
+    {
+      $group: {
+        _id: null,
+        totalScholarshipAmount: { $sum: "$scholarshipAmount" },
+      },
+    },
+  ]);
+
+  const scholarships = scholarshipAggregation[0] || {
+    totalScholarships: 0,
+    totalPercentage: 0,
+    averagePercentage: 0,
+  };
+  const feeScholarships = feeScholarshipAggregation[0] || {
+    totalScholarshipAmount: 0,
+  };
+
+  return {
+    totalScholarships: scholarships.totalScholarships,
+    totalPercentage: scholarships.totalPercentage,
+    averagePercentage: scholarships.averagePercentage || 0,
+    totalScholarshipAmount: feeScholarships.totalScholarshipAmount,
   };
 }
 

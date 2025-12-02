@@ -77,6 +77,11 @@ const feeSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    scholarshipAmount: {
+      type: Number,
+      default: 0,
+      min: [0, "Scholarship amount cannot be negative"],
+    },
     lateFeeApplied: {
       type: Number,
       default: 0,
@@ -164,7 +169,8 @@ feeSchema.pre("save", function (next) {
   this.balance =
     this.totalAmountDue -
     this.amountPaid -
-    this.discountAmount +
+    this.discountAmount -
+    this.scholarshipAmount +
     this.lateFeeApplied;
 
   // Update status based on payment

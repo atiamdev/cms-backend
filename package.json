@@ -22,10 +22,11 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.884.0",
     "@aws-sdk/s3-request-presigner": "^3.884.0",
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.11.0",
     "bcryptjs": "^2.4.3",
     "cloudflare": "^5.0.0",
-    "cloudinary": "^1.40.0",
+    "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "cron": "^4.3.3",
     "crypto-js": "^4.2.0",
