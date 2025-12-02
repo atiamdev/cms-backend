@@ -7,7 +7,6 @@ const { swaggerSetup } = require("./config/swagger");
 const http = require("http");
 
 const socketIo = require("socket.io");
-const webpush = require("web-push");
 
 require("dotenv").config();
 

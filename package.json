@@ -23,6 +23,7 @@
     "@aws-sdk/client-s3": "^3.884.0",
     "@aws-sdk/s3-request-presigner": "^3.884.0",
     "@google/generative-ai": "^0.24.1",
+    "@onesignal/node-onesignal": "^5.3.1-beta1",
     "axios": "^1.11.0",
     "bcryptjs": "^2.4.3",
     "cloudflare": "^5.0.0",
@@ -55,8 +56,7 @@
     "socket.io": "^4.8.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
-    "uuid": "^13.0.0",
-    "web-push": "^3.6.7"
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "jest": "^29.6.2",
