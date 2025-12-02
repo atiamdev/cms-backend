@@ -4,6 +4,7 @@ const { protect, authorize } = require("../middlewares/auth");
 const { branchAuth } = require("../middlewares/branchAuth");
 const {
   getFeeStructures,
+  getFees,
   createFeeStructure,
   assignFeesToStudents,
   getStudentFees,
@@ -173,6 +174,89 @@ const {
  */
 
 const router = express.Router();
+
+// Fee Management Routes
+
+/**
+ * @swagger
+ * /fees:
+ *   get:
+ *     summary: Get all fees
+ *     tags: [Fee Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *         description: Number of items per page
+ *       - in: query
+ *         name: studentId
+ *         schema:
+ *           type: string
+ *         description: Filter by student ID
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [unpaid, partially_paid, paid, overdue, waived]
+ *         description: Filter by fee status
+ *     responses:
+ *       200:
+ *         description: Fees retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       _id:
+ *                         type: string
+ *                       studentId:
+ *                         type: string
+ *                       studentName:
+ *                         type: string
+ *                       dueAmount:
+ *                         type: number
+ *                       paidAmount:
+ *                         type: number
+ *                       balanceAmount:
+ *                         type: number
+ *                       status:
+ *                         type: string
+ *                       academicYear:
+ *                         type: string
+ *                       academicTerm:
+ *                         type: string
+ *                 pagination:
+ *                   $ref: '#/components/schemas/Pagination'
+ *       401:
+ *         description: Not authenticated
+ *       403:
+ *         description: Insufficient permissions
+ */
+router.get(
+  "/",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary"]),
+  getFees
+);
 
 // Fee Structure Routes
 

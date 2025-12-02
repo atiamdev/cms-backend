@@ -455,6 +455,7 @@ ECourseSchema.methods.requestModificationApproval = function (
     shortDescription: this.shortDescription,
     category: this.category,
     level: this.level,
+    language: this.language,
     duration: this.duration,
     pricing: this.pricing,
     registration: this.registration,

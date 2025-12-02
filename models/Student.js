@@ -364,6 +364,23 @@ const studentSchema = new mongoose.Schema(
         ],
       },
     },
+    scholarshipPercentage: {
+      type: Number,
+      default: 0,
+      min: [0, "Scholarship percentage cannot be less than 0"],
+      max: [100, "Scholarship percentage cannot be more than 100"],
+    },
+    scholarshipAssignedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    scholarshipAssignedDate: {
+      type: Date,
+    },
+    scholarshipReason: {
+      type: String,
+      trim: true,
+    },
     createdAt: {
       type: Date,
       default: Date.now,

@@ -371,6 +371,64 @@ const getStudents = async (req, res) => {
           as: "departmentInfo",
         },
       },
+      {
+        $addFields: {
+          classInfo: { $arrayElemAt: ["$classInfo", 0] },
+          branchInfo: { $arrayElemAt: ["$branchInfo", 0] },
+          departmentInfo: { $arrayElemAt: ["$departmentInfo", 0] },
+          // Calculate scholarship amount based on percentage
+          fees: {
+            totalFeeStructure: { $ifNull: ["$fees.totalFeeStructure", 0] },
+            totalPaid: { $ifNull: ["$fees.totalPaid", 0] },
+            totalBalance: {
+              $subtract: [
+                {
+                  $subtract: [
+                    { $ifNull: ["$fees.totalFeeStructure", 0] },
+                    {
+                      $cond: {
+                        if: {
+                          $and: [
+                            { $gt: ["$scholarshipPercentage", 0] },
+                            { $gt: ["$fees.totalFeeStructure", 0] },
+                          ],
+                        },
+                        then: {
+                          $multiply: [
+                            "$fees.totalFeeStructure",
+                            { $divide: ["$scholarshipPercentage", 100] },
+                          ],
+                        },
+                        else: 0,
+                      },
+                    },
+                  ],
+                },
+                { $ifNull: ["$fees.totalPaid", 0] },
+              ],
+            },
+            feeStatus: { $ifNull: ["$fees.feeStatus", "pending"] },
+            scholarshipApplied: { $gt: ["$scholarshipPercentage", 0] },
+            scholarshipAmount: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $gt: ["$scholarshipPercentage", 0] },
+                    { $gt: ["$fees.totalFeeStructure", 0] },
+                  ],
+                },
+                then: {
+                  $multiply: [
+                    "$fees.totalFeeStructure",
+                    { $divide: ["$scholarshipPercentage", 100] },
+                  ],
+                },
+                else: 0,
+              },
+            },
+          },
+        },
+      },
     ];
 
     // Add search filter
@@ -480,20 +538,73 @@ const getCurrentStudent = async (req, res) => {
           userInfo: { $arrayElemAt: ["$userInfo", 0] },
           classInfo: { $arrayElemAt: ["$classInfo", 0] },
           branchInfo: { $arrayElemAt: ["$branchInfo", 0] },
+          // Calculate scholarship amount based on percentage
+          calculatedScholarshipAmount: {
+            $cond: {
+              if: {
+                $and: [
+                  { $gt: ["$scholarshipPercentage", 0] },
+                  { $gt: ["$fees.totalFeeStructure", 0] },
+                ],
+              },
+              then: {
+                $multiply: [
+                  "$fees.totalFeeStructure",
+                  { $divide: ["$scholarshipPercentage", 100] },
+                ],
+              },
+              else: 0,
+            },
+          },
           fees: {
             totalFeeStructure: { $ifNull: ["$fees.totalFeeStructure", 0] },
             totalPaid: { $ifNull: ["$fees.totalPaid", 0] },
             totalBalance: {
               $subtract: [
-                { $ifNull: ["$fees.totalFeeStructure", 0] },
+                {
+                  $subtract: [
+                    { $ifNull: ["$fees.totalFeeStructure", 0] },
+                    {
+                      $cond: {
+                        if: {
+                          $and: [
+                            { $gt: ["$scholarshipPercentage", 0] },
+                            { $gt: ["$fees.totalFeeStructure", 0] },
+                          ],
+                        },
+                        then: {
+                          $multiply: [
+                            "$fees.totalFeeStructure",
+                            { $divide: ["$scholarshipPercentage", 100] },
+                          ],
+                        },
+                        else: 0,
+                      },
+                    },
+                  ],
+                },
                 { $ifNull: ["$fees.totalPaid", 0] },
               ],
             },
             feeStatus: { $ifNull: ["$fees.feeStatus", "pending"] },
-            scholarshipApplied: {
-              $ifNull: ["$fees.scholarshipApplied", false],
+            scholarshipApplied: { $gt: ["$scholarshipPercentage", 0] },
+            scholarshipAmount: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $gt: ["$scholarshipPercentage", 0] },
+                    { $gt: ["$fees.totalFeeStructure", 0] },
+                  ],
+                },
+                then: {
+                  $multiply: [
+                    "$fees.totalFeeStructure",
+                    { $divide: ["$scholarshipPercentage", 100] },
+                  ],
+                },
+                else: 0,
+              },
             },
-            scholarshipAmount: { $ifNull: ["$fees.scholarshipAmount", 0] },
           },
           schedule: {
             $ifNull: ["$classInfo.schedule", null],
@@ -568,7 +679,6 @@ const getStudent = async (req, res) => {
       { path: "userId", select: "firstName lastName email profileDetails" },
       { path: "currentClassId", select: "name capacity" },
       { path: "branchId", select: "name configuration" },
-      { path: "courses", select: "name description duration price" },
       {
         path: "academicRecords.subjects.teacherId",
         select: "firstName lastName",
@@ -587,7 +697,6 @@ const getStudent = async (req, res) => {
         { path: "userId", select: "firstName lastName email profileDetails" },
         { path: "currentClassId", select: "name capacity" },
         { path: "branchId", select: "name configuration" },
-        { path: "courses", select: "name description duration price" },
         {
           path: "academicRecords.subjects.teacherId",
           select: "firstName lastName",
@@ -595,32 +704,55 @@ const getStudent = async (req, res) => {
       ]);
     }
 
-    // If student found, populate enrollment progress for each course
-    if (student && student.courses && student.courses.length > 0) {
-      const Enrollment = require("../models/elearning/Enrollment");
-      const enrollments = await Enrollment.find({
-        studentId: student._id,
-        courseId: { $in: student.courses.map((c) => c._id) },
-      }).select("courseId progress status");
-
-      // Add progress to each course
-      student.courses = student.courses.map((course) => {
-        const enrollment = enrollments.find(
-          (e) => e.courseId.toString() === course._id.toString()
-        );
-        return {
-          ...course.toObject(),
-          progress: enrollment ? enrollment.progress : 0,
-          enrollmentStatus: enrollment ? enrollment.status : "not_enrolled",
-        };
-      });
-    }
-
     if (!student) {
       return res.status(404).json({
         success: false,
         message: "Student not found",
       });
+    }
+
+    // Manually populate courses since they may be stored as strings
+    let courses = [];
+    if (student.courses && student.courses.length > 0) {
+      const Course = require("../models/Course");
+      const mongoose = require("mongoose");
+      const courseIds = student.courses.map((id) =>
+        typeof id === "string" ? mongoose.Types.ObjectId(id) : id
+      );
+
+      console.log("Looking for course IDs:", courseIds);
+      courses = await Course.find({ _id: { $in: courseIds } });
+      console.log("Found courses:", courses.length);
+      courses.forEach((c) => {
+        console.log(`Course: ${c._id}, Name: ${c.name}, Code: ${c.code}`);
+      });
+    }
+
+    // If courses found, populate enrollment progress
+    if (courses.length > 0) {
+      const Enrollment = require("../models/elearning/Enrollment");
+      const enrollments = await Enrollment.find({
+        studentId: student._id,
+        courseId: { $in: courses.map((c) => c._id) },
+      }).select("courseId progress status");
+
+      // Add progress to each course and store in a separate variable
+      var enrichedCourses = courses.map((course) => {
+        const enrollment = enrollments.find(
+          (e) => e.courseId.toString() === course._id.toString()
+        );
+        const mappedCourse = {
+          _id: course._id,
+          name: course.name,
+          description: course.description,
+          progress: enrollment ? enrollment.progress : 0,
+          enrollmentStatus: enrollment ? enrollment.status : "not_enrolled",
+        };
+        console.log("Mapped course:", mappedCourse);
+        return mappedCourse;
+      });
+    } else {
+      var enrichedCourses = [];
     }
 
     // Check if user can access this student record
@@ -633,9 +765,18 @@ const getStudent = async (req, res) => {
       }
     }
 
+    // Convert to plain object and replace courses with enriched version
+    const studentObj = student.toObject();
+    studentObj.courses = enrichedCourses;
+
+    console.log(
+      "Final studentObj.courses:",
+      JSON.stringify(studentObj.courses, null, 2)
+    );
+
     res.json({
       success: true,
-      student,
+      student: studentObj,
     });
   } catch (error) {
     console.error("Get student error:", error);

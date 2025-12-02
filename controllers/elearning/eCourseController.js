@@ -131,7 +131,17 @@ class ECourseController {
         settings: settings || {},
         tags: tags || [],
         thumbnail: thumbnail || null,
-        chain: chain || {},
+        chain: chain
+          ? {
+              chainId: chain.chainId || "",
+              sequenceNumber: chain.sequenceNumber || 1,
+              isChainFinal: chain.isChainFinal ?? true,
+              nextCourseId:
+                chain.nextCourseId && chain.nextCourseId !== ""
+                  ? chain.nextCourseId
+                  : null,
+            }
+          : {},
         instructor: req.user._id,
         branchId: req.user.branchId,
         status: "pending_approval",
@@ -668,20 +678,63 @@ class ECourseController {
 
         await course.save();
       } else if (isInstructor) {
-        // Teachers need admin approval for changes
-        await course.requestModificationApproval(
-          req.user._id,
-          updates,
-          "Course modification requested"
+        // Define fields that instructors can update directly without approval
+        const directUpdateFields = [
+          "title",
+          "description",
+          "shortDescription",
+          "category",
+          "level",
+          "language",
+          "duration",
+          "pricing",
+          "registration",
+          "settings",
+          "tags",
+          "visibility",
+          "chain",
+        ];
+
+        // Check if all updates are to direct-update fields
+        const hasOnlyDirectFields = Object.keys(updates).every((key) =>
+          directUpdateFields.includes(key)
         );
 
-        // Don't apply changes immediately - they need approval
-        return res.json({
-          success: true,
-          message: "Course modification submitted for approval",
-          data: course,
-          requiresApproval: true,
-        });
+        if (hasOnlyDirectFields) {
+          // Apply direct updates for basic fields
+          Object.keys(updates).forEach((key) => {
+            if (updates[key] !== undefined) {
+              if (key === "chain" && updates[key]) {
+                // Handle chain object specially
+                course.chain = {
+                  chainId: updates[key].chainId || undefined,
+                  sequenceNumber: updates[key].sequenceNumber || 1,
+                  isChainFinal: updates[key].isChainFinal ?? true,
+                  nextCourseId: updates[key].nextCourseId || null,
+                };
+              } else {
+                course[key] = updates[key];
+              }
+            }
+          });
+
+          await course.save();
+        } else {
+          // For complex changes, require admin approval
+          await course.requestModificationApproval(
+            req.user._id,
+            updates,
+            "Course modification requested"
+          );
+
+          // Don't apply changes immediately - they need approval
+          return res.json({
+            success: true,
+            message: "Course modification submitted for approval",
+            data: course,
+            requiresApproval: true,
+          });
+        }
       }
 
       await course.populate("instructor", "firstName lastName email");
