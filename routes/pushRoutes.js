@@ -9,6 +9,9 @@ router.get("/vapid-public-key", pushController.getVapidPublicKey);
 // All routes below require authentication
 router.use(protect);
 
+// Register OneSignal subscription with user's external_id
+router.post("/register", pushController.registerSubscription);
+
 // Subscribe to push notifications
 router.post("/subscribe", pushController.subscribe);
 

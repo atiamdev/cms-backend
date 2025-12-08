@@ -65,10 +65,10 @@ const corsOptions = {
     if (!origin) return callback(null, true);
 
     const allowedOrigins = [
-      process.env.CMS_FRONTEND_URL || "http://localhost:3000",
+      process.env.CMS_FRONTEND_URL || "https://localhost:3000",
       process.env.ELEARNING_FRONTEND_URL || "http://localhost:3001",
       process.env.LANDING_PAGE_URL || "http://localhost:5173", // Landing page URL
-      "http://localhost:3000",
+      "https://localhost:3000",
       "http://localhost:3001",
       "http://localhost:5173", // Vite dev server default
       "https://portal.atiamcollege.com",

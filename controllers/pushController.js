@@ -23,6 +23,86 @@ try {
   console.error("[OneSignal] Error initializing client:", error);
 }
 
+// Register user's OneSignal subscription with their external_id
+// This links the browser's push subscription to our user
+exports.registerSubscription = async (req, res) => {
+  try {
+    const { subscriptionId, onesignalId } = req.body;
+    const userId = req.user._id.toString();
+
+    if (!subscriptionId && !onesignalId) {
+      return res.status(400).json({
+        success: false,
+        message: "subscriptionId or onesignalId is required",
+      });
+    }
+
+    console.log(`[OneSignal] Registering user ${userId} with subscription:`, {
+      subscriptionId,
+      onesignalId,
+    });
+
+    // Use direct REST API call since the SDK might not have this method
+    const fetch = (await import("node-fetch")).default;
+
+    let apiUrl;
+    if (subscriptionId) {
+      // Use subscription ID to add alias
+      apiUrl = `https://api.onesignal.com/apps/${ONESIGNAL_APP_ID}/subscriptions/${subscriptionId}/user/identity`;
+    } else {
+      // Use onesignal_id to add alias
+      apiUrl = `https://api.onesignal.com/apps/${ONESIGNAL_APP_ID}/users/by/onesignal_id/${onesignalId}/identity`;
+    }
+
+    const response = await fetch(apiUrl, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${ONESIGNAL_API_KEY}`,
+      },
+      body: JSON.stringify({
+        identity: {
+          external_id: userId,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("[OneSignal] Failed to register subscription:", data);
+      return res.status(response.status).json({
+        success: false,
+        message: data.errors?.[0] || "Failed to register subscription",
+        details: data,
+      });
+    }
+
+    console.log("[OneSignal] User registered successfully:", data);
+
+    // Also add role tag
+    try {
+      const userRole = req.user.role;
+      // Add tag via a separate API call if needed
+      // For now, tags are handled on frontend
+    } catch (tagError) {
+      console.warn("[OneSignal] Failed to add role tag:", tagError);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Subscription registered successfully",
+      data: data,
+    });
+  } catch (error) {
+    console.error("[OneSignal] Error registering subscription:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 // Send push notification to specific users
 exports.sendNotification = async (userIds, payload) => {
   try {

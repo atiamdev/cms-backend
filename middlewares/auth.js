@@ -14,6 +14,26 @@ const protect = async (req, res, next) => {
       // Get token from header
       token = req.headers.authorization.split(" ")[1];
 
+      // Check for obviously invalid tokens
+      if (
+        !token ||
+        token === "null" ||
+        token === "undefined" ||
+        token.length < 10
+      ) {
+        // Only log if it looks like a real attempt (not just empty/null)
+        if (token && token !== "null" && token !== "undefined") {
+          console.warn(
+            "Invalid token format received:",
+            token?.substring(0, 20)
+          );
+        }
+        return res.status(401).json({
+          success: false,
+          message: "Not authorized, invalid token format",
+        });
+      }
+
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
