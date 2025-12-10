@@ -1110,7 +1110,20 @@ const getStudentsByClass = async (req, res) => {
 // @access  Private (Admin, Secretary)
 const getStudentStatistics = async (req, res) => {
   try {
-    // Calculate date range for current month
+    // Parse optional date filters from query params
+    const { startDate, endDate } = req.query;
+    const hasDateFilter = startDate && endDate;
+
+    // If date filter provided, parse and use those dates
+    const filterStartDate = hasDateFilter ? new Date(startDate) : null;
+    const filterEndDate = hasDateFilter ? new Date(endDate) : null;
+
+    // Set end date to end of day for inclusive filtering
+    if (filterEndDate) {
+      filterEndDate.setHours(23, 59, 59, 999);
+    }
+
+    // Calculate date ranges for default statistics
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(
@@ -1122,29 +1135,99 @@ const getStudentStatistics = async (req, res) => {
       59,
       999
     );
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      0,
+      23,
+      59,
+      59,
+      999
+    );
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+
+    // Use filter dates or defaults for statistics queries
+    const statsStartDate = hasDateFilter ? filterStartDate : startOfMonth;
+    const statsEndDate = hasDateFilter ? filterEndDate : endOfMonth;
+
+    const branchObjectId = new mongoose.Types.ObjectId(req.branchId);
+
+    // Build base query for date-filtered queries
+    const dateFilterQuery = hasDateFilter
+      ? { enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate } }
+      : {};
 
     const [
       totalStudents,
       activeStudents,
-      newEnrollments,
+      newEnrollmentsThisMonth,
+      newEnrollmentsLastMonth,
+      newEnrollmentsThisYear,
       statusCounts,
       classCounts,
+      departmentCounts,
+      genderCounts,
+      droppedThisYear,
+      graduatedThisYear,
+      studentsThreeMonthsAgo,
+      monthlyEnrollmentTrend,
+      // Date-filtered counts
+      filteredTotalStudents,
+      filteredActiveStudents,
+      filteredNewEnrollments,
     ] = await Promise.all([
-      Student.countDocuments({ branchId: req.branchId }),
+      // Total students (all time)
+      Student.countDocuments({ branchId: branchObjectId }),
+
+      // Active students (all time)
       Student.countDocuments({
-        branchId: req.branchId,
+        branchId: branchObjectId,
         academicStatus: "active",
       }),
+
+      // New enrollments this month
       Student.countDocuments({
-        branchId: req.branchId,
-        enrollmentDate: {
-          $gte: startOfMonth,
-          $lte: endOfMonth,
-        },
+        branchId: branchObjectId,
+        enrollmentDate: { $gte: startOfMonth, $lte: endOfMonth },
       }),
-      Student.getCountByStatus(req.branchId),
+
+      // New enrollments last month (for comparison)
+      Student.countDocuments({
+        branchId: branchObjectId,
+        enrollmentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
+      }),
+
+      // New enrollments this year
+      Student.countDocuments({
+        branchId: branchObjectId,
+        enrollmentDate: { $gte: startOfYear },
+      }),
+
+      // Status breakdown (with date filter if provided)
       Student.aggregate([
-        { $match: { branchId: new mongoose.Types.ObjectId(req.branchId) } },
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$academicStatus", count: { $sum: 1 } } },
+      ]),
+
+      // Students by class (with date filter if provided)
+      Student.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
         { $group: { _id: "$currentClassId", count: { $sum: 1 } } },
         {
           $lookup: {
@@ -1155,24 +1238,273 @@ const getStudentStatistics = async (req, res) => {
           },
         },
         { $unwind: { path: "$classInfo", preserveNullAndEmptyArrays: true } },
+        { $sort: { count: -1 } },
       ]),
+
+      // Students by department (with date filter if provided)
+      Student.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$departmentId", count: { $sum: 1 } } },
+        {
+          $lookup: {
+            from: "departments",
+            localField: "_id",
+            foreignField: "_id",
+            as: "departmentInfo",
+          },
+        },
+        {
+          $unwind: {
+            path: "$departmentInfo",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
+
+      // Gender distribution (from User model via lookup) - with date filter if provided
+      Student.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        {
+          $lookup: {
+            from: "users",
+            localField: "userId",
+            foreignField: "_id",
+            as: "userInfo",
+          },
+        },
+        { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: "$userInfo.profileDetails.gender",
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+
+      // Dropped/withdrawn in date range (or this year if no filter)
+      Student.countDocuments({
+        branchId: branchObjectId,
+        academicStatus: { $in: ["dropped", "transferred"] },
+        "statusHistory.changedAt": hasDateFilter
+          ? { $gte: filterStartDate, $lte: filterEndDate }
+          : { $gte: startOfYear },
+      }),
+
+      // Graduated in date range (or this year if no filter)
+      Student.countDocuments({
+        branchId: branchObjectId,
+        academicStatus: "graduated",
+        "statusHistory.changedAt": hasDateFilter
+          ? { $gte: filterStartDate, $lte: filterEndDate }
+          : { $gte: startOfYear },
+      }),
+
+      // Students enrolled 3 months ago (for retention calculation)
+      Student.countDocuments({
+        branchId: branchObjectId,
+        enrollmentDate: { $lte: threeMonthsAgo },
+      }),
+
+      // Monthly enrollment trend (uses date filter range or last 6 months)
+      Student.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            enrollmentDate: hasDateFilter
+              ? { $gte: filterStartDate, $lte: filterEndDate }
+              : { $gte: new Date(now.getFullYear(), now.getMonth() - 5, 1) },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$enrollmentDate" },
+              month: { $month: "$enrollmentDate" },
+            },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
+
+      // Date-filtered total students (enrolled within date range)
+      hasDateFilter
+        ? Student.countDocuments({
+            branchId: branchObjectId,
+            enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+          })
+        : Promise.resolve(null),
+
+      // Date-filtered active students (enrolled within date range and currently active)
+      hasDateFilter
+        ? Student.countDocuments({
+            branchId: branchObjectId,
+            enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+            academicStatus: "active",
+          })
+        : Promise.resolve(null),
+
+      // Date-filtered new enrollments (same as above for consistency)
+      hasDateFilter
+        ? Student.countDocuments({
+            branchId: branchObjectId,
+            enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+          })
+        : Promise.resolve(null),
     ]);
+
+    // Calculate derived metrics
+    const inactiveStudents = totalStudents - activeStudents;
+    const enrollmentGrowth =
+      newEnrollmentsLastMonth > 0
+        ? ((newEnrollmentsThisMonth - newEnrollmentsLastMonth) /
+            newEnrollmentsLastMonth) *
+          100
+        : newEnrollmentsThisMonth > 0
+        ? 100
+        : 0;
+
+    // Retention rate: % of students from 3+ months ago still active
+    const stillActiveFromThreeMonthsAgo = await Student.countDocuments({
+      branchId: req.branchId,
+      enrollmentDate: { $lte: threeMonthsAgo },
+      academicStatus: "active",
+    });
+    const retentionRate =
+      studentsThreeMonthsAgo > 0
+        ? (stillActiveFromThreeMonthsAgo / studentsThreeMonthsAgo) * 100
+        : 100;
+
+    // Dropout/withdrawal rate this year
+    const dropoutRate =
+      totalStudents > 0 ? (droppedThisYear / totalStudents) * 100 : 0;
+
+    // Process gender distribution
+    const genderDistribution = {
+      male: 0,
+      female: 0,
+      other: 0,
+      unspecified: 0,
+    };
+    genderCounts.forEach((item) => {
+      const gender = item._id?.toLowerCase() || "unspecified";
+      if (gender === "male") genderDistribution.male = item.count;
+      else if (gender === "female") genderDistribution.female = item.count;
+      else if (gender) genderDistribution.other += item.count;
+      else genderDistribution.unspecified = item.count;
+    });
+
+    // Process status counts
+    const statusBreakdown = {
+      active: 0,
+      inactive: 0,
+      suspended: 0,
+      graduated: 0,
+      transferred: 0,
+      dropped: 0,
+    };
+    statusCounts.forEach((item) => {
+      if (item._id && statusBreakdown.hasOwnProperty(item._id)) {
+        statusBreakdown[item._id] = item.count;
+      }
+    });
+
+    // Format monthly trend for chart
+    const monthNames = [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ];
+    const formattedTrend = monthlyEnrollmentTrend.map((item) => ({
+      month: monthNames[item._id.month - 1],
+      year: item._id.year,
+      enrollments: item.count,
+    }));
 
     res.json({
       success: true,
       statistics: {
+        // Primary metrics (all-time)
         totalStudents,
         activeStudents,
-        newEnrollments,
-        statusCounts: statusCounts.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
+        inactiveStudents,
+
+        // Enrollment metrics
+        newEnrollmentsThisMonth,
+        newEnrollmentsLastMonth,
+        newEnrollmentsThisYear,
+        enrollmentGrowth: Math.round(enrollmentGrowth * 10) / 10,
+
+        // Retention and dropout
+        retentionRate: Math.round(retentionRate * 10) / 10,
+        dropoutRate: Math.round(dropoutRate * 10) / 10,
+        droppedThisYear,
+        graduatedThisYear,
+
+        // Status breakdown (respects date filter if provided)
+        statusBreakdown,
+
+        // Gender distribution (respects date filter if provided)
+        genderDistribution,
+        genderRatio:
+          genderDistribution.male > 0 || genderDistribution.female > 0
+            ? `${genderDistribution.male}:${genderDistribution.female}`
+            : "N/A",
+
+        // Distribution by class (respects date filter if provided)
         classCounts: classCounts.map((item) => ({
           classId: item._id,
           className: item.classInfo?.name || "Unassigned",
           count: item.count,
         })),
+
+        // Distribution by department (respects date filter if provided)
+        departmentCounts: departmentCounts.map((item) => ({
+          departmentId: item._id,
+          departmentName: item.departmentInfo?.name || "Unassigned",
+          count: item.count,
+        })),
+
+        // Monthly trend (respects date filter if provided)
+        enrollmentTrend: formattedTrend,
+
+        // Date-filtered statistics (when filter is applied)
+        ...(hasDateFilter && {
+          filtered: {
+            totalStudents: filteredTotalStudents,
+            activeStudents: filteredActiveStudents,
+            newEnrollments: filteredNewEnrollments,
+            inactiveStudents: filteredTotalStudents - filteredActiveStudents,
+            dateRange: {
+              startDate: filterStartDate.toISOString(),
+              endDate: filterEndDate.toISOString(),
+            },
+          },
+        }),
       },
     });
   } catch (error) {

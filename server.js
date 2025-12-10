@@ -16,6 +16,7 @@ const branchRoutes = require("./routes/branchRoutes");
 const departmentRoutes = require("./routes/departmentRoutes");
 const userRoutes = require("./routes/userRoutes");
 const studentRoutes = require("./routes/studentRoutes");
+const studentInactivityRoutes = require("./routes/studentInactivityRoutes");
 const teacherRoutes = require("./routes/teacherRoutes");
 const classRoutes = require("./routes/classRoutes");
 const courseRoutes = require("./routes/courseRoutes");
@@ -130,6 +131,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/branches", branchRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/students", studentRoutes);
+app.use("/api/students", studentInactivityRoutes); // Student inactivity management
 app.use("/api/applications", studentApplicationRoutes); // Student applications
 app.use("/api/teachers", teacherRoutes);
 app.use("/api/teacher", teacherRoutes); // For teacher-specific routes
@@ -286,6 +288,14 @@ const startServer = async () => {
       "Error initializing grading reminder service:",
       error.message
     );
+  }
+
+  // Initialize student inactivity scheduled job
+  try {
+    const { initializeScheduledJobs } = require("./scheduledJobs");
+    initializeScheduledJobs();
+  } catch (error) {
+    console.error("Error initializing scheduled jobs:", error.message);
   }
 
   server.listen(PORT, () => {

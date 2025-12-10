@@ -1,4 +1,5 @@
 const { validationResult } = require("express-validator");
+const mongoose = require("mongoose");
 const Teacher = require("../models/Teacher");
 const User = require("../models/User");
 const Branch = require("../models/Branch");
@@ -964,30 +965,330 @@ const getTeachersByDepartment = async (req, res) => {
 // @access  Private (Admin, Secretary)
 const getTeacherStatistics = async (req, res) => {
   try {
-    const [totalTeachers, activeTeachers, statusCounts, departmentCounts] =
-      await Promise.all([
-        Teacher.countDocuments({ branchId: req.branchId }),
-        Teacher.countDocuments({
-          branchId: req.branchId,
-          employmentStatus: "active",
-        }),
-        Teacher.getCountByStatus(req.branchId),
-        Teacher.getCountByDepartment(req.branchId),
-      ]);
+    // Parse optional date filters from query params
+    const { startDate, endDate } = req.query;
+    const hasDateFilter = startDate && endDate;
+
+    // If date filter provided, parse and use those dates
+    const filterStartDate = hasDateFilter ? new Date(startDate) : null;
+    const filterEndDate = hasDateFilter ? new Date(endDate) : null;
+
+    // Set end date to end of day for inclusive filtering
+    if (filterEndDate) {
+      filterEndDate.setHours(23, 59, 59, 999);
+    }
+
+    // Calculate default date ranges
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const branchObjectId = new mongoose.Types.ObjectId(req.branchId);
+
+    // Get student count for ratio calculation
+    const Student = require("../models/Student");
+    const totalActiveStudents = await Student.countDocuments({
+      branchId: branchObjectId,
+      academicStatus: "active",
+    });
+
+    const [
+      totalTeachers,
+      activeTeachers,
+      statusCounts,
+      departmentCounts,
+      employmentTypeCounts,
+      attendanceStats,
+      experienceStats,
+      designationCounts,
+      newHiresThisMonth,
+      newHiresThisYear,
+      // Date-filtered counts
+      filteredTotalTeachers,
+      filteredActiveTeachers,
+      filteredNewHires,
+    ] = await Promise.all([
+      // Total teachers (all time)
+      Teacher.countDocuments({ branchId: branchObjectId }),
+
+      // Active teachers (all time)
+      Teacher.countDocuments({
+        branchId: branchObjectId,
+        employmentStatus: "active",
+      }),
+
+      // Status breakdown (with date filter if provided)
+      Teacher.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$employmentStatus", count: { $sum: 1 } } },
+      ]),
+
+      // Department distribution with names (with date filter if provided)
+      Teacher.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$department", count: { $sum: 1 } } },
+        {
+          $lookup: {
+            from: "departments",
+            localField: "_id",
+            foreignField: "_id",
+            as: "departmentInfo",
+          },
+        },
+        {
+          $unwind: {
+            path: "$departmentInfo",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        { $sort: { count: -1 } },
+      ]),
+
+      // Employment type distribution (with date filter if provided)
+      Teacher.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$employmentType", count: { $sum: 1 } } },
+      ]),
+
+      // Attendance statistics (average) - no date filter needed (current state)
+      Teacher.aggregate([
+        { $match: { branchId: branchObjectId, employmentStatus: "active" } },
+        {
+          $group: {
+            _id: null,
+            avgAttendanceRate: { $avg: "$attendance.attendancePercentage" },
+            totalPresent: { $sum: "$attendance.daysPresent" },
+            totalAbsent: { $sum: "$attendance.daysAbsent" },
+            totalLate: { $sum: "$attendance.daysLate" },
+            totalWorkingDays: { $sum: "$attendance.totalWorkingDays" },
+          },
+        },
+      ]),
+
+      // Experience statistics (with date filter if provided)
+      Teacher.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            avgExperience: { $avg: "$qualification.experience.totalYears" },
+            maxExperience: { $max: "$qualification.experience.totalYears" },
+            minExperience: { $min: "$qualification.experience.totalYears" },
+          },
+        },
+      ]),
+
+      // Designation distribution (with date filter if provided)
+      Teacher.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$designation", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
+
+      // New hires this month
+      Teacher.countDocuments({
+        branchId: branchObjectId,
+        joiningDate: {
+          $gte: startOfMonth,
+        },
+      }),
+
+      // New hires this year
+      Teacher.countDocuments({
+        branchId: branchObjectId,
+        joiningDate: {
+          $gte: startOfYear,
+        },
+      }),
+
+      // Date-filtered total teachers (joined within date range)
+      hasDateFilter
+        ? Teacher.countDocuments({
+            branchId: branchObjectId,
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+          })
+        : Promise.resolve(null),
+
+      // Date-filtered active teachers (joined within date range and currently active)
+      hasDateFilter
+        ? Teacher.countDocuments({
+            branchId: branchObjectId,
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+            employmentStatus: "active",
+          })
+        : Promise.resolve(null),
+
+      // Date-filtered new hires (same as above for consistency)
+      hasDateFilter
+        ? Teacher.countDocuments({
+            branchId: branchObjectId,
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    // Calculate student-to-teacher ratio
+    const studentTeacherRatio =
+      activeTeachers > 0
+        ? Math.round((totalActiveStudents / activeTeachers) * 10) / 10
+        : 0;
+
+    // Process status breakdown
+    const statusBreakdown = {
+      active: 0,
+      inactive: 0,
+      terminated: 0,
+      resigned: 0,
+      retired: 0,
+      on_leave: 0,
+    };
+    let unknownStatusCount = 0;
+    statusCounts.forEach((item) => {
+      if (item._id && statusBreakdown.hasOwnProperty(item._id)) {
+        statusBreakdown[item._id] = item.count;
+      } else if (item._id === null || item._id === undefined) {
+        // Handle teachers with no status - count them as active (default)
+        statusBreakdown.active += item.count;
+        unknownStatusCount = item.count;
+      }
+    });
+
+    // Process employment type breakdown
+    const employmentTypeBreakdown = {
+      full_time: 0,
+      part_time: 0,
+      contract: 0,
+      substitute: 0,
+    };
+    employmentTypeCounts.forEach((item) => {
+      if (item._id && employmentTypeBreakdown.hasOwnProperty(item._id)) {
+        employmentTypeBreakdown[item._id] = item.count;
+      }
+    });
+
+    // Process attendance stats
+    const attendance = attendanceStats[0] || {
+      avgAttendanceRate: 0,
+      totalPresent: 0,
+      totalAbsent: 0,
+      totalLate: 0,
+      totalWorkingDays: 0,
+    };
+
+    // Process experience stats
+    const experience = experienceStats[0] || {
+      avgExperience: 0,
+      maxExperience: 0,
+      minExperience: 0,
+    };
 
     res.json({
       success: true,
       statistics: {
+        // Primary metrics (all-time)
         totalTeachers,
         activeTeachers,
+        inactiveTeachers: totalTeachers - activeTeachers,
+
+        // Student-teacher ratio
+        studentTeacherRatio,
+        totalActiveStudents,
+
+        // Hiring metrics
+        newHiresThisMonth,
+        newHiresThisYear,
+
+        // Status breakdown (respects date filter if provided)
+        statusBreakdown,
+
+        // Employment type breakdown (respects date filter if provided)
+        employmentTypeBreakdown,
+
+        // Attendance metrics
+        averageAttendanceRate:
+          Math.round((attendance.avgAttendanceRate || 0) * 10) / 10,
+        attendanceSummary: {
+          totalPresent: attendance.totalPresent,
+          totalAbsent: attendance.totalAbsent,
+          totalLate: attendance.totalLate,
+          totalWorkingDays: attendance.totalWorkingDays,
+        },
+
+        // Experience metrics (respects date filter if provided)
+        averageExperience:
+          Math.round((experience.avgExperience || 0) * 10) / 10,
+        maxExperience: experience.maxExperience || 0,
+        minExperience: experience.minExperience || 0,
+
+        // Department distribution (respects date filter if provided)
+        departmentCounts: departmentCounts.map((item) => ({
+          departmentId: item._id,
+          departmentName: item.departmentInfo?.name || "Unassigned",
+          departmentCode: item.departmentInfo?.code || "N/A",
+          count: item.count,
+        })),
+
+        // Designation distribution (respects date filter if provided)
+        designationCounts: designationCounts.map((item) => ({
+          designation: item._id || "Unspecified",
+          count: item.count,
+        })),
+
+        // Legacy format for backward compatibility
         statusCounts: statusCounts.reduce((acc, item) => {
           acc[item._id] = item.count;
           return acc;
         }, {}),
-        departmentCounts: departmentCounts.reduce((acc, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
+
+        // Date-filtered statistics (when filter is applied)
+        ...(hasDateFilter && {
+          filtered: {
+            totalTeachers: filteredTotalTeachers,
+            activeTeachers: filteredActiveTeachers,
+            newHires: filteredNewHires,
+            inactiveTeachers: filteredTotalTeachers - filteredActiveTeachers,
+            dateRange: {
+              startDate: filterStartDate.toISOString(),
+              endDate: filterEndDate.toISOString(),
+            },
+          },
+        }),
       },
     });
   } catch (error) {

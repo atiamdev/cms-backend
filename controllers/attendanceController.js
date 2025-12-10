@@ -7,6 +7,11 @@ const { validationResult } = require("express-validator");
 const mongoose = require("mongoose");
 const ZKTecoService = require("../services/zktecoService");
 
+// Import student inactivity service for auto-reactivation
+const {
+  checkAndAutoReactivate,
+} = require("../services/studentInactivityService");
+
 // @desc    Get attendance records
 // @route   GET /api/attendance
 // @access  Private (Admin, Secretary, Teacher)
@@ -906,6 +911,29 @@ const syncFromBranch = async (req, res) => {
         }
 
         await attendance.save();
+
+        // Auto-reactivate inactive students when they clock in
+        // This ensures students who return to school are automatically marked active
+        if (student && student._id) {
+          try {
+            const reactivateResult = await checkAndAutoReactivate(
+              student._id,
+              req.user._id
+            );
+            if (reactivateResult.reactivated) {
+              console.log(
+                `🔄 Auto-reactivated student ${log.admissionNumber} upon attendance`
+              );
+            }
+          } catch (reactivateError) {
+            // Don't fail the sync if reactivation fails, just log it
+            console.warn(
+              `⚠️ Failed to check auto-reactivate for ${log.admissionNumber}:`,
+              reactivateError.message
+            );
+          }
+        }
+
         processedRecords.push({
           userId: user._id,
           userName: `${user.firstName} ${user.lastName}`,
