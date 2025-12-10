@@ -22,8 +22,8 @@ router.get("/comprehensive", requireBranchAdmin, getComprehensiveReport);
 router.get("/dashboard", requireBranchAdmin, getFinancialDashboard);
 router.get("/kpis", requireBranchAdmin, getFinancialKPIs);
 
-// Export routes - require admin or higher
-router.post("/export", requireAdmin, exportFinancialReport);
+// Export routes - allow branch admins to export their own data
+router.post("/export", requireBranchAdmin, exportFinancialReport);
 
 // Additional specific report routes can be added here
 // router.get("/revenue", requireAdmin, getRevenueAnalysis);

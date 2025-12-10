@@ -364,47 +364,60 @@ async function getRevenueAnalysis(dateFilter, branchFilter) {
     },
   ]);
 
-  const feeMatch = { ...branchFilter };
-  if (Object.keys(dateFilter).length > 0) {
-    feeMatch.dueDate = dateFilter;
-  }
-
-  const feeAggregation = await Fee.aggregate([
-    { $match: feeMatch },
+  // Get fee data from Student model - fees are embedded in students
+  const Student = require("../models/Student");
+  const studentFeeAggregation = await Student.aggregate([
+    { $match: { ...branchFilter } },
     {
       $group: {
         _id: null,
-        totalFeeCollection: { $sum: "$totalAmount" },
-        totalPending: {
-          $sum: { $cond: [{ $eq: ["$status", "pending"] }, "$balance", 0] },
+        totalFeeCollection: { $sum: "$fees.totalFeeStructure" },
+        totalPaid: { $sum: "$fees.totalPaid" },
+        totalBalance: { $sum: "$fees.totalBalance" },
+        paidCount: {
+          $sum: { $cond: [{ $eq: ["$fees.feeStatus", "paid"] }, 1, 0] },
         },
-        totalOverdue: {
-          $sum: { $cond: [{ $eq: ["$status", "overdue"] }, "$balance", 0] },
+        partialCount: {
+          $sum: { $cond: [{ $eq: ["$fees.feeStatus", "partial"] }, 1, 0] },
         },
+        unpaidCount: {
+          $sum: { $cond: [{ $eq: ["$fees.feeStatus", "unpaid"] }, 1, 0] },
+        },
+        studentCount: { $sum: 1 },
       },
     },
   ]);
 
   const revenue = revenueAggregation[0] || { totalPaid: 0, count: 0 };
-  const fees = feeAggregation[0] || {
+  const studentFees = studentFeeAggregation[0] || {
     totalFeeCollection: 0,
-    totalPending: 0,
-    totalOverdue: 0,
+    totalPaid: 0,
+    totalBalance: 0,
+    paidCount: 0,
+    partialCount: 0,
+    unpaidCount: 0,
+    studentCount: 0,
   };
 
+  // Use student fees data for accurate totals
+  const totalFeeCollection = studentFees.totalFeeCollection || 0;
+  const totalPaid = studentFees.totalPaid || 0;
+  const totalPending = studentFees.totalBalance || 0;
+  // Overdue = balance from students with partial status past due dates (simplified to partial balance for now)
+  const totalOverdue = 0; // Would need installment due date checking for accurate overdue
+
   return {
-    totalFeeCollection: fees.totalFeeCollection,
-    totalPaid: revenue.totalPaid,
-    totalPending: fees.totalPending,
-    totalOverdue: fees.totalOverdue,
+    totalFeeCollection: totalFeeCollection,
+    totalPaid: totalPaid,
+    totalPending: totalPending,
+    totalOverdue: totalOverdue,
     collectionRate:
-      fees.totalFeeCollection > 0
-        ? (revenue.totalPaid / fees.totalFeeCollection) * 100
-        : 0,
+      totalFeeCollection > 0 ? (totalPaid / totalFeeCollection) * 100 : 0,
     overdueRate:
-      fees.totalFeeCollection > 0
-        ? (fees.totalOverdue / fees.totalFeeCollection) * 100
-        : 0,
+      totalFeeCollection > 0 ? (totalOverdue / totalFeeCollection) * 100 : 0,
+    paidStudents: studentFees.paidCount,
+    partialStudents: studentFees.partialCount,
+    unpaidStudents: studentFees.unpaidCount,
   };
 }
 
@@ -744,7 +757,7 @@ async function getStudentAnalysis(dateFilter, branchFilter) {
         overdue: {
           $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] },
         },
-        averageFeePerStudent: { $avg: "$totalAmount" },
+        averageFeePerStudent: { $avg: "$totalAmountDue" },
       },
     },
     {
@@ -930,6 +943,438 @@ async function getRecentTransactions(dateFilter, branchFilter) {
     .slice(0, 20);
 }
 
+// Helper function to get student statistics for export
+const getStudentStatisticsForExport = async (branchId, dateFilter) => {
+  const Student = require("../models/Student");
+  const branchObjectId = new mongoose.Types.ObjectId(branchId);
+
+  const hasDateFilter = dateFilter.$gte && dateFilter.$lte;
+  const filterStartDate = dateFilter.$gte;
+  const filterEndDate = dateFilter.$lte;
+
+  // Calculate default date ranges
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    0,
+    23,
+    59,
+    59,
+    999
+  );
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+  const [
+    totalStudents,
+    activeStudents,
+    newEnrollmentsThisMonth,
+    newEnrollmentsThisYear,
+    statusCounts,
+    departmentCounts,
+    genderCounts,
+    droppedThisYear,
+    graduatedThisYear,
+  ] = await Promise.all([
+    Student.countDocuments({ branchId: branchObjectId }),
+    Student.countDocuments({
+      branchId: branchObjectId,
+      academicStatus: "active",
+    }),
+    Student.countDocuments({
+      branchId: branchObjectId,
+      enrollmentDate: { $gte: startOfMonth, $lte: endOfMonth },
+    }),
+    Student.countDocuments({
+      branchId: branchObjectId,
+      enrollmentDate: { $gte: startOfYear },
+    }),
+    Student.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      { $group: { _id: "$academicStatus", count: { $sum: 1 } } },
+    ]),
+    Student.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      { $group: { _id: "$departmentId", count: { $sum: 1 } } },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "_id",
+          foreignField: "_id",
+          as: "departmentInfo",
+        },
+      },
+      {
+        $unwind: { path: "$departmentInfo", preserveNullAndEmptyArrays: true },
+      },
+      { $sort: { count: -1 } },
+    ]),
+    Student.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "userInfo",
+        },
+      },
+      { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true } },
+      {
+        $group: { _id: "$userInfo.profileDetails.gender", count: { $sum: 1 } },
+      },
+    ]),
+    Student.countDocuments({
+      branchId: branchObjectId,
+      academicStatus: { $in: ["dropped", "transferred"] },
+      ...(hasDateFilter
+        ? {
+            "statusHistory.changedAt": {
+              $gte: filterStartDate,
+              $lte: filterEndDate,
+            },
+          }
+        : { "statusHistory.changedAt": { $gte: startOfYear } }),
+    }),
+    Student.countDocuments({
+      branchId: branchObjectId,
+      academicStatus: "graduated",
+      ...(hasDateFilter
+        ? {
+            "statusHistory.changedAt": {
+              $gte: filterStartDate,
+              $lte: filterEndDate,
+            },
+          }
+        : { "statusHistory.changedAt": { $gte: startOfYear } }),
+    }),
+  ]);
+
+  // Process gender distribution
+  const genderDistribution = { male: 0, female: 0, other: 0 };
+  genderCounts.forEach((item) => {
+    const gender = item._id?.toLowerCase() || "other";
+    if (gender === "male") genderDistribution.male = item.count;
+    else if (gender === "female") genderDistribution.female = item.count;
+    else genderDistribution.other += item.count;
+  });
+
+  // Process status breakdown
+  const statusBreakdown = {
+    active: 0,
+    inactive: 0,
+    suspended: 0,
+    graduated: 0,
+    transferred: 0,
+    dropped: 0,
+  };
+  statusCounts.forEach((item) => {
+    if (item._id && statusBreakdown.hasOwnProperty(item._id)) {
+      statusBreakdown[item._id] = item.count;
+    }
+  });
+
+  return {
+    totalStudents,
+    activeStudents,
+    inactiveStudents: totalStudents - activeStudents,
+    newEnrollmentsThisMonth,
+    newEnrollmentsThisYear,
+    droppedThisYear,
+    graduatedThisYear,
+    retentionRate:
+      totalStudents > 0
+        ? Math.round(((totalStudents - droppedThisYear) / totalStudents) * 100)
+        : 100,
+    statusBreakdown,
+    genderDistribution,
+    departmentCounts: departmentCounts.map((item) => ({
+      departmentName: item.departmentInfo?.name || "Unassigned",
+      count: item.count,
+    })),
+  };
+};
+
+// Helper function to get teacher statistics for export
+const getTeacherStatisticsForExport = async (branchId, dateFilter) => {
+  const Teacher = require("../models/Teacher");
+  const Student = require("../models/Student");
+  const branchObjectId = new mongoose.Types.ObjectId(branchId);
+
+  const hasDateFilter = dateFilter.$gte && dateFilter.$lte;
+  const filterStartDate = dateFilter.$gte;
+  const filterEndDate = dateFilter.$lte;
+
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+  const totalActiveStudents = await Student.countDocuments({
+    branchId: branchObjectId,
+    academicStatus: "active",
+  });
+
+  const [
+    totalTeachers,
+    activeTeachers,
+    statusCounts,
+    departmentCounts,
+    employmentTypeCounts,
+    attendanceStats,
+    experienceStats,
+    newHiresThisMonth,
+    newHiresThisYear,
+  ] = await Promise.all([
+    Teacher.countDocuments({ branchId: branchObjectId }),
+    Teacher.countDocuments({
+      branchId: branchObjectId,
+      employmentStatus: "active",
+    }),
+    Teacher.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      { $group: { _id: "$employmentStatus", count: { $sum: 1 } } },
+    ]),
+    Teacher.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      { $group: { _id: "$department", count: { $sum: 1 } } },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "_id",
+          foreignField: "_id",
+          as: "departmentInfo",
+        },
+      },
+      {
+        $unwind: { path: "$departmentInfo", preserveNullAndEmptyArrays: true },
+      },
+      { $sort: { count: -1 } },
+    ]),
+    Teacher.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      { $group: { _id: "$employmentType", count: { $sum: 1 } } },
+    ]),
+    Teacher.aggregate([
+      { $match: { branchId: branchObjectId, employmentStatus: "active" } },
+      {
+        $group: {
+          _id: null,
+          avgAttendanceRate: { $avg: "$attendance.attendancePercentage" },
+          totalPresent: { $sum: "$attendance.daysPresent" },
+          totalAbsent: { $sum: "$attendance.daysAbsent" },
+        },
+      },
+    ]),
+    Teacher.aggregate([
+      {
+        $match: {
+          branchId: branchObjectId,
+          ...(hasDateFilter && {
+            joiningDate: { $gte: filterStartDate, $lte: filterEndDate },
+          }),
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          avgExperience: { $avg: "$qualification.experience.totalYears" },
+        },
+      },
+    ]),
+    Teacher.countDocuments({
+      branchId: branchObjectId,
+      joiningDate: { $gte: startOfMonth },
+    }),
+    Teacher.countDocuments({
+      branchId: branchObjectId,
+      joiningDate: { $gte: startOfYear },
+    }),
+  ]);
+
+  // Process status breakdown
+  const statusBreakdown = {
+    active: 0,
+    inactive: 0,
+    terminated: 0,
+    resigned: 0,
+    on_leave: 0,
+  };
+  statusCounts.forEach((item) => {
+    if (item._id && statusBreakdown.hasOwnProperty(item._id)) {
+      statusBreakdown[item._id] = item.count;
+    } else if (!item._id) {
+      statusBreakdown.active += item.count;
+    }
+  });
+
+  // Process employment type breakdown
+  const employmentTypeBreakdown = { full_time: 0, part_time: 0, contract: 0 };
+  employmentTypeCounts.forEach((item) => {
+    if (item._id && employmentTypeBreakdown.hasOwnProperty(item._id)) {
+      employmentTypeBreakdown[item._id] = item.count;
+    }
+  });
+
+  const attendance = attendanceStats[0] || { avgAttendanceRate: 0 };
+  const experience = experienceStats[0] || { avgExperience: 0 };
+
+  return {
+    totalTeachers,
+    activeTeachers,
+    inactiveTeachers: totalTeachers - activeTeachers,
+    newHiresThisMonth,
+    newHiresThisYear,
+    studentTeacherRatio:
+      activeTeachers > 0
+        ? Math.round((totalActiveStudents / activeTeachers) * 10) / 10
+        : 0,
+    averageAttendanceRate:
+      Math.round((attendance.avgAttendanceRate || 0) * 10) / 10,
+    averageExperience: Math.round((experience.avgExperience || 0) * 10) / 10,
+    statusBreakdown,
+    employmentTypeBreakdown,
+    departmentCounts: departmentCounts.map((item) => ({
+      departmentName: item.departmentInfo?.name || "Unassigned",
+      count: item.count,
+    })),
+  };
+};
+
+// Helper function to get course statistics for export
+const getCourseStatisticsForExport = async (branchId) => {
+  const Course = require("../models/Course");
+  const branchObjectId = new mongoose.Types.ObjectId(branchId);
+
+  const [totalCourses, activeCourses, coursesByDepartment] = await Promise.all([
+    Course.countDocuments({ branchId: branchObjectId }),
+    Course.countDocuments({ branchId: branchObjectId, status: "active" }),
+    Course.aggregate([
+      { $match: { branchId: branchObjectId } },
+      { $group: { _id: "$departmentId", count: { $sum: 1 } } },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "_id",
+          foreignField: "_id",
+          as: "departmentInfo",
+        },
+      },
+      {
+        $unwind: { path: "$departmentInfo", preserveNullAndEmptyArrays: true },
+      },
+      { $sort: { count: -1 } },
+    ]),
+  ]);
+
+  return {
+    totalCourses,
+    activeCourses,
+    inactiveCourses: totalCourses - activeCourses,
+    coursesByDepartment: coursesByDepartment.map((item) => ({
+      departmentName: item.departmentInfo?.name || "Unassigned",
+      count: item.count,
+    })),
+  };
+};
+
+// Helper function to get attendance statistics for export
+const getAttendanceStatisticsForExport = async (branchId, dateFilter) => {
+  const Attendance = require("../models/Attendance");
+  const branchObjectId = new mongoose.Types.ObjectId(branchId);
+
+  const hasDateFilter = dateFilter.$gte && dateFilter.$lte;
+  const dateQuery = hasDateFilter
+    ? { date: { $gte: dateFilter.$gte, $lte: dateFilter.$lte } }
+    : {};
+
+  try {
+    const attendanceStats = await Attendance.aggregate([
+      { $match: { branchId: branchObjectId, ...dateQuery } },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const statusMap = { present: 0, absent: 0, late: 0, excused: 0 };
+    attendanceStats.forEach((stat) => {
+      if (stat._id && statusMap.hasOwnProperty(stat._id)) {
+        statusMap[stat._id] = stat.count;
+      }
+    });
+
+    const totalRecords = Object.values(statusMap).reduce((a, b) => a + b, 0);
+    const attendanceRate =
+      totalRecords > 0
+        ? Math.round((statusMap.present / totalRecords) * 100)
+        : 0;
+
+    return {
+      totalRecords,
+      present: statusMap.present,
+      absent: statusMap.absent,
+      late: statusMap.late,
+      excused: statusMap.excused,
+      attendanceRate,
+    };
+  } catch (error) {
+    console.error("Error getting attendance stats:", error);
+    return {
+      totalRecords: 0,
+      present: 0,
+      absent: 0,
+      late: 0,
+      excused: 0,
+      attendanceRate: 0,
+    };
+  }
+};
+
 // @desc    Export financial report
 // @route   POST /api/financial-reports/export
 // @access  Private (Admin, SuperAdmin)
@@ -941,6 +1386,7 @@ const exportFinancialReport = async (req, res) => {
       includeDetails = true,
       dateRange,
       branchIds,
+      comprehensiveReport = false, // New flag for full dashboard export
     } = req.body;
 
     // Validate format
@@ -1011,23 +1457,71 @@ const exportFinancialReport = async (req, res) => {
       recentTransactions,
     };
 
+    // If comprehensive report requested, add academic and operational data
+    if (comprehensiveReport && effectiveBranchId) {
+      try {
+        // Get branch info
+        const Branch = require("../models/Branch");
+        const branch = await Branch.findById(effectiveBranchId);
+        reportData.branchInfo = branch
+          ? { name: branch.name, code: branch.code }
+          : { name: "All Branches", code: "ALL" };
+
+        // Get student statistics
+        reportData.studentStatistics = await getStudentStatisticsForExport(
+          effectiveBranchId,
+          dateFilter
+        );
+
+        // Get teacher statistics
+        reportData.teacherStatistics = await getTeacherStatisticsForExport(
+          effectiveBranchId,
+          dateFilter
+        );
+
+        // Get course statistics
+        reportData.courseStatistics = await getCourseStatisticsForExport(
+          effectiveBranchId
+        );
+
+        // Get attendance statistics
+        reportData.attendanceStatistics =
+          await getAttendanceStatisticsForExport(effectiveBranchId, dateFilter);
+      } catch (error) {
+        console.error("Error fetching comprehensive report data:", error);
+        // Continue with partial data
+      }
+    }
+
     // Generate export based on format
     let buffer;
     let filename;
     let contentType;
 
+    const reportPrefix = comprehensiveReport
+      ? "comprehensive-branch-report"
+      : "financial-report";
+
     switch (format) {
       case "pdf":
-        buffer = await generatePDFReport(reportData, includeDetails);
-        filename = `financial-report-${
+        buffer = await generatePDFReport(
+          reportData,
+          includeDetails,
+          comprehensiveReport
+        );
+        filename = `${reportPrefix}-${
           new Date().toISOString().split("T")[0]
         }.pdf`;
         contentType = "application/pdf";
         break;
 
       case "excel":
-        buffer = await generateExcelReport(reportData, includeDetails);
-        filename = `financial-report-${
+        buffer = await generateExcelReport(
+          reportData,
+          includeDetails,
+          comprehensiveReport
+        );
+        filename = `${reportPrefix}-${
           new Date().toISOString().split("T")[0]
         }.xlsx`;
         contentType =
@@ -1036,7 +1530,7 @@ const exportFinancialReport = async (req, res) => {
 
       case "csv":
         buffer = await generateCSVReport(reportData, includeDetails);
-        filename = `financial-report-${
+        filename = `${reportPrefix}-${
           new Date().toISOString().split("T")[0]
         }.csv`;
         contentType = "text/csv";
@@ -1061,175 +1555,530 @@ const exportFinancialReport = async (req, res) => {
 };
 
 // Helper function to generate PDF report
-const generatePDFReport = async (reportData, includeDetails) => {
+const generatePDFReport = async (
+  reportData,
+  includeDetails,
+  comprehensiveReport = false
+) => {
   const pdfDoc = await PDFDocument.create();
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  let page = pdfDoc.addPage([612, 792]); // Letter size
-  const { width, height } = page.getSize();
-  let yPosition = height - 50;
+  const pageWidth = 612;
+  const pageHeight = 792;
 
-  // Helper function to add text
+  // Use an object to hold mutable state so closures work correctly
+  const state = {
+    page: pdfDoc.addPage([pageWidth, pageHeight]),
+    yPosition: pageHeight - 50,
+  };
+
+  // Helper function to add text - uses state.page
   const addText = (text, x, y, options = {}) => {
-    page.drawText(text, {
-      x,
-      y,
-      size: options.size || 12,
-      font: options.bold ? boldFont : font,
-      color: options.color || rgb(0, 0, 0),
-    });
+    try {
+      state.page.drawText(String(text || ""), {
+        x,
+        y,
+        size: options.size || 12,
+        font: options.bold ? boldFont : font,
+        color: options.color || rgb(0, 0, 0),
+      });
+    } catch (err) {
+      console.error("Error drawing text:", text, err);
+    }
   };
 
   // Helper function to check if we need a new page
   const checkNewPage = (requiredSpace = 50) => {
-    if (yPosition < requiredSpace) {
-      page = pdfDoc.addPage([612, 792]);
-      yPosition = height - 50;
+    if (state.yPosition < requiredSpace) {
+      state.page = pdfDoc.addPage([pageWidth, pageHeight]);
+      state.yPosition = pageHeight - 50;
     }
   };
 
-  // Header
-  addText("Financial Report", 50, yPosition, { size: 20, bold: true });
-  yPosition -= 30;
+  // Helper function to draw a section header with underline
+  const drawSectionHeader = (title) => {
+    checkNewPage(60);
+    addText(title, 50, state.yPosition, {
+      size: 16,
+      bold: true,
+      color: rgb(0.2, 0.3, 0.5),
+    });
+    state.page.drawLine({
+      start: { x: 50, y: state.yPosition - 5 },
+      end: { x: 560, y: state.yPosition - 5 },
+      thickness: 1,
+      color: rgb(0.2, 0.3, 0.5),
+    });
+    state.yPosition -= 30;
+  };
 
-  addText(`Generated: ${new Date().toLocaleDateString()}`, 50, yPosition);
-  yPosition -= 20;
+  // Helper function to add a key-value pair
+  const addKeyValue = (key, value, xKey = 50, xValue = 250) => {
+    checkNewPage(25);
+    addText(key, xKey, state.yPosition);
+    addText(String(value || ""), xValue, state.yPosition, { bold: true });
+    state.yPosition -= 18;
+  };
 
-  if (reportData.summary.period) {
+  // =============================================
+  // COVER PAGE (for comprehensive reports)
+  // =============================================
+  if (comprehensiveReport) {
+    state.yPosition = pageHeight - 200;
     addText(
-      `Period: ${new Date(
-        reportData.summary.period.startDate
-      ).toLocaleDateString()} - ${new Date(
-        reportData.summary.period.endDate
-      ).toLocaleDateString()}`,
-      50,
-      yPosition
+      "COMPREHENSIVE BRANCH REPORT",
+      pageWidth / 2 - 150,
+      state.yPosition,
+      {
+        size: 24,
+        bold: true,
+        color: rgb(0.2, 0.3, 0.5),
+      }
     );
-    yPosition -= 30;
+    state.yPosition -= 50;
+
+    if (reportData.branchInfo) {
+      addText(reportData.branchInfo.name, pageWidth / 2 - 80, state.yPosition, {
+        size: 18,
+        bold: true,
+      });
+      state.yPosition -= 30;
+    }
+
+    addText(
+      `Generated: ${new Date().toLocaleDateString("en-US", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })}`,
+      pageWidth / 2 - 100,
+      state.yPosition,
+      { size: 14 }
+    );
+    state.yPosition -= 30;
+
+    if (reportData.summary.period) {
+      addText(
+        `Report Period: ${new Date(
+          reportData.summary.period.startDate
+        ).toLocaleDateString()} - ${new Date(
+          reportData.summary.period.endDate
+        ).toLocaleDateString()}`,
+        pageWidth / 2 - 120,
+        state.yPosition,
+        { size: 12 }
+      );
+    }
+
+    // Add a divider line
+    state.yPosition -= 80;
+    state.page.drawLine({
+      start: { x: 100, y: state.yPosition },
+      end: { x: 512, y: state.yPosition },
+      thickness: 2,
+      color: rgb(0.2, 0.3, 0.5),
+    });
+
+    state.yPosition -= 40;
+    addText("This report includes:", pageWidth / 2 - 80, state.yPosition, {
+      size: 14,
+      bold: true,
+    });
+    state.yPosition -= 25;
+    addText("• Financial Reports & Analytics", 180, state.yPosition, {
+      size: 12,
+    });
+    state.yPosition -= 20;
+    addText("• Student Statistics & Demographics", 180, state.yPosition, {
+      size: 12,
+    });
+    state.yPosition -= 20;
+    addText("• Teacher Statistics & Employment Data", 180, state.yPosition, {
+      size: 12,
+    });
+    state.yPosition -= 20;
+    addText("• Course & Department Distribution", 180, state.yPosition, {
+      size: 12,
+    });
+    state.yPosition -= 20;
+    addText("• Attendance Summary", 180, state.yPosition, { size: 12 });
+
+    // Start new page for content
+    state.page = pdfDoc.addPage([pageWidth, pageHeight]);
+    state.yPosition = pageHeight - 50;
+  }
+
+  // =============================================
+  // FINANCIAL SECTION
+  // =============================================
+  addText(
+    comprehensiveReport ? "SECTION 1: FINANCIAL REPORTS" : "Financial Report",
+    50,
+    state.yPosition,
+    { size: 20, bold: true, color: rgb(0.2, 0.3, 0.5) }
+  );
+  state.yPosition -= 30;
+
+  if (!comprehensiveReport) {
+    addText(
+      `Generated: ${new Date().toLocaleDateString()}`,
+      50,
+      state.yPosition
+    );
+    state.yPosition -= 20;
+
+    if (reportData.summary.period) {
+      addText(
+        `Period: ${new Date(
+          reportData.summary.period.startDate
+        ).toLocaleDateString()} - ${new Date(
+          reportData.summary.period.endDate
+        ).toLocaleDateString()}`,
+        50,
+        state.yPosition
+      );
+      state.yPosition -= 30;
+    }
   }
 
   // Financial Summary
-  checkNewPage(150);
-  addText("Financial Summary", 50, yPosition, { size: 16, bold: true });
-  yPosition -= 25;
+  drawSectionHeader("Financial Summary");
 
-  addText(
-    `Total Revenue: KSh ${reportData.summary.totalRevenue.toLocaleString()}`,
-    50,
-    yPosition
+  addKeyValue(
+    "Total Revenue:",
+    `KSh ${(reportData.summary.totalRevenue || 0).toLocaleString()}`
   );
-  yPosition -= 20;
-  addText(
-    `Total Expenses: KSh ${reportData.summary.totalExpenses.toLocaleString()}`,
-    50,
-    yPosition
+  addKeyValue(
+    "Total Expenses:",
+    `KSh ${(reportData.summary.totalExpenses || 0).toLocaleString()}`
   );
-  yPosition -= 20;
-  addText(
-    `Net Profit: KSh ${reportData.summary.netProfit.toLocaleString()}`,
-    50,
-    yPosition
+  addKeyValue(
+    "Net Profit:",
+    `KSh ${(reportData.summary.netProfit || 0).toLocaleString()}`
   );
-  yPosition -= 20;
-  addText(
-    `Profit Margin: ${reportData.summary.profitMargin.toFixed(2)}%`,
-    50,
-    yPosition
+  addKeyValue(
+    "Profit Margin:",
+    `${(reportData.summary.profitMargin || 0).toFixed(2)}%`
   );
-  yPosition -= 40;
+  state.yPosition -= 20;
 
   // Revenue Analysis
   if (includeDetails) {
-    checkNewPage(200);
-    addText("Revenue Analysis", 50, yPosition, { size: 16, bold: true });
-    yPosition -= 25;
+    drawSectionHeader("Revenue Analysis");
 
-    addText(
-      `Total Fee Collection: KSh ${reportData.revenue.totalFeeCollection.toLocaleString()}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Total Fee Collection:",
+      `KSh ${(reportData.revenue?.totalFeeCollection || 0).toLocaleString()}`
     );
-    yPosition -= 20;
-    addText(
-      `Total Paid: KSh ${reportData.revenue.totalPaid.toLocaleString()}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Total Paid:",
+      `KSh ${(reportData.revenue?.totalPaid || 0).toLocaleString()}`
     );
-    yPosition -= 20;
-    addText(
-      `Total Pending: KSh ${reportData.revenue.totalPending.toLocaleString()}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Total Pending:",
+      `KSh ${(reportData.revenue?.totalPending || 0).toLocaleString()}`
     );
-    yPosition -= 20;
-    addText(
-      `Collection Rate: ${reportData.revenue.collectionRate.toFixed(2)}%`,
-      50,
-      yPosition
+    addKeyValue(
+      "Total Overdue:",
+      `KSh ${(reportData.revenue?.totalOverdue || 0).toLocaleString()}`
     );
-    yPosition -= 40;
+    addKeyValue(
+      "Collection Rate:",
+      `${(reportData.revenue?.collectionRate || 0).toFixed(2)}%`
+    );
+    state.yPosition -= 20;
 
     // Expense Analysis
-    checkNewPage(150);
-    addText("Expense Analysis", 50, yPosition, { size: 16, bold: true });
-    yPosition -= 25;
+    drawSectionHeader("Expense Analysis");
 
-    addText(
-      `Total Expenses: KSh ${reportData.expenses.totalExpenses.toLocaleString()}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Total Expenses:",
+      `KSh ${(reportData.expenses?.totalExpenses || 0).toLocaleString()}`
     );
-    yPosition -= 20;
-    addText(
-      `Approved Expenses: KSh ${reportData.expenses.approvedExpenses.toLocaleString()}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Approved Expenses:",
+      `KSh ${(reportData.expenses?.approvedExpenses || 0).toLocaleString()}`
     );
-    yPosition -= 20;
-    addText(
-      `Pending Expenses: KSh ${reportData.expenses.pendingExpenses.toLocaleString()}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Pending Expenses:",
+      `KSh ${(reportData.expenses?.pendingExpenses || 0).toLocaleString()}`
     );
-    yPosition -= 40;
+    state.yPosition -= 20;
 
-    // Student Analysis
-    checkNewPage(150);
-    addText("Student Fee Analysis", 50, yPosition, { size: 16, bold: true });
-    yPosition -= 25;
+    // Student Fee Analysis
+    drawSectionHeader("Student Fee Analysis");
 
-    addText(
-      `Total Students: ${reportData.studentAnalysis.totalStudents}`,
-      50,
-      yPosition
+    addKeyValue(
+      "Total Students:",
+      reportData.studentAnalysis?.totalStudents || 0
     );
-    yPosition -= 20;
-    addText(
-      `Paid in Full: ${reportData.studentAnalysis.paidInFull}`,
-      50,
-      yPosition
+    addKeyValue("Paid in Full:", reportData.studentAnalysis?.paidInFull || 0);
+    addKeyValue(
+      "Partially Paid:",
+      reportData.studentAnalysis?.partiallyPaid || 0
     );
-    yPosition -= 20;
-    addText(
-      `Partially Paid: ${reportData.studentAnalysis.partiallyPaid}`,
-      50,
-      yPosition
-    );
-    yPosition -= 20;
-    addText(`Unpaid: ${reportData.studentAnalysis.unpaid}`, 50, yPosition);
-    yPosition -= 40;
+    addKeyValue("Unpaid:", reportData.studentAnalysis?.unpaid || 0);
+    state.yPosition -= 20;
   }
 
-  return await pdfDoc.save();
+  // =============================================
+  // ACADEMIC SECTION (for comprehensive reports)
+  // =============================================
+  if (comprehensiveReport && reportData.studentStatistics) {
+    // Start new page for academic section
+    state.page = pdfDoc.addPage([pageWidth, pageHeight]);
+    state.yPosition = pageHeight - 50;
+
+    addText("SECTION 2: ACADEMIC REPORTS", 50, state.yPosition, {
+      size: 20,
+      bold: true,
+      color: rgb(0.2, 0.3, 0.5),
+    });
+    state.yPosition -= 40;
+
+    // Student Statistics
+    drawSectionHeader("Student Statistics");
+    const studentStats = reportData.studentStatistics;
+
+    addKeyValue("Total Students:", studentStats.totalStudents || 0);
+    addKeyValue("Active Students:", studentStats.activeStudents || 0);
+    addKeyValue("Inactive Students:", studentStats.inactiveStudents || 0);
+    addKeyValue(
+      "New Enrollments (This Month):",
+      studentStats.newEnrollmentsThisMonth || 0
+    );
+    addKeyValue(
+      "New Enrollments (This Year):",
+      studentStats.newEnrollmentsThisYear || 0
+    );
+    addKeyValue("Graduated (This Year):", studentStats.graduatedThisYear || 0);
+    addKeyValue("Dropped (This Year):", studentStats.droppedThisYear || 0);
+    addKeyValue("Retention Rate:", `${studentStats.retentionRate || 0}%`);
+    state.yPosition -= 20;
+
+    // Student Status Breakdown
+    if (studentStats.statusBreakdown) {
+      drawSectionHeader("Student Status Breakdown");
+      Object.entries(studentStats.statusBreakdown).forEach(
+        ([status, count]) => {
+          addKeyValue(
+            `${status.charAt(0).toUpperCase() + status.slice(1)}:`,
+            count
+          );
+        }
+      );
+      state.yPosition -= 20;
+    }
+
+    // Gender Distribution
+    if (studentStats.genderDistribution) {
+      drawSectionHeader("Gender Distribution");
+      addKeyValue("Male:", studentStats.genderDistribution.male || 0);
+      addKeyValue("Female:", studentStats.genderDistribution.female || 0);
+      addKeyValue("Other:", studentStats.genderDistribution.other || 0);
+      state.yPosition -= 20;
+    }
+
+    // Department Distribution
+    if (
+      studentStats.departmentCounts &&
+      studentStats.departmentCounts.length > 0
+    ) {
+      checkNewPage(150);
+      drawSectionHeader("Students by Department");
+      studentStats.departmentCounts.slice(0, 10).forEach((dept) => {
+        addKeyValue(`${dept.departmentName}:`, dept.count);
+      });
+      state.yPosition -= 20;
+    }
+  }
+
+  // =============================================
+  // TEACHER SECTION (for comprehensive reports)
+  // =============================================
+  if (comprehensiveReport && reportData.teacherStatistics) {
+    // Start new page for teacher section
+    state.page = pdfDoc.addPage([pageWidth, pageHeight]);
+    state.yPosition = pageHeight - 50;
+
+    addText("SECTION 3: STAFF & TEACHER REPORTS", 50, state.yPosition, {
+      size: 20,
+      bold: true,
+      color: rgb(0.2, 0.3, 0.5),
+    });
+    state.yPosition -= 40;
+
+    // Teacher Statistics
+    drawSectionHeader("Teacher Statistics");
+    const teacherStats = reportData.teacherStatistics;
+
+    addKeyValue("Total Teachers:", teacherStats.totalTeachers || 0);
+    addKeyValue("Active Teachers:", teacherStats.activeTeachers || 0);
+    addKeyValue("Inactive Teachers:", teacherStats.inactiveTeachers || 0);
+    addKeyValue("New Hires (This Month):", teacherStats.newHiresThisMonth || 0);
+    addKeyValue("New Hires (This Year):", teacherStats.newHiresThisYear || 0);
+    addKeyValue(
+      "Student-Teacher Ratio:",
+      `${teacherStats.studentTeacherRatio || 0}:1`
+    );
+    addKeyValue(
+      "Average Experience:",
+      `${teacherStats.averageExperience || 0} years`
+    );
+    addKeyValue(
+      "Average Attendance Rate:",
+      `${teacherStats.averageAttendanceRate || 0}%`
+    );
+    state.yPosition -= 20;
+
+    // Teacher Status Breakdown
+    if (teacherStats.statusBreakdown) {
+      drawSectionHeader("Teacher Status Breakdown");
+      Object.entries(teacherStats.statusBreakdown).forEach(
+        ([status, count]) => {
+          if (count > 0) {
+            const formattedStatus = status
+              .replace(/_/g, " ")
+              .replace(/\b\w/g, (l) => l.toUpperCase());
+            addKeyValue(`${formattedStatus}:`, count);
+          }
+        }
+      );
+      state.yPosition -= 20;
+    }
+
+    // Employment Type Breakdown
+    if (teacherStats.employmentTypeBreakdown) {
+      checkNewPage(150);
+      drawSectionHeader("Employment Type Breakdown");
+      Object.entries(teacherStats.employmentTypeBreakdown).forEach(
+        ([type, count]) => {
+          if (count > 0) {
+            const formattedType = type
+              .replace(/_/g, " ")
+              .replace(/\b\w/g, (l) => l.toUpperCase());
+            addKeyValue(`${formattedType}:`, count);
+          }
+        }
+      );
+      state.yPosition -= 20;
+    }
+
+    // Teachers by Department
+    if (
+      teacherStats.departmentCounts &&
+      teacherStats.departmentCounts.length > 0
+    ) {
+      checkNewPage(150);
+      drawSectionHeader("Teachers by Department");
+      teacherStats.departmentCounts.slice(0, 10).forEach((dept) => {
+        addKeyValue(`${dept.departmentName}:`, dept.count);
+      });
+      state.yPosition -= 20;
+    }
+  }
+
+  // =============================================
+  // OPERATIONAL SECTION (for comprehensive reports)
+  // =============================================
+  if (
+    comprehensiveReport &&
+    (reportData.courseStatistics || reportData.attendanceStatistics)
+  ) {
+    // Start new page for operational section
+    state.page = pdfDoc.addPage([pageWidth, pageHeight]);
+    state.yPosition = pageHeight - 50;
+
+    addText("SECTION 4: OPERATIONAL REPORTS", 50, state.yPosition, {
+      size: 20,
+      bold: true,
+      color: rgb(0.2, 0.3, 0.5),
+    });
+    state.yPosition -= 40;
+
+    // Course Statistics
+    if (reportData.courseStatistics) {
+      drawSectionHeader("Course Statistics");
+      const courseStats = reportData.courseStatistics;
+
+      addKeyValue("Total Courses:", courseStats.totalCourses || 0);
+      addKeyValue("Active Courses:", courseStats.activeCourses || 0);
+      addKeyValue("Inactive Courses:", courseStats.inactiveCourses || 0);
+      state.yPosition -= 20;
+
+      // Courses by Department
+      if (
+        courseStats.coursesByDepartment &&
+        courseStats.coursesByDepartment.length > 0
+      ) {
+        drawSectionHeader("Courses by Department");
+        courseStats.coursesByDepartment.slice(0, 10).forEach((dept) => {
+          addKeyValue(`${dept.departmentName}:`, dept.count);
+        });
+        state.yPosition -= 20;
+      }
+    }
+
+    // Attendance Statistics
+    if (reportData.attendanceStatistics) {
+      checkNewPage(200);
+      drawSectionHeader("Attendance Summary");
+      const attendanceStats = reportData.attendanceStatistics;
+
+      addKeyValue("Total Records:", attendanceStats.totalRecords || 0);
+      addKeyValue("Present:", attendanceStats.present || 0);
+      addKeyValue("Absent:", attendanceStats.absent || 0);
+      addKeyValue("Late:", attendanceStats.late || 0);
+      addKeyValue("Excused:", attendanceStats.excused || 0);
+      addKeyValue(
+        "Attendance Rate:",
+        `${attendanceStats.attendanceRate || 0}%`
+      );
+      state.yPosition -= 20;
+    }
+  }
+
+  // =============================================
+  // FOOTER ON LAST PAGE
+  // =============================================
+  if (comprehensiveReport) {
+    checkNewPage(100);
+    state.yPosition = 80;
+    state.page.drawLine({
+      start: { x: 50, y: state.yPosition },
+      end: { x: 560, y: state.yPosition },
+      thickness: 1,
+      color: rgb(0.5, 0.5, 0.5),
+    });
+    state.yPosition -= 20;
+    addText(
+      "This report was generated automatically by the College Management System.",
+      50,
+      state.yPosition,
+      { size: 10, color: rgb(0.5, 0.5, 0.5) }
+    );
+    state.yPosition -= 15;
+    addText(
+      `Report generated on ${new Date().toLocaleString()}`,
+      50,
+      state.yPosition,
+      { size: 10, color: rgb(0.5, 0.5, 0.5) }
+    );
+  }
+
+  const pdfBytes = await pdfDoc.save();
+  return Buffer.from(pdfBytes);
 };
 
 // Helper function to generate Excel report
-const generateExcelReport = async (reportData, includeDetails) => {
+const generateExcelReport = async (
+  reportData,
+  includeDetails,
+  comprehensiveReport = false
+) => {
   const workbook = new ExcelJS.Workbook();
-
-  // Summary sheet
-  const summarySheet = workbook.addWorksheet("Financial Summary");
 
   // Header styling
   const headerStyle = {
@@ -1238,6 +2087,15 @@ const generateExcelReport = async (reportData, includeDetails) => {
     font: { color: { argb: "FFFFFFFF" }, bold: true },
     alignment: { horizontal: "center" },
   };
+
+  const sectionHeaderStyle = {
+    font: { bold: true, size: 12 },
+    fill: { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } },
+    font: { color: { argb: "FFFFFFFF" }, bold: true },
+  };
+
+  // Summary sheet
+  const summarySheet = workbook.addWorksheet("Financial Summary");
 
   // Add headers and data for summary
   summarySheet.addRow(["Financial Report Summary"]);
@@ -1268,7 +2126,7 @@ const generateExcelReport = async (reportData, includeDetails) => {
 
   // Auto-fit columns
   summarySheet.columns.forEach((column) => {
-    column.width = 20;
+    column.width = 25;
   });
 
   if (includeDetails) {
@@ -1362,14 +2220,264 @@ const generateExcelReport = async (reportData, includeDetails) => {
         ]);
       });
     }
+  }
 
-    // Auto-fit all columns in all sheets
-    workbook.eachSheet((sheet) => {
-      sheet.columns.forEach((column) => {
-        column.width = 20;
+  // =============================================
+  // ACADEMIC DATA (for comprehensive reports)
+  // =============================================
+  if (comprehensiveReport && reportData.studentStatistics) {
+    const studentSheet = workbook.addWorksheet("Student Statistics");
+    const studentStats = reportData.studentStatistics;
+
+    studentSheet.addRow(["Student Statistics"]);
+    studentSheet.getCell("A1").style = { font: { bold: true, size: 16 } };
+    studentSheet.addRow([]);
+
+    studentSheet.addRow(["Metric", "Value"]);
+    studentSheet.getRow(3).eachCell((cell) => {
+      cell.style = headerStyle;
+    });
+
+    studentSheet.addRow(["Total Students", studentStats.totalStudents || 0]);
+    studentSheet.addRow(["Active Students", studentStats.activeStudents || 0]);
+    studentSheet.addRow([
+      "Inactive Students",
+      studentStats.inactiveStudents || 0,
+    ]);
+    studentSheet.addRow([
+      "New Enrollments (This Month)",
+      studentStats.newEnrollmentsThisMonth || 0,
+    ]);
+    studentSheet.addRow([
+      "New Enrollments (This Year)",
+      studentStats.newEnrollmentsThisYear || 0,
+    ]);
+    studentSheet.addRow([
+      "Graduated (This Year)",
+      studentStats.graduatedThisYear || 0,
+    ]);
+    studentSheet.addRow([
+      "Dropped (This Year)",
+      studentStats.droppedThisYear || 0,
+    ]);
+    studentSheet.addRow([
+      "Retention Rate (%)",
+      studentStats.retentionRate || 0,
+    ]);
+    studentSheet.addRow([]);
+
+    // Gender distribution
+    if (studentStats.genderDistribution) {
+      studentSheet.addRow(["Gender Distribution"]);
+      studentSheet.addRow(["Male", studentStats.genderDistribution.male || 0]);
+      studentSheet.addRow([
+        "Female",
+        studentStats.genderDistribution.female || 0,
+      ]);
+      studentSheet.addRow([
+        "Other",
+        studentStats.genderDistribution.other || 0,
+      ]);
+      studentSheet.addRow([]);
+    }
+
+    // Status breakdown
+    if (studentStats.statusBreakdown) {
+      studentSheet.addRow(["Status Breakdown"]);
+      Object.entries(studentStats.statusBreakdown).forEach(
+        ([status, count]) => {
+          studentSheet.addRow([
+            status.charAt(0).toUpperCase() + status.slice(1),
+            count,
+          ]);
+        }
+      );
+      studentSheet.addRow([]);
+    }
+
+    // Department distribution
+    if (
+      studentStats.departmentCounts &&
+      studentStats.departmentCounts.length > 0
+    ) {
+      studentSheet.addRow(["Students by Department"]);
+      studentStats.departmentCounts.forEach((dept) => {
+        studentSheet.addRow([dept.departmentName, dept.count]);
       });
+    }
+
+    studentSheet.columns.forEach((column) => {
+      column.width = 30;
     });
   }
+
+  // =============================================
+  // TEACHER DATA (for comprehensive reports)
+  // =============================================
+  if (comprehensiveReport && reportData.teacherStatistics) {
+    const teacherSheet = workbook.addWorksheet("Teacher Statistics");
+    const teacherStats = reportData.teacherStatistics;
+
+    teacherSheet.addRow(["Teacher Statistics"]);
+    teacherSheet.getCell("A1").style = { font: { bold: true, size: 16 } };
+    teacherSheet.addRow([]);
+
+    teacherSheet.addRow(["Metric", "Value"]);
+    teacherSheet.getRow(3).eachCell((cell) => {
+      cell.style = headerStyle;
+    });
+
+    teacherSheet.addRow(["Total Teachers", teacherStats.totalTeachers || 0]);
+    teacherSheet.addRow(["Active Teachers", teacherStats.activeTeachers || 0]);
+    teacherSheet.addRow([
+      "Inactive Teachers",
+      teacherStats.inactiveTeachers || 0,
+    ]);
+    teacherSheet.addRow([
+      "New Hires (This Month)",
+      teacherStats.newHiresThisMonth || 0,
+    ]);
+    teacherSheet.addRow([
+      "New Hires (This Year)",
+      teacherStats.newHiresThisYear || 0,
+    ]);
+    teacherSheet.addRow([
+      "Student-Teacher Ratio",
+      `${teacherStats.studentTeacherRatio || 0}:1`,
+    ]);
+    teacherSheet.addRow([
+      "Average Experience (Years)",
+      teacherStats.averageExperience || 0,
+    ]);
+    teacherSheet.addRow([
+      "Average Attendance Rate (%)",
+      teacherStats.averageAttendanceRate || 0,
+    ]);
+    teacherSheet.addRow([]);
+
+    // Status breakdown
+    if (teacherStats.statusBreakdown) {
+      teacherSheet.addRow(["Status Breakdown"]);
+      Object.entries(teacherStats.statusBreakdown).forEach(
+        ([status, count]) => {
+          if (count > 0) {
+            teacherSheet.addRow([
+              status
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (l) => l.toUpperCase()),
+              count,
+            ]);
+          }
+        }
+      );
+      teacherSheet.addRow([]);
+    }
+
+    // Employment type breakdown
+    if (teacherStats.employmentTypeBreakdown) {
+      teacherSheet.addRow(["Employment Type Breakdown"]);
+      Object.entries(teacherStats.employmentTypeBreakdown).forEach(
+        ([type, count]) => {
+          if (count > 0) {
+            teacherSheet.addRow([
+              type.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()),
+              count,
+            ]);
+          }
+        }
+      );
+      teacherSheet.addRow([]);
+    }
+
+    // Department distribution
+    if (
+      teacherStats.departmentCounts &&
+      teacherStats.departmentCounts.length > 0
+    ) {
+      teacherSheet.addRow(["Teachers by Department"]);
+      teacherStats.departmentCounts.forEach((dept) => {
+        teacherSheet.addRow([dept.departmentName, dept.count]);
+      });
+    }
+
+    teacherSheet.columns.forEach((column) => {
+      column.width = 30;
+    });
+  }
+
+  // =============================================
+  // OPERATIONAL DATA (for comprehensive reports)
+  // =============================================
+  if (
+    comprehensiveReport &&
+    (reportData.courseStatistics || reportData.attendanceStatistics)
+  ) {
+    const operationalSheet = workbook.addWorksheet("Operational Data");
+
+    operationalSheet.addRow(["Operational Statistics"]);
+    operationalSheet.getCell("A1").style = { font: { bold: true, size: 16 } };
+    operationalSheet.addRow([]);
+
+    // Course Statistics
+    if (reportData.courseStatistics) {
+      const courseStats = reportData.courseStatistics;
+
+      operationalSheet.addRow(["Course Statistics"]);
+      operationalSheet.addRow(["Metric", "Value"]);
+      operationalSheet.addRow(["Total Courses", courseStats.totalCourses || 0]);
+      operationalSheet.addRow([
+        "Active Courses",
+        courseStats.activeCourses || 0,
+      ]);
+      operationalSheet.addRow([
+        "Inactive Courses",
+        courseStats.inactiveCourses || 0,
+      ]);
+      operationalSheet.addRow([]);
+
+      if (
+        courseStats.coursesByDepartment &&
+        courseStats.coursesByDepartment.length > 0
+      ) {
+        operationalSheet.addRow(["Courses by Department"]);
+        courseStats.coursesByDepartment.forEach((dept) => {
+          operationalSheet.addRow([dept.departmentName, dept.count]);
+        });
+        operationalSheet.addRow([]);
+      }
+    }
+
+    // Attendance Statistics
+    if (reportData.attendanceStatistics) {
+      const attendanceStats = reportData.attendanceStatistics;
+
+      operationalSheet.addRow(["Attendance Summary"]);
+      operationalSheet.addRow(["Metric", "Value"]);
+      operationalSheet.addRow([
+        "Total Records",
+        attendanceStats.totalRecords || 0,
+      ]);
+      operationalSheet.addRow(["Present", attendanceStats.present || 0]);
+      operationalSheet.addRow(["Absent", attendanceStats.absent || 0]);
+      operationalSheet.addRow(["Late", attendanceStats.late || 0]);
+      operationalSheet.addRow(["Excused", attendanceStats.excused || 0]);
+      operationalSheet.addRow([
+        "Attendance Rate (%)",
+        attendanceStats.attendanceRate || 0,
+      ]);
+    }
+
+    operationalSheet.columns.forEach((column) => {
+      column.width = 30;
+    });
+  }
+
+  // Auto-fit all columns in all sheets
+  workbook.eachSheet((sheet) => {
+    sheet.columns.forEach((column) => {
+      column.width = Math.max(column.width || 20, 20);
+    });
+  });
 
   return await workbook.xlsx.writeBuffer();
 };
