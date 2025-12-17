@@ -3,15 +3,21 @@ const User = require("../models/User");
 const Student = require("../models/Student");
 const Teacher = require("../models/Teacher");
 const Class = require("../models/Class");
+const { isSuperAdmin } = require("../utils/accessControl");
 const mongoose = require("mongoose");
 const ExcelJS = require("exceljs");
+
+// Helper function to get branch filter based on user role
+const getBranchFilter = (user) => {
+  return isSuperAdmin(user) ? {} : { branchId: user.branchId };
+};
 
 // @desc    Get attendance dashboard data
 // @route   GET /api/attendance/reports/dashboard
 // @access  Private (Admin, Secretary, Teacher)
 const getAttendanceDashboard = async (req, res) => {
   try {
-    const branchId = req.user.branchId;
+    const branchFilter = getBranchFilter(req.user);
     const { period = "month", userType, classId } = req.query;
 
     const now = new Date();
@@ -41,7 +47,7 @@ const getAttendanceDashboard = async (req, res) => {
     }
 
     const query = {
-      branchId,
+      ...branchFilter,
       date: { $gte: startDate, $lt: endDate },
     };
 
@@ -299,8 +305,9 @@ const getDetailedAttendanceReport = async (req, res) => {
       });
     }
 
+    const branchFilter = getBranchFilter(req.user);
     const query = {
-      branchId: req.user.branchId,
+      ...branchFilter,
       date: {
         $gte: new Date(startDate),
         $lte: new Date(endDate),
@@ -312,7 +319,7 @@ const getDetailedAttendanceReport = async (req, res) => {
     if (status) query.status = status;
 
     // Get all users in the branch for the specified type
-    let usersQuery = { branchId: req.user.branchId, status: "active" };
+    let usersQuery = { ...branchFilter, status: "active" };
     if (userType) usersQuery.roles = { $in: [userType] };
 
     const allUsers = await User.find(usersQuery).select(
@@ -454,8 +461,9 @@ const exportAttendanceReport = async (req, res) => {
       });
     }
 
+    const branchFilter = getBranchFilter(req.user);
     const query = {
-      branchId: req.user.branchId,
+      ...branchFilter,
       date: {
         $gte: new Date(startDate),
         $lte: new Date(endDate),
@@ -574,7 +582,7 @@ const exportAttendanceReport = async (req, res) => {
 const getAttendanceTrends = async (req, res) => {
   try {
     const { period = "month", userType, classId } = req.query;
-    const branchId = req.user.branchId;
+    const branchFilter = getBranchFilter(req.user);
 
     const now = new Date();
     let startDate, groupBy;
@@ -604,7 +612,7 @@ const getAttendanceTrends = async (req, res) => {
     }
 
     const query = {
-      branchId,
+      ...branchFilter,
       date: { $gte: startDate },
     };
 

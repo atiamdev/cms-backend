@@ -282,6 +282,23 @@ const registerECourseStudent = async (req, res) => {
     // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
+      // Also check if they already have a student record
+      const Student = require("../models/Student");
+      const existingStudent = await Student.findOne({
+        userId: existingUser._id,
+      });
+
+      if (existingStudent) {
+        return res.status(400).json({
+          success: false,
+          message: "A student account with this email already exists",
+          existingStudent: {
+            studentId: existingStudent.studentId,
+            studentType: existingStudent.studentType,
+          },
+        });
+      }
+
       return res.status(400).json({
         success: false,
         message: "User with this email already exists",
@@ -353,6 +370,23 @@ const registerECourseStudent = async (req, res) => {
       });
     }
 
+    // Final check: Ensure no student record exists for this user
+    // This prevents race conditions
+    const finalCheck = await Student.findOne({
+      userId: user._id,
+      branchId: ecourseBranch._id,
+    });
+
+    if (finalCheck) {
+      // Clean up the user that was just created
+      await User.findByIdAndDelete(user._id);
+      return res.status(400).json({
+        success: false,
+        message:
+          "A student record for this user was just created. Duplicate prevented.",
+      });
+    }
+
     // Create student record
     const student = await Student.create({
       userId: user._id,
@@ -408,6 +442,29 @@ const registerECourseStudent = async (req, res) => {
     });
   } catch (error) {
     console.error("E-course student registration error:", error);
+
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      let message = "A duplicate record was detected";
+
+      if (error.keyPattern?.email) {
+        message = "A user with this email already exists";
+      } else if (error.keyPattern?.userId) {
+        message =
+          "This user already has a student record. Cannot create duplicate.";
+      } else if (error.keyPattern?.studentId) {
+        message = "A student with this ID already exists";
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: message,
+        error: {
+          code: "DUPLICATE_ENTRY",
+        },
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Server error during e-course student registration",

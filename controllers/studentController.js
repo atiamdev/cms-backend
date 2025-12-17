@@ -64,15 +64,24 @@ const createStudent = async (req, res) => {
     // Check if user with email already exists
     existingUser = await User.findOne({ email });
 
-    // If user exists, check if they already have a student record
+    // If user exists, check if they already have a student record in THIS branch
     if (existingUser) {
+      // CRITICAL: Check for existing student record with BOTH userId AND branchId
+      // This prevents duplicate student creation in the same branch
       const existingStudent = await Student.findOne({
         userId: existingUser._id,
+        branchId: req.branchId, // Must check in the same branch
       });
+
       if (existingStudent) {
         return res.status(400).json({
           success: false,
-          message: "Student with this email already exists",
+          message:
+            "A student record for this user already exists in this branch",
+          existingStudent: {
+            studentId: existingStudent.studentId,
+            admissionNumber: existingStudent.admissionNumber,
+          },
         });
       }
 
@@ -203,6 +212,25 @@ const createStudent = async (req, res) => {
       await createdUser.save();
     }
 
+    // Final check: Ensure no student record exists for this user in this branch
+    // This prevents race conditions where multiple requests might pass the initial check
+    const finalCheck = await Student.findOne({
+      userId: createdUser._id,
+      branchId: req.branchId,
+    });
+
+    if (finalCheck) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "A student record for this user was just created. Duplicate prevented.",
+        existingStudent: {
+          studentId: finalCheck.studentId,
+          admissionNumber: finalCheck.admissionNumber,
+        },
+      });
+    }
+
     // Create student record (without class assignment initially)
     const student = await Student.create({
       userId: createdUser._id,
@@ -257,15 +285,30 @@ const createStudent = async (req, res) => {
     if (error.code === 11000) {
       // Determine which field caused the duplicate key error
       let field = "email or student ID";
+      let message = "A duplicate record was detected";
+
       if (error.keyPattern?.email) {
         field = "email";
+        message = `A user with this ${field} already exists`;
       } else if (error.keyPattern?.studentId) {
         field = "student ID";
+        message = `A student with this ${field} already exists in this branch`;
+      } else if (error.keyPattern?.admissionNumber) {
+        field = "admission number";
+        message = `A student with this ${field} already exists in this branch`;
+      } else if (error.keyPattern?.userId) {
+        field = "user account";
+        message =
+          "This user already has a student record in this branch. Cannot create duplicate student.";
       }
 
       return res.status(400).json({
         success: false,
-        message: `Student with this ${field} already exists`,
+        message: message,
+        error: {
+          code: "DUPLICATE_ENTRY",
+          field: field,
+        },
       });
     }
 
@@ -1173,6 +1216,7 @@ const getStudentStatistics = async (req, res) => {
       graduatedThisYear,
       studentsThreeMonthsAgo,
       monthlyEnrollmentTrend,
+      referralSourceCounts,
       // Date-filtered counts
       filteredTotalStudents,
       filteredActiveStudents,
@@ -1342,6 +1386,20 @@ const getStudentStatistics = async (req, res) => {
         { $sort: { "_id.year": 1, "_id.month": 1 } },
       ]),
 
+      // Referral source breakdown (with date filter if provided)
+      Student.aggregate([
+        {
+          $match: {
+            branchId: branchObjectId,
+            ...(hasDateFilter && {
+              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
+            }),
+          },
+        },
+        { $group: { _id: "$referralSource.source", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+
       // Date-filtered total students (enrolled within date range)
       hasDateFilter
         ? Student.countDocuments({
@@ -1409,6 +1467,13 @@ const getStudentStatistics = async (req, res) => {
       else genderDistribution.unspecified = item.count;
     });
 
+    // Process referral source distribution
+    const referralSourceBreakdown = {};
+    referralSourceCounts.forEach((item) => {
+      const source = item._id || "unspecified";
+      referralSourceBreakdown[source] = item.count;
+    });
+
     // Process status counts
     const statusBreakdown = {
       active: 0,
@@ -1474,6 +1539,9 @@ const getStudentStatistics = async (req, res) => {
           genderDistribution.male > 0 || genderDistribution.female > 0
             ? `${genderDistribution.male}:${genderDistribution.female}`
             : "N/A",
+
+        // Referral source breakdown (respects date filter if provided)
+        referralSourceBreakdown,
 
         // Distribution by class (respects date filter if provided)
         classCounts: classCounts.map((item) => ({

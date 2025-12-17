@@ -141,7 +141,6 @@ const QuizSchema = new mongoose.Schema(
     settings: {
       randomizeQuestions: { type: Boolean, default: false },
       oneQuestionAtATime: { type: Boolean, default: false },
-      preventBacktracking: { type: Boolean, default: false },
       lockQuestionsAfterAnswering: { type: Boolean, default: false },
       requireWebcam: { type: Boolean, default: false },
       fullScreenMode: { type: Boolean, default: false },
@@ -158,6 +157,11 @@ const QuizSchema = new mongoose.Schema(
       releaseGrades: {
         type: String,
         enum: ["immediately", "after_due_date", "manual"],
+        default: "immediately",
+      },
+      releaseReview: {
+        type: String,
+        enum: ["immediately", "after_quiz_closed", "after_grading", "never"],
         default: "immediately",
       },
     },

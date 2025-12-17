@@ -652,6 +652,22 @@ const updateQuiz = async (req, res) => {
       };
     }
 
+    // Merge settings with existing settings to avoid overwriting
+    if (updateData.settings) {
+      updateData.settings = {
+        ...(quiz.settings?.toObject?.() || quiz.settings || {}),
+        ...updateData.settings,
+      };
+    }
+
+    // Merge grading with existing grading to avoid overwriting
+    if (updateData.grading) {
+      updateData.grading = {
+        ...(quiz.grading?.toObject?.() || quiz.grading || {}),
+        ...updateData.grading,
+      };
+    }
+
     // Update the quiz
     const updatedQuiz = await Quiz.findByIdAndUpdate(
       id,
@@ -1558,6 +1574,183 @@ const startQuizAttempt = async (req, res) => {
         quizId: attempt.quizId,
         startedAt: attempt.startedAt,
         attempt: attempt.attempt,
+      },
+    });
+  } catch (error) {
+    console.error("Error starting quiz attempt:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error starting quiz attempt",
+      error: error.message,
+    });
+  }
+};
+
+// Start quiz and return full data (quiz, questions, attempt) for QuizInterface
+const startQuizWithData = async (req, res) => {
+  try {
+    const { id: quizId } = req.params;
+
+    // Find student by user ID
+    const Student = require("../../models/Student");
+    const student = await Student.findOne({ userId: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    const studentId = student._id;
+
+    // Check if quiz exists and is published
+    const quiz = await Quiz.findById(quizId);
+    if (!quiz || !quiz.isPublished) {
+      return res.status(404).json({
+        success: false,
+        message: "Quiz not found or not available",
+      });
+    }
+
+    // Check if student is enrolled in the course
+    let hasAccess = false;
+
+    if (quiz.courseType === "ecourse") {
+      const enrollment = await Enrollment.findOne({
+        studentId,
+        courseId: quiz.courseId,
+        status: { $in: ["active", "approved", "completed"] },
+      });
+      hasAccess = !!enrollment;
+    } else {
+      hasAccess =
+        student.courses &&
+        student.courses.some(
+          (courseId) => courseId.toString() === quiz.courseId.toString()
+        );
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not enrolled in this course",
+      });
+    }
+
+    // Check if quiz is available (time-based availability)
+    const now = new Date();
+    let isAvailable = true;
+    if (quiz.schedule?.availableFrom && now < quiz.schedule.availableFrom) {
+      isAvailable = false;
+    }
+    if (quiz.schedule?.availableUntil && now > quiz.schedule.availableUntil) {
+      isAvailable = false;
+    }
+
+    if (!isAvailable) {
+      return res.status(403).json({
+        success: false,
+        message: "Quiz is not available at this time",
+      });
+    }
+
+    // Check attempt limits - count only submitted attempts
+    const submittedAttempts = await QuizAttempt.countDocuments({
+      quizId,
+      studentId,
+      submittedAt: { $exists: true },
+    });
+
+    if (quiz.attempts > 0 && submittedAttempts >= quiz.attempts) {
+      return res.status(403).json({
+        success: false,
+        message: "Maximum attempts reached",
+      });
+    }
+
+    // Sanitize questions for student (remove correct answers)
+    const sanitizedQuestions = quiz.questions.map((q) => {
+      const sanitized = {
+        _id: q._id,
+        type: q.type,
+        question: q.question,
+        options: q.options,
+        points: q.points,
+        difficulty: q.difficulty,
+        tags: q.tags,
+        estimatedTime: q.estimatedTime,
+      };
+      if (q.type === "matching" && q.pairs) {
+        sanitized.pairs = q.pairs;
+      }
+      return sanitized;
+    });
+
+    // Prepare quiz data for response (without sensitive info)
+    const quizForStudent = {
+      _id: quiz._id,
+      title: quiz.title,
+      description: quiz.description,
+      instructions: quiz.instructions,
+      timeLimit: quiz.timeLimit,
+      attempts: quiz.attempts,
+      shuffleQuestions: quiz.shuffleQuestions,
+      shuffleOptions: quiz.shuffleOptions,
+      showResults: quiz.showResults,
+      showCorrectAnswers: quiz.showCorrectAnswers,
+      passingScore: quiz.passingScore,
+      settings: quiz.settings,
+      grading: {
+        releaseGrades: quiz.grading?.releaseGrades,
+        releaseReview: quiz.grading?.releaseReview,
+      },
+      schedule: quiz.schedule,
+    };
+
+    // Check if there's already an in-progress attempt
+    const inProgressAttempt = await QuizAttempt.findOne({
+      quizId,
+      studentId,
+      submittedAt: { $exists: false },
+    });
+
+    if (inProgressAttempt) {
+      return res.json({
+        success: true,
+        data: {
+          quiz: quizForStudent,
+          questions: sanitizedQuestions,
+          attempt: {
+            _id: inProgressAttempt._id,
+            quizId: inProgressAttempt.quizId,
+            startedAt: inProgressAttempt.startedAt,
+            attempt: inProgressAttempt.attempt,
+          },
+        },
+      });
+    }
+
+    // Create new attempt
+    const attempt = new QuizAttempt({
+      quizId,
+      studentId,
+      attempt: submittedAttempts + 1,
+      branchId: quiz.branchId,
+    });
+
+    await attempt.save();
+
+    res.json({
+      success: true,
+      data: {
+        quiz: quizForStudent,
+        questions: sanitizedQuestions,
+        attempt: {
+          _id: attempt._id,
+          quizId: attempt.quizId,
+          startedAt: attempt.startedAt,
+          attempt: attempt.attempt,
+        },
       },
     });
   } catch (error) {
@@ -2562,6 +2755,318 @@ const getQuizAttempts = async (req, res) => {
   }
 };
 
+// Save quiz answer - accepts attemptId from body instead of URL params
+const saveQuizAnswer = async (req, res) => {
+  try {
+    const { id: quizId } = req.params;
+    const { questionId, answer, attemptId } = req.body;
+
+    if (!attemptId) {
+      return res.status(400).json({
+        success: false,
+        message: "Attempt ID is required",
+      });
+    }
+
+    // Find student by user ID
+    const Student = require("../../models/Student");
+    const student = await Student.findOne({ userId: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    const studentId = student._id;
+
+    // Find the attempt
+    const attempt = await QuizAttempt.findById(attemptId).populate("quizId");
+    if (!attempt) {
+      return res.status(404).json({
+        success: false,
+        message: "Attempt not found",
+      });
+    }
+
+    // Verify the attempt belongs to this quiz
+    if (attempt.quizId._id.toString() !== quizId) {
+      return res.status(400).json({
+        success: false,
+        message: "Attempt does not belong to this quiz",
+      });
+    }
+
+    // Check ownership
+    if (attempt.studentId.toString() !== studentId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    // Check if already submitted
+    if (attempt.submittedAt) {
+      return res.status(400).json({
+        success: false,
+        message: "Attempt already submitted",
+      });
+    }
+
+    // Find the question
+    const question = attempt.quizId.questions.find(
+      (q) => q._id.toString() === questionId
+    );
+    if (!question) {
+      return res.status(404).json({
+        success: false,
+        message: "Question not found",
+      });
+    }
+
+    // Check if answer already exists
+    let existingAnswer = attempt.answers.find(
+      (a) => a.questionId.toString() === questionId
+    );
+    if (existingAnswer) {
+      existingAnswer.answer = answer;
+      existingAnswer.answeredAt = new Date();
+    } else {
+      attempt.answers.push({
+        questionId,
+        answer,
+        answeredAt: new Date(),
+      });
+    }
+
+    await attempt.save();
+
+    res.json({
+      success: true,
+      message: "Answer saved successfully",
+    });
+  } catch (error) {
+    console.error("Error saving answer:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error saving answer",
+      error: error.message,
+    });
+  }
+};
+
+// Submit quiz - accepts attemptId from body instead of URL params
+const submitQuiz = async (req, res) => {
+  try {
+    const { id: quizId } = req.params;
+    const { answers, attemptId } = req.body;
+
+    if (!attemptId) {
+      return res.status(400).json({
+        success: false,
+        message: "Attempt ID is required",
+      });
+    }
+
+    // Find student by user ID
+    const Student = require("../../models/Student");
+    const student = await Student.findOne({ userId: req.user.id });
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    const studentId = student._id;
+
+    // Find the attempt
+    const attempt = await QuizAttempt.findById(attemptId).populate("quizId");
+    if (!attempt) {
+      return res.status(404).json({
+        success: false,
+        message: "Attempt not found",
+      });
+    }
+
+    // Verify the attempt belongs to this quiz
+    if (attempt.quizId._id.toString() !== quizId) {
+      return res.status(400).json({
+        success: false,
+        message: "Attempt does not belong to this quiz",
+      });
+    }
+
+    // Check ownership
+    if (attempt.studentId.toString() !== studentId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    // Check if already submitted
+    if (attempt.submittedAt) {
+      return res.status(400).json({
+        success: false,
+        message: "Quiz already submitted",
+      });
+    }
+
+    const quiz = attempt.quizId;
+
+    // Update answers from the submission (in case any weren't auto-saved)
+    if (answers && typeof answers === "object") {
+      for (const [questionId, answer] of Object.entries(answers)) {
+        let existingAnswer = attempt.answers.find(
+          (a) => a.questionId.toString() === questionId
+        );
+        if (existingAnswer) {
+          existingAnswer.answer = answer;
+          existingAnswer.answeredAt = new Date();
+        } else {
+          attempt.answers.push({
+            questionId,
+            answer,
+            answeredAt: new Date(),
+          });
+        }
+      }
+    }
+
+    // Grade the quiz if autoGrade is enabled
+    let totalScore = 0;
+    let totalPossible = 0;
+
+    if (quiz.grading?.autoGrade !== false) {
+      for (const question of quiz.questions) {
+        totalPossible += question.points || 1;
+
+        const studentAnswer = attempt.answers.find(
+          (a) => a.questionId.toString() === question._id.toString()
+        );
+
+        if (studentAnswer) {
+          let isCorrect = false;
+          let pointsEarned = 0;
+
+          switch (question.type) {
+            case "multiple_choice":
+            case "true_false":
+              isCorrect =
+                studentAnswer.answer?.toLowerCase() ===
+                question.correctAnswer?.toLowerCase();
+              break;
+            case "short_answer":
+              // Case-insensitive comparison, trim whitespace
+              isCorrect =
+                studentAnswer.answer?.trim()?.toLowerCase() ===
+                question.correctAnswer?.trim()?.toLowerCase();
+              break;
+            case "fill_blank":
+              // Check if answer matches any of the correct answers
+              if (
+                question.correctAnswers &&
+                question.correctAnswers.length > 0
+              ) {
+                isCorrect = question.correctAnswers.some(
+                  (correct) =>
+                    studentAnswer.answer?.trim()?.toLowerCase() ===
+                    correct?.trim()?.toLowerCase()
+                );
+              } else {
+                isCorrect =
+                  studentAnswer.answer?.trim()?.toLowerCase() ===
+                  question.correctAnswer?.trim()?.toLowerCase();
+              }
+              break;
+            case "matching":
+              // Matching questions need special handling
+              if (
+                question.pairs &&
+                studentAnswer.answer &&
+                typeof studentAnswer.answer === "object"
+              ) {
+                let correctPairs = 0;
+                for (const pair of question.pairs) {
+                  if (studentAnswer.answer[pair.left] === pair.right) {
+                    correctPairs++;
+                  }
+                }
+                // Partial credit for matching
+                pointsEarned =
+                  (correctPairs / question.pairs.length) *
+                  (question.points || 1);
+                isCorrect = correctPairs === question.pairs.length;
+              }
+              break;
+            case "essay":
+              // Essay questions need manual grading
+              isCorrect = false;
+              pointsEarned = 0;
+              break;
+          }
+
+          if (question.type !== "matching") {
+            pointsEarned = isCorrect ? question.points || 1 : 0;
+          }
+
+          studentAnswer.isCorrect = isCorrect;
+          studentAnswer.pointsEarned = pointsEarned;
+          totalScore += pointsEarned;
+        }
+      }
+    }
+
+    // Calculate time spent
+    const timeSpent = Math.round(
+      (new Date() - new Date(attempt.startedAt)) / 60000
+    ); // in minutes
+
+    // Update attempt
+    attempt.submittedAt = new Date();
+    attempt.totalScore = totalScore;
+    attempt.totalPossible = totalPossible;
+    attempt.percentageScore =
+      totalPossible > 0 ? Math.round((totalScore / totalPossible) * 100) : 0;
+    attempt.timeSpent = timeSpent;
+    attempt.status = "submitted";
+
+    await attempt.save();
+
+    // Update quiz analytics
+    await Quiz.findByIdAndUpdate(quizId, {
+      $inc: {
+        "analytics.attemptCount": 1,
+        "analytics.completionCount": 1,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Quiz submitted successfully",
+      data: {
+        attempt: {
+          _id: attempt._id,
+          totalScore: attempt.totalScore,
+          totalPossible: attempt.totalPossible,
+          percentageScore: attempt.percentageScore,
+          timeSpent: attempt.timeSpent,
+          submittedAt: attempt.submittedAt,
+          status: attempt.status,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error submitting quiz:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error submitting quiz",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createQuiz,
   getTeacherQuizzes,
@@ -2579,10 +3084,13 @@ module.exports = {
   updateQuizSchedule,
   importQuestions,
   startQuizAttempt,
+  startQuizWithData,
   submitQuizAttempt,
   getQuizAttempt,
   submitAnswer,
   getStudentAttempts,
   gradeQuizAttempt,
   getQuizAttempts,
+  saveQuizAnswer,
+  submitQuiz,
 };
