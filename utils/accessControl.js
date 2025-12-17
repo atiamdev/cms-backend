@@ -117,14 +117,11 @@ const getBranchFilter = (user) => {
     return {}; // No filter - can access all branches
   }
 
-  if (hasRole(user, "admin")) {
-    return {}; // Admins can access all branches
-  }
-
   if (hasRole(user, "secretary")) {
     return { recordedBy: user._id }; // Secretaries can only see expenses they created
   }
 
+  // Admins and branch admins can only access their branch
   return { branchId: user.branchId };
 };
 
@@ -250,18 +247,13 @@ const canAccessExpense = (user, expense) => {
     return true;
   }
 
-  // Admin can access all expenses
-  if (hasRole(user, "admin")) {
-    return true;
-  }
-
   // Secretary can only access expenses they created
   if (hasRole(user, "secretary")) {
     return expense.recordedBy.toString() === user._id.toString();
   }
 
-  // Branch admin can access expenses from their branch (for viewing and approval)
-  if (hasRole(user, "branchadmin")) {
+  // Admin and branch admin can access expenses from their branch only
+  if (hasRole(user, ["admin", "branchadmin"])) {
     return expense.branchId.toString() === user.branchId.toString();
   }
 
@@ -281,19 +273,17 @@ const canEditExpense = (user, expense) => {
     return true;
   }
 
-  // Admin can edit all expenses
-  if (hasRole(user, "admin")) {
-    return true;
-  }
-
   // Secretary can only edit expenses they created
   if (hasRole(user, "secretary")) {
     return expense.recordedBy.toString() === user._id.toString();
   }
 
-  // Branch admin can only edit expenses they created (not just any expense in their branch)
-  if (hasRole(user, "branchadmin")) {
-    return expense.recordedBy.toString() === user._id.toString();
+  // Admin and branch admin can only edit expenses they created in their branch
+  if (hasRole(user, ["admin", "branchadmin"])) {
+    return (
+      expense.recordedBy.toString() === user._id.toString() &&
+      expense.branchId.toString() === user.branchId.toString()
+    );
   }
 
   // Others cannot edit expenses

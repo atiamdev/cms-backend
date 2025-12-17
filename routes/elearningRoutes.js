@@ -4247,6 +4247,30 @@ router.use("/quizzes", quizRoutes);
 // Quiz Attempt Routes
 const quizController = require("../controllers/elearning/quizController");
 
+// Student quiz start route - returns quiz, questions and attempt data
+router.post(
+  "/quiz/:id/start",
+  protect,
+  authorize("student"),
+  quizController.startQuizWithData
+);
+
+// Student quiz answer route - save answer during quiz
+router.post(
+  "/quiz/:id/answer",
+  protect,
+  authorize("student"),
+  quizController.saveQuizAnswer
+);
+
+// Student quiz submit route - submit completed quiz
+router.post(
+  "/quiz/:id/submit",
+  protect,
+  authorize("student"),
+  quizController.submitQuiz
+);
+
 router.post(
   "/quiz-attempts/:id/submit",
   protect,

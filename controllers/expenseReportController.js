@@ -1,12 +1,16 @@
 const Expense = require("../models/Expense");
 const mongoose = require("mongoose");
+const { isSuperAdmin } = require("../utils/accessControl");
 
 // @desc    Get expense dashboard data
 // @route   GET /api/expenses/reports/dashboard
 // @access  Private (Admin, Secretary)
 const getExpenseDashboard = async (req, res) => {
   try {
-    const branchId = req.user.branchId;
+    // Build branch filter - superadmin sees all, others see only their branch
+    const branchFilter = isSuperAdmin(req.user)
+      ? {}
+      : { branchId: req.user.branchId };
     const now = new Date();
 
     // Current month expenses
@@ -25,7 +29,7 @@ const getExpenseDashboard = async (req, res) => {
     const currentMonthStats = await Expense.aggregate([
       {
         $match: {
-          branchId,
+          ...branchFilter,
           date: { $gte: currentMonthStart, $lt: currentMonthEnd },
         },
       },
@@ -55,7 +59,7 @@ const getExpenseDashboard = async (req, res) => {
     const previousMonthStats = await Expense.aggregate([
       {
         $match: {
-          branchId,
+          ...branchFilter,
           date: { $gte: previousMonthStart, $lt: previousMonthEnd },
         },
       },
@@ -76,7 +80,7 @@ const getExpenseDashboard = async (req, res) => {
     const topCategories = await Expense.aggregate([
       {
         $match: {
-          branchId,
+          ...branchFilter,
           date: { $gte: currentMonthStart, $lt: currentMonthEnd },
           approvalStatus: "approved",
         },
@@ -93,9 +97,7 @@ const getExpenseDashboard = async (req, res) => {
     ]);
 
     // Recent expenses (last 10)
-    const recentExpenses = await Expense.find({
-      branchId,
-    })
+    const recentExpenses = await Expense.find(branchFilter)
       .populate("recordedBy", "firstName lastName")
       .sort({ createdAt: -1 })
       .limit(10)
@@ -106,7 +108,7 @@ const getExpenseDashboard = async (req, res) => {
     const monthlyTrend = await Expense.aggregate([
       {
         $match: {
-          branchId,
+          ...branchFilter,
           date: { $gte: twelveMonthsAgo },
           approvalStatus: "approved",
         },
@@ -197,7 +199,10 @@ const getExpenseReportByCategory = async (req, res) => {
   try {
     const { startDate, endDate, page = 1, limit = 10 } = req.query;
 
-    let dateFilter = { branchId: req.user.branchId };
+    // Build branch filter - superadmin sees all, others see only their branch
+    let dateFilter = isSuperAdmin(req.user)
+      ? {}
+      : { branchId: req.user.branchId };
 
     if (startDate || endDate) {
       dateFilter.date = {};
@@ -321,7 +326,7 @@ const getExpenseTrendAnalysis = async (req, res) => {
     const trendData = await Expense.aggregate([
       {
         $match: {
-          branchId: req.user.branchId,
+          ...(isSuperAdmin(req.user) ? {} : { branchId: req.user.branchId }),
           date: {
             $gte: new Date(targetYear, 0, 1),
             $lt: new Date(targetYear + 1, 0, 1),
@@ -349,7 +354,7 @@ const getExpenseTrendAnalysis = async (req, res) => {
     const categoryTrends = await Expense.aggregate([
       {
         $match: {
-          branchId: req.user.branchId,
+          ...(isSuperAdmin(req.user) ? {} : { branchId: req.user.branchId }),
           date: {
             $gte: new Date(targetYear, 0, 1),
             $lt: new Date(targetYear + 1, 0, 1),
@@ -411,7 +416,7 @@ const getVendorAnalysisReport = async (req, res) => {
     const { startDate, endDate, minAmount = 0 } = req.query;
 
     let dateFilter = {
-      branchId: req.user.branchId,
+      ...(isSuperAdmin(req.user) ? {} : { branchId: req.user.branchId }),
       "vendor.name": { $exists: true, $ne: null, $ne: "" },
       amount: { $gte: parseFloat(minAmount) },
     };
@@ -498,8 +503,8 @@ const exportExpenseReport = async (req, res) => {
       approvalStatus,
     } = req.query;
 
-    // Build query
-    const query = { branchId: req.user.branchId };
+    // Build query - superadmin sees all, others see only their branch
+    const query = isSuperAdmin(req.user) ? {} : { branchId: req.user.branchId };
 
     if (startDate || endDate) {
       query.date = {};

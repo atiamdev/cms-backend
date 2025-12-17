@@ -2,17 +2,24 @@ const Fee = require("../models/Fee");
 const Payment = require("../models/Payment");
 const Student = require("../models/Student");
 const Class = require("../models/Class");
+const { isSuperAdmin } = require("../utils/accessControl");
 const {
   generateBranchFeeStats,
   generateStudentFeeSummary,
 } = require("../utils/feeHelpers");
+
+// Helper function to get branch filter based on user role
+const getBranchFilter = (user) => {
+  return isSuperAdmin(user) ? {} : { branchId: user.branchId };
+};
 
 // @desc    Get fee collection dashboard
 // @route   GET /api/fees/reports/dashboard
 // @access  Private (Admin, Secretary)
 const getFeeDashboard = async (req, res) => {
   try {
-    const branchId = req.user.branchId;
+    const branchFilter = getBranchFilter(req.user);
+    const branchId = req.user.branchId; // Keep for generateBranchFeeStats if it needs direct branchId
     const { dateRange } = req.query;
 
     let startDate, endDate;
@@ -30,7 +37,7 @@ const getFeeDashboard = async (req, res) => {
 
     // Get recent payments
     const recentPayments = await Payment.find({
-      branchId,
+      ...branchFilter,
       status: "completed",
     })
       .populate("studentId", "studentId userId")
@@ -111,7 +118,7 @@ const getFeeReportByClass = async (req, res) => {
   try {
     const { academicYear, academicTerm, page = 1, limit = 10 } = req.query;
 
-    const query = { branchId: req.user.branchId };
+    const query = { ...getBranchFilter(req.user) };
     if (academicYear) query.academicYear = academicYear;
     if (academicTerm) query.academicTerm = academicTerm;
 
@@ -219,7 +226,7 @@ const getPaymentMethodAnalysis = async (req, res) => {
     const { startDate, endDate } = req.query;
 
     const query = {
-      branchId: req.user.branchId,
+      ...getBranchFilter(req.user),
       status: "completed",
     };
 
@@ -282,7 +289,7 @@ const getPaymentMethodAnalysis = async (req, res) => {
     const dailyTrends = await Payment.aggregate([
       {
         $match: {
-          branchId: req.user.branchId,
+          ...getBranchFilter(req.user),
           status: "completed",
           paymentDate: { $gte: thirtyDaysAgo },
         },
@@ -341,7 +348,7 @@ const getDefaultersReport = async (req, res) => {
     } = req.query;
 
     const query = {
-      branchId: req.user.branchId,
+      ...getBranchFilter(req.user),
       status: { $in: ["overdue", "partially_paid"] },
       balance: { $gt: parseFloat(minBalance) },
     };
@@ -514,7 +521,7 @@ const exportFeeReport = async (req, res) => {
       case "outstanding":
         // Get outstanding fees data
         const outstanding = await Fee.find({
-          branchId: req.user.branchId,
+          ...getBranchFilter(req.user),
           status: { $in: ["unpaid", "partially_paid", "overdue"] },
           balance: { $gt: 0 },
         })
@@ -542,7 +549,7 @@ const exportFeeReport = async (req, res) => {
       case "payments":
         // Get payments data
         const payments = await Payment.find({
-          branchId: req.user.branchId,
+          ...getBranchFilter(req.user),
           status: "completed",
         })
           .populate("studentId", "studentId userId")

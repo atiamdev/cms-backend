@@ -399,7 +399,7 @@ const studentSchema = new mongoose.Schema(
 
 // Indexes for performance
 studentSchema.index({ branchId: 1 });
-studentSchema.index({ userId: 1 });
+studentSchema.index({ userId: 1, branchId: 1 }, { unique: true }); // Prevent duplicate student records for same user
 studentSchema.index({ studentId: 1, branchId: 1 }, { unique: true });
 studentSchema.index({ admissionNumber: 1, branchId: 1 }, { unique: true });
 studentSchema.index({ currentClassId: 1 });
