@@ -59,14 +59,6 @@ const getAttendanceRecords = async (req, res) => {
         end.setHours(23, 59, 59, 999);
         query.date.$lte = end;
       }
-    } else {
-      // Default to current month if no date range specified
-      const now = new Date();
-      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-      startOfMonth.setHours(0, 0, 0, 0);
-      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-      endOfMonth.setHours(23, 59, 59, 999);
-      query.date = { $gte: startOfMonth, $lte: endOfMonth };
     }
 
     if (userType) query.userType = userType;
@@ -670,8 +662,9 @@ const getAttendanceSummary = async (req, res) => {
     );
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
+    const branchFilter = getBranchFilter(req.user);
     const query = {
-      branchId: req.user.branchId,
+      ...branchFilter,
       date: { $gte: startOfDay, $lt: endOfDay },
     };
 
@@ -695,11 +688,27 @@ const getAttendanceSummary = async (req, res) => {
       },
     ]);
 
-    // Get total registered users count for percentage calculation
-    let totalUsersQuery = { branchId: req.user.branchId, status: "active" };
-    if (userType) totalUsersQuery.roles = { $in: [userType] };
+    // Check if there are any attendance records for this date
+    const totalRecordsForDate = await Attendance.countDocuments(query);
 
-    const totalUsers = await User.countDocuments(totalUsersQuery);
+    // Get total registered users count for percentage calculation
+    let totalUsers = 0;
+    if (userType === "student") {
+      totalUsers = await Student.countDocuments({
+        ...branchFilter,
+        academicStatus: { $in: ["active"] },
+      });
+    } else if (userType === "teacher") {
+      totalUsers = await Teacher.countDocuments({
+        ...branchFilter,
+        status: "active",
+      });
+    } else {
+      // For other user types or all, count from User collection
+      const userQuery = { ...branchFilter, status: "active" };
+      if (userType) userQuery.roles = { $in: [userType] };
+      totalUsers = await User.countDocuments(userQuery);
+    }
 
     const result = {
       date: targetDate.toISOString().split("T")[0],
@@ -712,6 +721,14 @@ const getAttendanceSummary = async (req, res) => {
       totalHours: 0,
       attendancePercentage: 0,
     };
+
+    // If no attendance records exist for this date, return zeros (not assume everyone is absent)
+    if (totalRecordsForDate === 0) {
+      return res.json({
+        success: true,
+        data: result,
+      });
+    }
 
     let totalPresent = 0;
 
@@ -727,6 +744,7 @@ const getAttendanceSummary = async (req, res) => {
     result.attendancePercentage =
       totalUsers > 0 ? Math.round((totalPresent / totalUsers) * 100) : 0;
 
+    // Only calculate absent if attendance has been marked
     result.absent = totalUsers - totalPresent;
 
     res.json({
