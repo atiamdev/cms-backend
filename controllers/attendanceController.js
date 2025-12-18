@@ -43,6 +43,13 @@ const getAttendanceRecords = async (req, res) => {
     const branchFilter = getBranchFilter(req.user);
     const query = { ...branchFilter };
 
+    // Allow super admins to override branch filter for debugging (temporary)
+    // This helps identify if branchId mismatch is the issue
+    if (req.query.ignoreBranch === "true" && isSuperAdmin(req.user)) {
+      delete query.branchId;
+      console.log("  🔓 Branch filter removed (super admin override)");
+    }
+
     // Date range filter - support both startDate/endDate and dateFrom/dateTo
     const fromDate = dateFrom || startDate;
     const toDate = dateTo || endDate;
@@ -65,6 +72,25 @@ const getAttendanceRecords = async (req, res) => {
     if (classId) query.classId = classId;
     if (status) query.status = status;
     if (userId) query.userId = userId;
+
+    // Debug logging
+    console.log("📊 Attendance Query Debug:");
+    console.log(
+      "  User:",
+      req.user.firstName,
+      req.user.lastName,
+      `(${req.user.email})`
+    );
+    console.log("  User Role:", req.user.roles);
+    console.log("  User Branch ID:", req.user.branchId);
+    console.log("  Query Parameters:", {
+      dateFrom,
+      dateTo,
+      userType,
+      classId,
+      status,
+    });
+    console.log("  Final Query:", JSON.stringify(query, null, 2));
 
     // Text search
     if (search) {
@@ -113,6 +139,43 @@ const getAttendanceRecords = async (req, res) => {
       .skip((page - 1) * limit);
 
     const total = await Attendance.countDocuments(query);
+
+    // Additional debug: Check if there are ANY records for this date (ignoring branch)
+    if (total === 0 && query.date) {
+      const dateOnlyQuery = { date: query.date };
+      if (userType) dateOnlyQuery.userType = userType;
+
+      const anyRecordsForDate = await Attendance.countDocuments(dateOnlyQuery);
+      console.log(
+        `  ⚠️ Found ${anyRecordsForDate} total records for this date (all branches)`
+      );
+
+      if (anyRecordsForDate > 0) {
+        // Get sample records to see what branch they belong to
+        const sampleRecords = await Attendance.find(dateOnlyQuery)
+          .limit(3)
+          .select("branchId userType date studentId userId")
+          .populate("userId", "firstName lastName branchId");
+        console.log("  📋 Sample attendance records:");
+        sampleRecords.forEach((record, index) => {
+          console.log(`    Record ${index + 1}:`);
+          console.log(`      Attendance branchId: ${record.branchId}`);
+          console.log(`      User branchId: ${record.userId?.branchId}`);
+          console.log(
+            `      User: ${record.userId?.firstName} ${record.userId?.lastName}`
+          );
+          console.log(
+            `      Match: ${
+              record.branchId?.toString() === req.user.branchId?.toString()
+                ? "✅ YES"
+                : "❌ NO"
+            }`
+          );
+        });
+      }
+    }
+
+    console.log(`  ✅ Found ${total} records matching query`);
 
     // Calculate summary statistics
     const summaryStats = await Attendance.aggregate([
