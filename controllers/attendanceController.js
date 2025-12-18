@@ -6,11 +6,17 @@ const Class = require("../models/Class");
 const { validationResult } = require("express-validator");
 const mongoose = require("mongoose");
 const ZKTecoService = require("../services/zktecoService");
+const { isSuperAdmin } = require("../utils/accessControl");
 
 // Import student inactivity service for auto-reactivation
 const {
   checkAndAutoReactivate,
 } = require("../services/studentInactivityService");
+
+// Helper function to get branch filter based on user role
+const getBranchFilter = (user) => {
+  return isSuperAdmin(user) ? {} : { branchId: user.branchId };
+};
 
 // @desc    Get attendance records
 // @route   GET /api/attendance
@@ -34,7 +40,8 @@ const getAttendanceRecords = async (req, res) => {
     } = req.query;
 
     // Build query
-    const query = { branchId: req.user.branchId };
+    const branchFilter = getBranchFilter(req.user);
+    const query = { ...branchFilter };
 
     // Date range filter - support both startDate/endDate and dateFrom/dateTo
     const fromDate = dateFrom || startDate;
