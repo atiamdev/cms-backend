@@ -51,6 +51,9 @@ const app = express();
 // Security middleware - comprehensive security headers
 securityMiddleware(app);
 
+// Trust proxy for rate limiting (behind Cloudflare)
+app.set("trust proxy", 1);
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

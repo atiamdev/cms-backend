@@ -240,7 +240,7 @@ const getAttendanceDashboard = async (req, res) => {
 
     // Recent attendance alerts (late arrivals, early departures)
     const recentAlerts = await Attendance.find({
-      branchId,
+      ...branchFilter,
       date: { $gte: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
       $or: [{ isLate: true }, { isEarlyDeparture: true }, { status: "absent" }],
     })

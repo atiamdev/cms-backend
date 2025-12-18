@@ -242,7 +242,11 @@ const checkAndMarkInactiveStudents = async () => {
 
     if (branches.length === 0) {
       console.log("⚠️  No active branches found");
-      return { success: true, results: [] };
+      return {
+        success: true,
+        results: [],
+        summary: { totalChecked: 0, totalMarkedInactive: 0, duration: "0s" },
+      };
     }
 
     console.log(`🏢 Processing ${branches.length} active branch(es)\n`);
