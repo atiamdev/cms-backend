@@ -51,15 +51,16 @@ const app = express();
 // Security middleware - comprehensive security headers
 securityMiddleware(app);
 
-// Trust proxy for rate limiting (behind Cloudflare)
-app.set("trust proxy", true);
+// Trust proxy for rate limiting (behind Cloudflare/reverse proxy)
+// Trust the first proxy (Cloudflare, nginx, etc.)
+app.set("trust proxy", 1);
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10000, // limit each IP to 10,000 requests per windowMs
   message: "Too many requests from this IP, please try again later.",
-  trustProxy: true,
+  // Don't set trustProxy here - it will use the app's trust proxy setting
 });
 app.use(limiter);
 
