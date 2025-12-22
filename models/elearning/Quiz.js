@@ -76,6 +76,7 @@ const QuizSchema = new mongoose.Schema(
             "essay",
             "fill_blank",
             "matching",
+            "comprehension",
           ],
           required: true,
         },
@@ -111,6 +112,41 @@ const QuizSchema = new mongoose.Schema(
           {
             left: String,
             right: String,
+          },
+        ],
+        // For comprehension questions
+        passage: String, // The text passage for reading comprehension
+        subQuestions: [
+          {
+            _id: {
+              type: mongoose.Schema.Types.ObjectId,
+              default: () => new mongoose.Types.ObjectId(),
+            },
+            type: {
+              type: String,
+              enum: [
+                "multiple_choice",
+                "true_false",
+                "short_answer",
+                "essay",
+                "fill_blank",
+              ],
+              required: true,
+            },
+            question: {
+              type: String,
+              required: true,
+            },
+            options: [String], // for multiple choice, true/false
+            correctAnswer: String,
+            correctAnswers: [String], // for questions with multiple correct answers
+            points: {
+              type: Number,
+              required: true,
+              min: 1,
+              default: 1,
+            },
+            explanation: String,
           },
         ],
         // Question metadata
@@ -314,7 +350,9 @@ QuizSchema.methods.calculateScore = function (answers) {
       case "multiple_choice":
       case "true_false":
       case "multiple_select":
-        isCorrect = userAnswer === question.correctAnswer;
+        isCorrect =
+          userAnswer?.toLowerCase().trim() ===
+          question.correctAnswer?.toLowerCase().trim();
         pointsEarned = isCorrect ? question.points : 0;
         break;
 
@@ -339,6 +377,76 @@ QuizSchema.methods.calculateScore = function (answers) {
           pointsEarned =
             (correctCount / question.correctAnswers.length) * question.points;
           isCorrect = correctCount === question.correctAnswers.length;
+        }
+        break;
+
+      case "comprehension":
+        // Comprehension questions have sub-questions that need individual grading
+        if (question.subQuestions && Array.isArray(question.subQuestions)) {
+          let subTotalScore = 0;
+          let subTotalPossible = 0;
+          const subResults = [];
+
+          question.subQuestions.forEach((subQuestion) => {
+            const subUserAnswer = userAnswer?.[subQuestion._id.toString()];
+            let subIsCorrect = false;
+            let subPointsEarned = 0;
+            const subNeedsManualGrading = ["short_answer", "essay"].includes(
+              subQuestion.type
+            );
+
+            if (!subNeedsManualGrading) {
+              subTotalPossible += subQuestion.points;
+            }
+
+            switch (subQuestion.type) {
+              case "multiple_choice":
+              case "true_false":
+                subIsCorrect =
+                  subUserAnswer?.toLowerCase().trim() ===
+                  subQuestion.correctAnswer?.toLowerCase().trim();
+                subPointsEarned = subIsCorrect ? subQuestion.points : 0;
+                break;
+              case "short_answer":
+              case "essay":
+                subPointsEarned = 0;
+                subIsCorrect = false;
+                break;
+              case "fill_blank":
+                if (
+                  Array.isArray(subQuestion.correctAnswers) &&
+                  Array.isArray(subUserAnswer)
+                ) {
+                  const correctCount = subUserAnswer.filter(
+                    (answer, index) =>
+                      answer?.toLowerCase().trim() ===
+                      subQuestion.correctAnswers[index]?.toLowerCase().trim()
+                  ).length;
+                  subPointsEarned =
+                    (correctCount / subQuestion.correctAnswers.length) *
+                    subQuestion.points;
+                  subIsCorrect =
+                    correctCount === subQuestion.correctAnswers.length;
+                }
+                break;
+            }
+
+            subTotalScore += subPointsEarned;
+            subResults.push({
+              questionId: subQuestion._id,
+              isCorrect: subIsCorrect,
+              pointsEarned: subPointsEarned,
+              userAnswer: subUserAnswer,
+              correctAnswer:
+                subQuestion.correctAnswer || subQuestion.correctAnswers,
+              needsManualGrading: subNeedsManualGrading,
+            });
+          });
+
+          pointsEarned = subTotalScore;
+          isCorrect =
+            subTotalScore === subTotalPossible && subTotalPossible > 0;
+          totalPossible += question.points; // Add the total points for this comprehension question
         }
         break;
     }
