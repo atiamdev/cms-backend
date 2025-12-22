@@ -398,10 +398,59 @@ const getTeacherQuizzes = async (req, res) => {
 
     // Populate courseId based on courseType
     for (let quiz of quizzes) {
-      if (quiz.courseType === "ecourse") {
-        await quiz.populate("courseId", "title name");
-      } else {
-        await quiz.populate("courseId", "name");
+      try {
+        if (quiz.courseType === "ecourse") {
+          await quiz.populate({
+            path: "courseId",
+            model: "ECourse",
+            select: "title name",
+          });
+        } else if (quiz.courseType === "course") {
+          await quiz.populate({
+            path: "courseId",
+            model: "Course",
+            select: "name title",
+          });
+        } else {
+          // If courseType is not set or unknown, try ECourse first, then Course
+          try {
+            await quiz.populate({
+              path: "courseId",
+              model: "ECourse",
+              select: "title name",
+            });
+            // If ECourse populate succeeded, update courseType
+            if (quiz.courseId && typeof quiz.courseId === "object") {
+              quiz.courseType = "ecourse";
+            }
+          } catch (eCourseError) {
+            // Try regular Course
+            try {
+              await quiz.populate({
+                path: "courseId",
+                model: "Course",
+                select: "name title",
+              });
+              // If Course populate succeeded, update courseType
+              if (quiz.courseId && typeof quiz.courseId === "object") {
+                quiz.courseType = "course";
+              }
+            } catch (courseError) {
+              console.error(
+                `Failed to populate course for quiz ${quiz._id} from both models:`,
+                courseError
+              );
+            }
+          }
+        }
+        console.log(
+          `Quiz ${quiz._id}: courseType=${quiz.courseType}, courseId=${
+            quiz.courseId
+          }, courseName=${quiz.courseId?.name || quiz.courseId?.title}`
+        );
+      } catch (error) {
+        console.error(`Error populating course for quiz ${quiz._id}:`, error);
+        // Continue without populating
       }
     }
 
