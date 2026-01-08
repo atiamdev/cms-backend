@@ -801,6 +801,233 @@ const updateUserStatus = async (req, res) => {
   }
 };
 
+// @desc    Assign branches to a user (admin/branchadmin)
+// @route   POST /api/users/:userId/branches
+// @access  Private (SuperAdmin only)
+const assignBranches = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { branchIds } = req.body;
+
+    if (!branchIds || !Array.isArray(branchIds) || branchIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "branchIds array is required",
+      });
+    }
+
+    // Validate user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Validate all branches exist
+    const branches = await Branch.find({ _id: { $in: branchIds } });
+    if (branches.length !== branchIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "One or more branches not found",
+      });
+    }
+
+    // Update branchIds
+    user.branchIds = branchIds;
+    // Set primary branchId if not set or not in new list
+    if (!user.branchId || !branchIds.includes(user.branchId.toString())) {
+      user.branchId = branchIds[0];
+    }
+
+    await user.save();
+
+    // Log to audit trail
+    const AuditLog = require("../models/AuditLog");
+    await AuditLog.create({
+      userId: req.user._id,
+      userName: `${req.user.firstName} ${req.user.lastName}`,
+      userEmail: req.user.email,
+      action: "USER_UPDATED",
+      resourceType: "USER",
+      resourceId: user._id,
+      resourceName: `${user.firstName} ${user.lastName}`,
+      targetUserId: user._id,
+      targetUserName: `${user.firstName} ${user.lastName}`,
+      description: `Assigned ${branches.length} branch(es) to user ${
+        user.email
+      }: ${branches.map((b) => b.name).join(", ")}`,
+      newValues: {
+        branchIds: branches.map((b) => b._id),
+        branches: branches.map((b) => b.name),
+      },
+      metadata: {
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        branchId: req.user.branchId,
+        category: "DATA_CHANGE",
+        severity: "MEDIUM",
+      },
+    });
+
+    await user.populate("branchIds", "name code");
+
+    res.json({
+      success: true,
+      message: "Branches assigned successfully",
+      data: {
+        user: {
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          branchId: user.branchId,
+          branchIds: user.branchIds,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error assigning branches:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to assign branches",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Remove branch from user
+// @route   DELETE /api/users/:userId/branches/:branchId
+// @access  Private (SuperAdmin only)
+const removeBranch = async (req, res) => {
+  try {
+    const { userId, branchId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (!user.branchIds || user.branchIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "User has no assigned branches",
+      });
+    }
+
+    if (user.branchIds.length === 1) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cannot remove last branch. User must have at least one branch.",
+      });
+    }
+
+    await user.removeBranch(branchId);
+    await user.populate("branchIds", "name code");
+
+    // Log to audit trail
+    const AuditLog = require("../models/AuditLog");
+    await AuditLog.create({
+      userId: req.user._id,
+      userName: `${req.user.firstName} ${req.user.lastName}`,
+      userEmail: req.user.email,
+      action: "USER_UPDATED",
+      resourceType: "USER",
+      resourceId: user._id,
+      resourceName: `${user.firstName} ${user.lastName}`,
+      targetUserId: user._id,
+      targetUserName: `${user.firstName} ${user.lastName}`,
+      description: `Removed branch ${branchId} from user ${user.email}`,
+      oldValues: {
+        branchIds: [...user.branchIds, branchId],
+      },
+      newValues: {
+        branchIds: user.branchIds,
+      },
+      metadata: {
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+        branchId: req.user.branchId,
+        category: "DATA_CHANGE",
+        severity: "MEDIUM",
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Branch removed successfully",
+      data: {
+        user: {
+          _id: user._id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          branchId: user.branchId,
+          branchIds: user.branchIds,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error removing branch:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to remove branch",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get user's assigned branches
+// @route   GET /api/users/:userId/branches
+// @access  Private (SuperAdmin, Admin - own branches only)
+const getUserBranches = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).populate(
+      "branchIds",
+      "name code address phone status"
+    );
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Non-superadmin can only view their own branches
+    if (
+      !req.user.hasRole("superadmin") &&
+      user._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        branches: user.branchIds || [],
+        primaryBranch: user.branchId,
+      },
+    });
+  } catch (error) {
+    console.error("Error getting user branches:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get user branches",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getUsers,
   getUser,
@@ -810,4 +1037,7 @@ module.exports = {
   updateUserStatus,
   getUserStatistics,
   transferUserToBranch,
+  assignBranches,
+  removeBranch,
+  getUserBranches,
 };

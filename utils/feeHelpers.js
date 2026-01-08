@@ -143,11 +143,13 @@ const generateStudentFeeSummary = async (studentId, academicYear = null) => {
       }
 
       // Group by term
-      const termKey = `${fee.academicYear}-${fee.academicTerm}`;
+      const termName =
+        fee.academicTermId?.name || fee.academicTermId?.toString() || "Unknown";
+      const termKey = `${fee.academicYear}-${termName}`;
       if (!summary.byTerm[termKey]) {
         summary.byTerm[termKey] = {
           academicYear: fee.academicYear,
-          academicTerm: fee.academicTerm,
+          academicTerm: termName,
           totalDue: 0,
           totalPaid: 0,
           balance: 0,

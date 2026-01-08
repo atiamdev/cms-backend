@@ -1078,7 +1078,7 @@ const getPaymentStatus = async (req, res) => {
           select: "firstName lastName",
         },
       })
-      .populate("feeId", "academicYear academicTerm");
+      .populate("feeId", "academicYear academicTermId");
 
     console.log("Payment query:", paymentQuery);
     console.log("Found payment:", payment ? payment._id : "null");

@@ -218,137 +218,34 @@ const deleteBranch = async (req, res) => {
   }
 };
 
-// @desc    Add academic term to branch
-// @route   POST /api/branches/:id/academic-terms
-// @access  Private (SuperAdmin or Branch Admin)
-const addAcademicTerm = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: "Validation errors",
-        errors: errors.array(),
-      });
-    }
-
-    const { id } = req.params;
-    const { name, startDate, endDate } = req.body;
-
-    // Check if user can update this branch
-    if (
-      !req.user.hasRole("superadmin") &&
-      req.user.branchId.toString() !== id
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Cannot update other branch data",
-      });
-    }
-
-    const branch = await Branch.findById(id);
-    if (!branch) {
-      return res.status(404).json({
-        success: false,
-        message: "Branch not found",
-      });
-    }
-
-    // Validate dates
-    if (new Date(startDate) >= new Date(endDate)) {
-      return res.status(400).json({
-        success: false,
-        message: "Start date must be before end date",
-      });
-    }
-
-    // Check for overlapping terms
-    const overlapping = branch.academicTerms.some((term) => {
-      const termStart = new Date(term.startDate);
-      const termEnd = new Date(term.endDate);
-      const newStart = new Date(startDate);
-      const newEnd = new Date(endDate);
-
-      return newStart <= termEnd && newEnd >= termStart;
-    });
-
-    if (overlapping) {
-      return res.status(400).json({
-        success: false,
-        message: "Academic term dates overlap with existing term",
-      });
-    }
-
-    branch.academicTerms.push({
-      name,
-      startDate,
-      endDate,
-    });
-
-    await branch.save();
-
-    res.status(201).json({
-      success: true,
-      message: "Academic term added successfully",
-      branch,
-    });
-  } catch (error) {
-    console.error("Add academic term error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while adding academic term",
-    });
-  }
-};
-
 // @desc    Activate academic term
 // @route   PUT /api/branches/:id/academic-terms/:termId/activate
 // @access  Private (SuperAdmin or Branch Admin)
+// DEPRECATED: This function has been moved to the centralized academic term management.
+// Use /api/academic-terms/:id/activate instead.
+// @desc    Add academic term to branch
+// @route   POST /api/branches/:id/academic-terms
+// @access  Private (SuperAdmin or Branch Admin)
+// DEPRECATED: This function has been moved to the centralized academic term management.
+// Use POST /api/academic-terms instead.
+const addAcademicTerm = async (req, res) => {
+  return res.status(410).json({
+    success: false,
+    message:
+      "This endpoint has been deprecated. Please use POST /api/academic-terms instead.",
+  });
+};
+// @desc    Activate academic term
+// @route   PUT /api/branches/:id/academic-terms/:termId/activate
+// @access  Private (SuperAdmin or Branch Admin)
+// DEPRECATED: This function has been moved to the centralized academic term management.
+// Use /api/academic-terms/:id/activate instead.
 const activateAcademicTerm = async (req, res) => {
-  try {
-    const { id, termId } = req.params;
-
-    // Check if user can update this branch
-    if (
-      !req.user.hasRole("superadmin") &&
-      req.user.branchId.toString() !== id
-    ) {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Cannot update other branch data",
-      });
-    }
-
-    const branch = await Branch.findById(id);
-    if (!branch) {
-      return res.status(404).json({
-        success: false,
-        message: "Branch not found",
-      });
-    }
-
-    const success = branch.activateAcademicTerm(termId);
-    if (!success) {
-      return res.status(404).json({
-        success: false,
-        message: "Academic term not found",
-      });
-    }
-
-    await branch.save();
-
-    res.json({
-      success: true,
-      message: "Academic term activated successfully",
-      branch,
-    });
-  } catch (error) {
-    console.error("Activate academic term error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Server error while activating academic term",
-    });
-  }
+  return res.status(410).json({
+    success: false,
+    message:
+      "This endpoint has been deprecated. Please use /api/academic-terms/:id/activate instead.",
+  });
 };
 
 // Helper function to get branch statistics

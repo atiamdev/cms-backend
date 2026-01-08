@@ -19,11 +19,13 @@ const {
   disconnectGoogleAccount,
   verifyEmail,
   verifyPassword,
+  generateSyncToken,
 } = require("../controllers/authController");
 const {
   protect,
   canManageUsers,
   optionalAuth,
+  requireSuperAdmin,
 } = require("../middlewares/auth");
 
 const router = express.Router();
@@ -1034,5 +1036,68 @@ router.get("/google/callback", connectGoogleAccount);
  *         description: Server error
  */
 router.delete("/google/disconnect", protect, disconnectGoogleAccount);
+
+/**
+ * @swagger
+ * /api/auth/generate-sync-token:
+ *   post:
+ *     summary: Generate sync token for branch attendance sync
+ *     tags: [Authentication]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               tokenName:
+ *                 type: string
+ *                 description: Name for the token (optional)
+ *                 example: "Main Branch Sync Token"
+ *               expiresInDays:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 730
+ *                 default: 365
+ *                 description: Token expiry in days (1-730)
+ *     responses:
+ *       200:
+ *         description: Sync token generated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     token:
+ *                       type: string
+ *                       description: The generated JWT token
+ *                     tokenName:
+ *                       type: string
+ *                     purpose:
+ *                       type: string
+ *                     expiresIn:
+ *                       type: string
+ *                     expiryDate:
+ *                       type: string
+ *       403:
+ *         description: Access denied - Superadmin only
+ *       500:
+ *         description: Server error
+ */
+router.post(
+  "/generate-sync-token",
+  protect,
+  requireSuperAdmin,
+  generateSyncToken
+);
 
 module.exports = router;

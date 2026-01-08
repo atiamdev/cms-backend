@@ -33,12 +33,15 @@ const financialReportRoutes = require("./routes/financialReportRoutes");
 const systemAnalyticsRoutes = require("./routes/systemAnalyticsRoutes");
 const globalSettingsRoutes = require("./routes/globalSettingsRoutes");
 const noticeRoutes = require("./routes/noticeRoutes");
+const academicTermRoutes = require("./routes/academicTermRoutes");
 
 // Landing page content routes
 const newsRoutes = require("./routes/newsRoutes");
 const eventRoutes = require("./routes/eventRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const publicCourseRoutes = require("./routes/publicCourseRoutes");
+const popupRoutes = require("./routes/popupRoutes");
+const partnerRoutes = require("./routes/partnerRoutes");
 const pushRoutes = require("./routes/pushRoutes");
 const studentApplicationRoutes = require("./routes/studentApplicationRoutes");
 
@@ -147,6 +150,7 @@ app.use("/api/upload", uploadRoutes);
 app.use("/api/fees", feeRoutes);
 app.use("/api/payments", paymentsRoutes);
 app.use("/api/receipts", require("./routes/receiptRoutes"));
+app.use("/api/admission-letters", require("./routes/admissionLetterRoutes"));
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/scholarships", scholarshipRoutes);
@@ -157,6 +161,7 @@ app.use("/api/reports", require("./routes/reportRoutes"));
 app.use("/api/system", systemAnalyticsRoutes);
 app.use("/api/global-settings", globalSettingsRoutes);
 app.use("/api/notices", noticeRoutes);
+app.use("/api/academic-terms", academicTermRoutes);
 app.use("/api/security", require("./routes/securityRoutes"));
 app.use("/api/audit", require("./routes/auditRoutes"));
 app.use("/api/branch-admins", require("./routes/branchAdminRoutes"));
@@ -167,6 +172,8 @@ app.use("/api/landing/news", newsRoutes);
 app.use("/api/landing/events", eventRoutes);
 app.use("/api/landing/staff", staffRoutes);
 app.use("/api/landing/courses", publicCourseRoutes);
+app.use("/api/landing/popup", popupRoutes);
+app.use("/api/landing/partners", partnerRoutes);
 app.use("/api/push", pushRoutes);
 
 // 404 handler

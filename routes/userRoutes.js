@@ -9,6 +9,9 @@ const {
   updateUserStatus,
   getUserStatistics,
   transferUserToBranch,
+  assignBranches,
+  removeBranch,
+  getUserBranches,
 } = require("../controllers/userController");
 const {
   protect,
@@ -92,6 +95,20 @@ const mongoIdValidation = [
   param("id").isMongoId().withMessage("Valid user ID is required"),
 ];
 
+const branchAssignmentValidation = [
+  body("branchIds")
+    .isArray({ min: 1 })
+    .withMessage("branchIds must be a non-empty array"),
+  body("branchIds.*")
+    .isMongoId()
+    .withMessage("Each branch ID must be a valid MongoDB ObjectId"),
+];
+
+const branchIdValidation = [
+  param("userId").isMongoId().withMessage("Valid user ID is required"),
+  param("branchId").isMongoId().withMessage("Valid branch ID is required"),
+];
+
 // Apply authentication to all routes
 router.use(protect);
 
@@ -129,6 +146,28 @@ router.put(
   requireSuperAdmin,
   transferValidation,
   transferUserToBranch
+);
+
+// Branch assignment routes (SuperAdmin only)
+router.post(
+  "/:userId/branches",
+  param("userId").isMongoId().withMessage("Valid user ID is required"),
+  requireSuperAdmin,
+  branchAssignmentValidation,
+  assignBranches
+);
+
+router.delete(
+  "/:userId/branches/:branchId",
+  branchIdValidation,
+  requireSuperAdmin,
+  removeBranch
+);
+
+router.get(
+  "/:userId/branches",
+  param("userId").isMongoId().withMessage("Valid user ID is required"),
+  getUserBranches
 );
 
 module.exports = router;

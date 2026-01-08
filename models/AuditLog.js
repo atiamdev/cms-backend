@@ -66,6 +66,10 @@ const auditLogSchema = new mongoose.Schema(
         "BACKUP_CREATED",
         "BACKUP_RESTORED",
         "AUDIT_LOGS_VIEWED",
+        "SYNC_TOKEN_GENERATED",
+        "ENROLLMENT_CREATED",
+        "ENROLLMENT_UPDATED",
+        "ENROLLMENT_DELETED",
       ],
     },
 
@@ -89,6 +93,8 @@ const auditLogSchema = new mongoose.Schema(
         "EXPENSE",
         "ATTENDANCE",
         "SYSTEM_SETTINGS",
+        "AUTH_TOKEN",
+        "ENROLLMENT",
       ],
     },
 

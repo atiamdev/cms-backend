@@ -5,6 +5,7 @@ const Student = require("../models/Student");
 const Teacher = require("../models/Teacher");
 const Course = require("../models/Course");
 const Branch = require("../models/Branch");
+const AcademicTerm = require("../models/AcademicTerm");
 const { generateId } = require("../utils/helpers");
 const {
   canAccessBranchResource,
@@ -42,16 +43,8 @@ const createClass = async (req, res) => {
       branchId: req.branchId,
     };
 
-    // Validate academic term exists in branch
-    const branch = await Branch.findById(req.branchId);
-    if (!branch) {
-      return res.status(404).json({
-        success: false,
-        message: "Branch not found",
-      });
-    }
-
-    const academicTerm = branch.academicTerms.id(classData.academicTermId);
+    // Validate academic term exists
+    const academicTerm = await AcademicTerm.findById(classData.academicTermId);
     if (!academicTerm) {
       return res.status(400).json({
         success: false,

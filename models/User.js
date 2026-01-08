@@ -57,6 +57,19 @@ const userSchema = new mongoose.Schema(
         return !this.roles.includes("superadmin");
       },
     },
+    // Multiple branch assignment for admins (new field)
+    branchIds: {
+      type: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Branch",
+        },
+      ],
+      default: function () {
+        // Initialize with branchId if it exists
+        return this.branchId ? [this.branchId] : [];
+      },
+    },
     status: {
       type: String,
       enum: ["active", "inactive", "suspended", "pending"],
@@ -358,7 +371,43 @@ userSchema.methods.hasAnyRole = function (roles) {
 // Method to check if user belongs to branch (or is superadmin)
 userSchema.methods.canAccessBranch = function (branchId) {
   if (this.hasRole("superadmin")) return true;
-  return this.branchId && this.branchId.toString() === branchId.toString();
+  // Check both branchId (legacy) and branchIds (new)
+  if (this.branchId && this.branchId.toString() === branchId.toString()) {
+    return true;
+  }
+  if (this.branchIds && this.branchIds.length > 0) {
+    return this.branchIds.some((id) => id.toString() === branchId.toString());
+  }
+  return false;
+};
+
+// Method to add branch to admin
+userSchema.methods.addBranch = function (branchId) {
+  if (!this.branchIds) {
+    this.branchIds = [];
+  }
+  if (!this.branchIds.some((id) => id.toString() === branchId.toString())) {
+    this.branchIds.push(branchId);
+    // Update primary branchId if not set
+    if (!this.branchId) {
+      this.branchId = branchId;
+    }
+  }
+  return this.save();
+};
+
+// Method to remove branch from admin
+userSchema.methods.removeBranch = function (branchId) {
+  if (this.branchIds && this.branchIds.length > 0) {
+    this.branchIds = this.branchIds.filter(
+      (id) => id.toString() !== branchId.toString()
+    );
+    // If removing primary branch, set new primary
+    if (this.branchId && this.branchId.toString() === branchId.toString()) {
+      this.branchId = this.branchIds.length > 0 ? this.branchIds[0] : null;
+    }
+  }
+  return this.save();
 };
 
 // Method to generate and hash password reset token
@@ -380,7 +429,9 @@ userSchema.methods.getResetPasswordToken = function () {
 
 // Static method to find users by branch
 userSchema.statics.findByBranch = function (branchId, roles = null) {
-  const query = { branchId };
+  const query = {
+    $or: [{ branchId }, { branchIds: branchId }],
+  };
   if (roles) {
     query.roles = { $in: Array.isArray(roles) ? roles : [roles] };
   }

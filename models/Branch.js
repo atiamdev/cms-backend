@@ -30,31 +30,6 @@ const branchSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
-    academicTerms: [
-      {
-        name: {
-          type: String,
-          required: true,
-          trim: true,
-        },
-        startDate: {
-          type: Date,
-          required: true,
-        },
-        endDate: {
-          type: Date,
-          required: true,
-        },
-        isActive: {
-          type: Boolean,
-          default: false,
-        },
-        createdAt: {
-          type: Date,
-          default: Date.now,
-        },
-      },
-    ],
     configuration: {
       currency: {
         type: String,
@@ -111,41 +86,10 @@ branchSchema.index({ name: 1 });
 branchSchema.index({ status: 1 });
 branchSchema.index({ "contactInfo.email": 1 });
 
-// Virtual for active academic term
-branchSchema.virtual("activeAcademicTerm").get(function () {
-  return Array.isArray(this.academicTerms)
-    ? this.academicTerms.find((term) => term.isActive)
-    : null;
-});
-
 // Middleware to update updatedAt before saving
 branchSchema.pre("save", function (next) {
   this.updatedAt = Date.now();
   next();
 });
-
-// Method to get current academic term
-branchSchema.methods.getCurrentAcademicTerm = function () {
-  const now = new Date();
-  return this.academicTerms.find(
-    (term) => term.startDate <= now && term.endDate >= now
-  );
-};
-
-// Method to activate academic term
-branchSchema.methods.activateAcademicTerm = function (termId) {
-  // Deactivate all terms first
-  this.academicTerms.forEach((term) => {
-    term.isActive = false;
-  });
-
-  // Activate the specified term
-  const termToActivate = this.academicTerms.id(termId);
-  if (termToActivate) {
-    termToActivate.isActive = true;
-    return true;
-  }
-  return false;
-};
 
 module.exports = mongoose.model("Branch", branchSchema);
