@@ -1575,6 +1575,87 @@ const verifyPassword = async (req, res) => {
   }
 };
 
+// @desc    Generate sync token for branch attendance sync
+// @route   POST /api/auth/generate-sync-token
+// @access  Private (Superadmin only)
+const generateSyncToken = async (req, res) => {
+  try {
+    const { tokenName, expiresInDays = 365 } = req.body;
+
+    // Validate expiry
+    if (expiresInDays < 1 || expiresInDays > 730) {
+      return res.status(400).json({
+        success: false,
+        message: "Token expiry must be between 1 and 730 days",
+      });
+    }
+
+    // Create token payload with superadmin privileges
+    const payload = {
+      user: {
+        id: `sync-service-superadmin-${Date.now()}`,
+        email: req.user.email,
+        roles: ["superadmin"],
+        purpose: "attendance-sync",
+        tokenName: tokenName || "Sync Token",
+        generatedBy: req.user._id,
+        generatedAt: new Date().toISOString(),
+      },
+    };
+
+    // Generate long-lived token
+    const token = jwt.sign(payload, process.env.JWT_SECRET, {
+      expiresIn: `${expiresInDays}d`,
+    });
+
+    // Calculate expiry date
+    const expiryDate = new Date();
+    expiryDate.setDate(expiryDate.getDate() + expiresInDays);
+
+    // Log token generation
+    await AuditLogger.log({
+      user: req.user,
+      action: "SYNC_TOKEN_GENERATED",
+      resourceType: "AUTH_TOKEN",
+      description: `Generated sync token: ${tokenName || "Unnamed Token"}`,
+      req,
+      success: true,
+      severity: "MEDIUM",
+      category: "AUTHENTICATION",
+    });
+
+    res.json({
+      success: true,
+      message: "Sync token generated successfully",
+      data: {
+        token,
+        tokenName: tokenName || "Sync Token",
+        purpose: "attendance-sync",
+        expiresIn: `${expiresInDays} days`,
+        expiryDate: expiryDate.toISOString(),
+        generatedAt: new Date().toISOString(),
+        generatedBy: {
+          id: req.user._id,
+          name: req.user.fullName,
+          email: req.user.email,
+        },
+        instructions: {
+          usage: "Add this token to the .env file on branch Windows PC",
+          envVariable: "API_TOKEN",
+          scope: "All branches (cross-branch enabled)",
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Generate sync token error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error during token generation",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   register,
   registerECourseStudent,
@@ -1594,4 +1675,5 @@ module.exports = {
   connectGoogleAccount,
   getGoogleAuthUrl,
   disconnectGoogleAccount,
+  generateSyncToken,
 };

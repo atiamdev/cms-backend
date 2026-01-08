@@ -528,6 +528,10 @@ const exportFeeReport = async (req, res) => {
           .populate("studentId", "studentId userId currentClassId")
           .populate("studentId.userId", "firstName lastName email")
           .populate("studentId.currentClassId", "name")
+          .populate({
+            path: "academicTermId",
+            select: "name",
+          })
           .sort({ balance: -1 });
 
         data = outstanding.map((fee) => ({
@@ -535,7 +539,7 @@ const exportFeeReport = async (req, res) => {
           StudentName: `${fee.studentId.userId.firstName} ${fee.studentId.userId.lastName}`,
           Class: fee.studentId.currentClassId?.name || "N/A",
           AcademicYear: fee.academicYear,
-          AcademicTerm: fee.academicTerm,
+          AcademicTerm: fee.academicTermId?.name || "N/A",
           TotalDue: fee.totalAmountDue,
           AmountPaid: fee.amountPaid,
           Balance: fee.balance,

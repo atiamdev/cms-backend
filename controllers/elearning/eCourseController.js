@@ -1132,10 +1132,7 @@ class ECourseController {
 
       // Check branch visibility for branch-only courses
       if (course.visibility === "branch-only" && req.user.branchId) {
-        if (
-          course.branchId &&
-          course.branchId.toString() !== req.user.branchId.toString()
-        ) {
+        if (course.branchId && !req.user.canAccessBranch(course.branchId)) {
           return res.status(404).json({
             success: false,
             message: "Course not found",
@@ -1312,7 +1309,7 @@ class ECourseController {
       // Check branch access for non-superadmins
       if (
         !req.user.roles.includes("superadmin") &&
-        course.branchId.toString() !== req.user.branchId.toString()
+        !req.user.canAccessBranch(course.branchId)
       ) {
         return res.status(403).json({
           success: false,
@@ -1370,7 +1367,7 @@ class ECourseController {
       // Check branch access for non-superadmins
       if (
         !req.user.roles.includes("superadmin") &&
-        course.branchId.toString() !== req.user.branchId.toString()
+        !req.user.canAccessBranch(course.branchId)
       ) {
         return res.status(403).json({
           success: false,
@@ -1538,6 +1535,174 @@ class ECourseController {
       res.status(500).json({
         success: false,
         message: "Failed to fetch courses",
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * Manually enroll a student in an e-course (Admin only)
+   * Bypasses payment requirements, for cash payments or administrative enrollment
+   */
+  async manualEnrollStudent(req, res) {
+    try {
+      const { courseId } = req.params;
+      const { studentId, notes } = req.body;
+      const adminId = req.user._id;
+      const branchId = req.user.branchId;
+
+      // Validate required fields
+      if (!studentId) {
+        return res.status(400).json({
+          success: false,
+          message: "Student ID is required",
+        });
+      }
+
+      // Check if course exists
+      const course = await ECourse.findById(courseId);
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found",
+        });
+      }
+
+      // Check if course is published
+      if (course.status !== "published") {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot enroll in unpublished course",
+        });
+      }
+
+      // Find the user first
+      const user = await User.findById(studentId);
+      if (!user || !user.roles.includes("student")) {
+        return res.status(404).json({
+          success: false,
+          message: "Student not found",
+        });
+      }
+
+      // Find the Student document by userId
+      const Student = require("../../models/Student");
+      const studentDoc = await Student.findOne({ userId: studentId });
+      if (!studentDoc) {
+        return res.status(404).json({
+          success: false,
+          message: "Student profile not found",
+        });
+      }
+
+      // Check if student is from the same branch (admins can only enroll from their branch)
+      if (
+        req.user.roles.includes("admin") &&
+        !req.user.roles.includes("superadmin")
+      ) {
+        // Check if the student's branch is in the admin's assigned branches
+        const canAccess = req.user.canAccessBranch(studentDoc.branchId);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            message: "You can only enroll students from your assigned branches",
+          });
+        }
+      }
+
+      // Check if student is already enrolled (using Student document _id)
+      const existingEnrollment = await Enrollment.findOne({
+        studentId: studentDoc._id,
+        courseId,
+      });
+
+      if (existingEnrollment) {
+        return res.status(400).json({
+          success: false,
+          message: `Student is already enrolled in this course (Status: ${existingEnrollment.status})`,
+          data: {
+            enrollment: existingEnrollment,
+          },
+        });
+      }
+
+      // Check enrollment capacity
+      if (course.maxStudents > 0) {
+        const currentEnrollments = await Enrollment.countDocuments({
+          courseId,
+          status: { $in: ["active", "approved", "completed"] },
+        });
+
+        if (currentEnrollments >= course.maxStudents) {
+          return res.status(400).json({
+            success: false,
+            message: `Course is full (${currentEnrollments}/${course.maxStudents} students enrolled)`,
+          });
+        }
+      }
+
+      // Create manual enrollment (using Student document _id)
+      const enrollment = new Enrollment({
+        studentId: studentDoc._id,
+        courseId,
+        branchId: studentDoc.branchId,
+        enrollmentType: "manual", // Mark as manual enrollment
+        status: "active", // Auto-approve manual enrollments
+        enrollmentDate: new Date(),
+        enrolledBy: adminId,
+        notes: notes || "Manually enrolled by admin",
+      });
+
+      await enrollment.save();
+
+      // Populate enrollment data for response
+      await enrollment.populate([
+        {
+          path: "studentId",
+          select: "userId studentId admissionNumber studentType",
+        },
+        {
+          path: "courseId",
+          select: "title description thumbnail pricing",
+        },
+        {
+          path: "enrolledBy",
+          select: "firstName lastName email role",
+        },
+      ]);
+
+      // Log to audit trail
+      const AuditLog = require("../../models/AuditLog");
+      await AuditLog.create({
+        userId: adminId,
+        branchId,
+        action: "ENROLLMENT_CREATED",
+        resourceType: "ENROLLMENT",
+        resourceId: enrollment._id,
+        details: {
+          courseId,
+          courseTitle: course.title,
+          studentId: studentDoc._id,
+          studentName: `${user.firstName} ${user.lastName}`,
+          enrollmentType: "manual",
+          notes: notes || "Manually enrolled by admin",
+        },
+        ipAddress: req.ip,
+        userAgent: req.get("user-agent"),
+      });
+
+      res.status(201).json({
+        success: true,
+        message: "Student successfully enrolled in course",
+        data: {
+          enrollment,
+        },
+      });
+    } catch (error) {
+      console.error("Error manually enrolling student:", error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to enroll student",
         error: error.message,
       });
     }

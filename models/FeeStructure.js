@@ -38,18 +38,10 @@ const feeStructureSchema = new mongoose.Schema(
       required: [true, "Academic year is required"],
       trim: true,
     },
-    academicTerm: {
-      type: String,
-      required: [true, "Academic term is required"],
-      enum: [
-        "Term 1",
-        "Term 2",
-        "Term 3",
-        "Semester 1",
-        "Semester 2",
-        "Annual",
-      ],
-      trim: true,
+    academicTermId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AcademicTerm",
+      required: [true, "Academic term reference is required"],
     },
     feeComponents: [feeComponentSchema],
     totalAmount: {

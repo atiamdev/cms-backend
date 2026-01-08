@@ -22,18 +22,10 @@ const feeSchema = new mongoose.Schema(
       required: [true, "Academic year is required"],
       trim: true,
     },
-    academicTerm: {
-      type: String,
-      required: [true, "Academic term is required"],
-      enum: [
-        "Term 1",
-        "Term 2",
-        "Term 3",
-        "Semester 1",
-        "Semester 2",
-        "Annual",
-      ],
-      trim: true,
+    academicTermId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "AcademicTerm",
+      required: [true, "Academic term reference is required"],
     },
     feeComponents: [
       {
@@ -157,7 +149,7 @@ feeSchema.index({
   branchId: 1,
   studentId: 1,
   academicYear: 1,
-  academicTerm: 1,
+  academicTermId: 1,
 });
 feeSchema.index({ branchId: 1, status: 1 });
 feeSchema.index({ branchId: 1, dueDate: 1 });

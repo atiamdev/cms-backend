@@ -838,11 +838,27 @@ const syncFromBranch = async (req, res) => {
       });
     }
 
+    // Validate branchId is provided in request
+    if (!branchId) {
+      return res.status(400).json({
+        success: false,
+        message: "Branch ID is required",
+      });
+    }
+
+    // For cross-branch sync tokens, use the branchId from request
+    // For legacy tokens, use the user's branchId
+    const targetBranchId = req.isCrossBranchSync ? branchId : req.user.branchId;
+
     console.log(
       `📥 Receiving ${logs.length} attendance logs from ${
         branchName || "branch"
-      }`
+      } (Branch ID: ${targetBranchId})`
     );
+
+    if (req.isCrossBranchSync) {
+      console.log("✅ Using cross-branch superadmin token");
+    }
 
     const processedRecords = [];
     const syncErrors = [];
@@ -857,7 +873,7 @@ const syncFromBranch = async (req, res) => {
         // Search in Student collection by admission number
         if (log.admissionNumber) {
           student = await Student.findOne({
-            branchId: branchId || req.user.branchId,
+            branchId: targetBranchId,
             admissionNumber: log.admissionNumber,
           }).populate("userId");
 
@@ -869,7 +885,7 @@ const syncFromBranch = async (req, res) => {
         // If not found by admission number, try other fields in User collection
         if (!user) {
           user = await User.findOne({
-            branchId: branchId || req.user.branchId,
+            branchId: targetBranchId,
             $or: [
               { "profileDetails.admissionNumber": log.admissionNumber },
               { zktecoEnrollNumber: log.enrollNumber?.toString() },
@@ -922,7 +938,7 @@ const syncFromBranch = async (req, res) => {
 
         // Find or create attendance record for this user/date
         let attendance = await Attendance.findOne({
-          branchId: branchId || req.user.branchId,
+          branchId: targetBranchId,
           userId: user._id,
           date: dateOnly,
         });
@@ -955,7 +971,7 @@ const syncFromBranch = async (req, res) => {
 
           // Create new attendance record
           attendance = new Attendance({
-            branchId: branchId || req.user.branchId,
+            branchId: targetBranchId,
             userId: user._id,
             studentId,
             teacherId,
@@ -976,7 +992,7 @@ const syncFromBranch = async (req, res) => {
             },
             syncedAt: new Date(),
             syncSource: "zkteco_db",
-            recordedBy: req.user._id,
+            recordedBy: req.user._id || "sync-service",
             status: "present",
           });
         } else {

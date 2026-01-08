@@ -31,14 +31,16 @@ const scheduleStudentInactivityCheck = () => {
       try {
         const result = await checkAndMarkInactiveStudents();
 
-        if (result.success) {
+        if (result && result.success) {
           console.log(
-            `✅ [Scheduled Job] Inactivity check completed. Marked ${result.summary.totalMarkedInactive} students inactive.`
+            `✅ [Scheduled Job] Inactivity check completed. Marked ${
+              result.summary?.totalMarkedInactive || 0
+            } students inactive.`
           );
         } else {
           console.error(
             "❌ [Scheduled Job] Inactivity check failed:",
-            result.error
+            result?.error || "Unknown error"
           );
         }
       } catch (error) {

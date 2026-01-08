@@ -36,6 +36,15 @@ const EnrollmentSchema = new mongoose.Schema(
       enum: ["self", "manual", "invite-only"],
       default: "self",
     },
+    // Who enrolled the student (for manual enrollments)
+    enrolledBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    // Notes about the enrollment (e.g., "Cash payment received")
+    notes: {
+      type: String,
+    },
     // Approval workflow
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,

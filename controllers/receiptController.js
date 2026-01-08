@@ -123,7 +123,11 @@ const emailReceipt = async (req, res) => {
     })
       .populate({
         path: "feeId",
-        select: "academicYear academicTerm",
+        select: "academicYear academicTermId",
+        populate: {
+          path: "academicTermId",
+          select: "name",
+        },
       })
       .populate({
         path: "studentId",
@@ -210,7 +214,9 @@ const emailReceipt = async (req, res) => {
             ).toLocaleDateString()}</p>
             <p><strong>Payment Method:</strong> ${payment.paymentMethod.toUpperCase()}</p>
             <p><strong>Academic Year:</strong> ${payment.feeId.academicYear}</p>
-            <p><strong>Academic Term:</strong> ${payment.feeId.academicTerm}</p>
+            <p><strong>Academic Term:</strong> ${
+              payment.feeId.academicTermId?.name || "N/A"
+            }</p>
           </div>
           
           <p>If you have any questions about this payment, please contact our accounts department.</p>

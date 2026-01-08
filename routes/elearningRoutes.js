@@ -496,6 +496,54 @@ router.get(
   eCourseController.getCourseApprovalHistory
 );
 
+/**
+ * @swagger
+ * /api/elearning/courses/{courseId}/enroll-student:
+ *   post:
+ *     summary: Manually enroll a student in a course (Admin/SuperAdmin only)
+ *     description: Allows admins to manually enroll students, bypassing payment requirements. Useful for cash payments or administrative enrollment.
+ *     tags: [E-Learning - Enrollment]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: courseId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: The course ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - studentId
+ *             properties:
+ *               studentId:
+ *                 type: string
+ *                 description: The ID of the student to enroll
+ *               notes:
+ *                 type: string
+ *                 description: Optional notes about the enrollment (e.g., "Cash payment received")
+ *     responses:
+ *       201:
+ *         description: Student successfully enrolled
+ *       400:
+ *         description: Validation error or business logic error
+ *       404:
+ *         description: Course or student not found
+ *       403:
+ *         description: Unauthorized to enroll this student
+ */
+router.post(
+  "/courses/:courseId/enroll-student",
+  protect,
+  authorize("admin", "superadmin"),
+  eCourseController.manualEnrollStudent
+);
+
 // ===========================
 // LEARNING MODULE ROUTES
 // ===========================

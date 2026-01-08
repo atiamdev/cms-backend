@@ -24,7 +24,7 @@ const getFeeStructures = async (req, res) => {
       limit = 10,
       classId,
       academicYear,
-      academicTerm,
+      academicTermId,
       isActive,
       branchId, // Allow superadmin to filter by specific branch
     } = req.query;
@@ -35,7 +35,7 @@ const getFeeStructures = async (req, res) => {
 
     if (classId) query.classId = classId;
     if (academicYear) query.academicYear = academicYear;
-    if (academicTerm) query.academicTerm = academicTerm;
+    if (academicTermId) query.academicTermId = academicTermId;
     if (isActive !== undefined) query.isActive = isActive === "true";
 
     const feeStructures = await FeeStructure.find(query)
@@ -120,7 +120,7 @@ const getFees = async (req, res) => {
         balanceAmount: effectiveBalance,
         status: fee.status,
         academicYear: fee.academicYear,
-        academicTerm: fee.academicTerm,
+        academicTermId: fee.academicTermId,
         scholarshipAmount: fee.scholarshipAmount,
         originalDueAmount: fee.totalAmountDue, // Keep original for reference
       };
@@ -164,7 +164,7 @@ const createFeeStructure = async (req, res) => {
     const {
       classId,
       academicYear,
-      academicTerm,
+      academicTermId,
       feeComponents,
       totalAmount, // Accept totalAmount from frontend
       dueDate,
@@ -179,7 +179,7 @@ const createFeeStructure = async (req, res) => {
       branchId: req.user.branchId,
       classId,
       academicYear,
-      academicTerm,
+      academicTermId,
       isActive: true,
     });
 
@@ -195,7 +195,7 @@ const createFeeStructure = async (req, res) => {
       branchId: req.user.branchId,
       classId,
       academicYear,
-      academicTerm,
+      academicTermId,
       feeComponents,
       totalAmount:
         totalAmount ||
@@ -288,7 +288,7 @@ const assignFeesToStudents = async (req, res) => {
         const existingFee = await Fee.findOne({
           studentId: student._id,
           academicYear: feeStructure.academicYear,
-          academicTerm: feeStructure.academicTerm,
+          academicTermId: feeStructure.academicTermId,
           branchId: req.user.branchId,
         });
 
@@ -311,7 +311,7 @@ const assignFeesToStudents = async (req, res) => {
           studentId: student._id,
           feeStructureId: feeStructure._id,
           academicYear: feeStructure.academicYear,
-          academicTerm: feeStructure.academicTerm,
+          academicTermId: feeStructure.academicTermId,
           feeComponents: feeStructure.feeComponents,
           totalAmountDue: totalAmountDue,
           discountAmount: applyDiscount ? discountAmount || 0 : 0,
@@ -412,7 +412,7 @@ const assignFeesToStudents = async (req, res) => {
 const getStudentFees = async (req, res) => {
   try {
     const { studentId } = req.params;
-    const { academicYear, academicTerm, status } = req.query;
+    const { academicYear, academicTermId, status } = req.query;
 
     // Authorization check
     if (
@@ -431,13 +431,13 @@ const getStudentFees = async (req, res) => {
     };
 
     if (academicYear) query.academicYear = academicYear;
-    if (academicTerm) query.academicTerm = academicTerm;
+    if (academicTermId) query.academicTermId = academicTermId;
     if (status) query.status = status;
 
     const fees = await Fee.find(query)
       .populate("studentId", "studentId userId")
       .populate("studentId.userId", "firstName lastName email")
-      .populate("feeStructureId", "academicYear academicTerm")
+      .populate("feeStructureId", "academicYear academicTermId")
       .sort({ createdAt: -1 });
 
     // Get payment history for these fees
@@ -484,7 +484,7 @@ const getOutstandingFeesReport = async (req, res) => {
       limit = 10,
       classId,
       academicYear,
-      academicTerm,
+      academicTermId,
       minBalance,
     } = req.query;
 
@@ -505,7 +505,7 @@ const getOutstandingFeesReport = async (req, res) => {
     }
 
     if (academicYear) query.academicYear = academicYear;
-    if (academicTerm) query.academicTerm = academicTerm;
+    if (academicTermId) query.academicTermId = academicTermId;
     if (minBalance) query.balance = { $gte: parseFloat(minBalance) };
 
     const outstandingFees = await Fee.find(query)

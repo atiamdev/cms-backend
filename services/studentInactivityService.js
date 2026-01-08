@@ -50,7 +50,7 @@ const getSystemUser = async (branchId) => {
       roles: ["admin"],
       branchId: branchId,
       emailVerified: true,
-      isActive: true,
+      status: "active", // Changed from isActive to status
     });
     console.log("✅ Created system user for automated operations");
   }
@@ -238,7 +238,7 @@ const checkAndMarkInactiveStudents = async () => {
 
   try {
     // Get all branches
-    const branches = await Branch.find({ isActive: true }).select("_id name");
+    const branches = await Branch.find({ status: "active" }).select("_id name");
 
     if (branches.length === 0) {
       console.log("⚠️  No active branches found");
@@ -298,9 +298,23 @@ const checkAndMarkInactiveStudents = async () => {
     };
   } catch (error) {
     console.error("❌ Error in inactivity check:", error);
+
+    // Calculate summary even if there's an error
+    const totalChecked = allResults.reduce((sum, r) => sum + r.totalChecked, 0);
+    const totalMarkedInactive = allResults.reduce(
+      (sum, r) => sum + r.markedInactive,
+      0
+    );
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+
     return {
       success: false,
       error: error.message,
+      summary: {
+        totalChecked,
+        totalMarkedInactive,
+        duration: `${duration}s`,
+      },
       results: allResults,
     };
   }
@@ -622,7 +636,7 @@ const sendAtRiskNotificationsAllBranches = async () => {
   };
 
   try {
-    const branches = await Branch.find({ isActive: true }).select("_id name");
+    const branches = await Branch.find({ status: "active" }).select("_id name");
 
     if (branches.length === 0) {
       console.log("⚠️ No active branches found");
