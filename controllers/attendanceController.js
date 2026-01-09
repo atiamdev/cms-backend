@@ -624,7 +624,9 @@ const syncFromZKTeco = async (req, res) => {
               deviceId: deviceIp,
               deviceName: `ZKTeco-${deviceIp}`,
               biometricId: log.enrollNumber.toString(),
-              recordedBy: req.user._id,
+              recordedBy: mongoose.Types.ObjectId.isValid(req.user._id) 
+                ? req.user._id 
+                : (req.user.generatedBy || null),
               zktecoData: {
                 enrollNumber: log.enrollNumber.toString(),
                 verifyMode: log.verifyMode,
@@ -992,7 +994,9 @@ const syncFromBranch = async (req, res) => {
             },
             syncedAt: new Date(),
             syncSource: "zkteco_db",
-            recordedBy: req.user._id || "sync-service",
+            recordedBy: mongoose.Types.ObjectId.isValid(req.user._id) 
+              ? req.user._id 
+              : (req.user.generatedBy || null),
             status: "present",
           });
         } else {
