@@ -18,6 +18,13 @@ const getBranchFilter = (user) => {
   return isSuperAdmin(user) ? {} : { branchId: user.branchId };
 };
 
+// Helper function to get valid ObjectId from user (handles sync tokens)
+const getValidUserId = (user) => {
+  return mongoose.Types.ObjectId.isValid(user._id) 
+    ? user._id 
+    : (user.generatedBy || null);
+};
+
 // @desc    Get attendance records
 // @route   GET /api/attendance
 // @access  Private (Admin, Secretary, Teacher)
@@ -624,9 +631,7 @@ const syncFromZKTeco = async (req, res) => {
               deviceId: deviceIp,
               deviceName: `ZKTeco-${deviceIp}`,
               biometricId: log.enrollNumber.toString(),
-              recordedBy: mongoose.Types.ObjectId.isValid(req.user._id) 
-                ? req.user._id 
-                : (req.user.generatedBy || null),
+              recordedBy: getValidUserId(req.user),
               zktecoData: {
                 enrollNumber: log.enrollNumber.toString(),
                 verifyMode: log.verifyMode,
@@ -673,7 +678,7 @@ const syncFromZKTeco = async (req, res) => {
               attendance.clockOutTime = log.timestamp;
             }
 
-            attendance.lastModifiedBy = req.user._id;
+            attendance.lastModifiedBy = getValidUserId(req.user);
           }
 
           await attendance.save();
@@ -994,9 +999,7 @@ const syncFromBranch = async (req, res) => {
             },
             syncedAt: new Date(),
             syncSource: "zkteco_db",
-            recordedBy: mongoose.Types.ObjectId.isValid(req.user._id) 
-              ? req.user._id 
-              : (req.user.generatedBy || null),
+            recordedBy: getValidUserId(req.user),
             status: "present",
           });
         } else {
@@ -1014,7 +1017,7 @@ const syncFromBranch = async (req, res) => {
             attendance.clockInTime = utcDate;
           }
 
-          attendance.lastModifiedBy = req.user._id;
+          attendance.lastModifiedBy = getValidUserId(req.user);
           attendance.syncedAt = new Date();
         }
 
@@ -1026,7 +1029,7 @@ const syncFromBranch = async (req, res) => {
           try {
             const reactivateResult = await checkAndAutoReactivate(
               student._id,
-              req.user._id
+              getValidUserId(req.user)
             );
             if (reactivateResult.reactivated) {
               console.log(
@@ -1064,7 +1067,7 @@ const syncFromBranch = async (req, res) => {
     // Create audit log
     const AuditLog = require("../models/AuditLog");
     await AuditLog.create({
-      userId: req.user._id,
+      userId: getValidUserId(req.user),
       userName: `${req.user.firstName} ${req.user.lastName}`,
       userEmail: req.user.email,
       action: "DATA_IMPORT",
