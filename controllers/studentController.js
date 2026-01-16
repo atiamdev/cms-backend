@@ -17,6 +17,256 @@ const {
 } = require("../utils/accessControl");
 const { fillReceiptTemplate } = require("../utils/receiptUtils");
 
+/**
+ * Helper function to generate initial invoices for a newly registered student
+ * @param {String} studentId - Student's MongoDB ID
+ * @param {Array} courseIds - Array of course IDs the student is enrolled in
+ * @param {String} branchId - Branch ID
+ * @param {String} userId - User ID who is registering the student
+ * @param {Number} discountPercentage - Discount percentage to apply (0-100)
+ */
+async function generateInitialInvoicesForStudent(
+  studentId,
+  courseIds,
+  branchId,
+  userId,
+  discountPercentage = 0
+) {
+  try {
+    const Fee = require("../models/Fee");
+
+    // Fetch courses to check if they have createInvoiceOnEnrollment enabled
+    const courses = await Course.find({
+      _id: { $in: courseIds },
+      "feeStructure.createInvoiceOnEnrollment": true,
+    }).lean();
+
+    if (!courses || courses.length === 0) {
+      console.log("No courses with createInvoiceOnEnrollment enabled");
+      return { created: 0, skipped: courseIds.length };
+    }
+
+    console.log(
+      `Generating initial invoices for ${courses.length} courses with auto-invoice enabled`
+    );
+
+    const createdInvoices = [];
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1; // 1-12
+
+    for (const course of courses) {
+      const fs = course.feeStructure;
+      if (!fs || !fs.components || fs.components.length === 0) {
+        console.log(`Course ${course.name} has no fee components, skipping`);
+        continue;
+      }
+
+      // Calculate total amount from fee components
+      const totalAmount = fs.components.reduce(
+        (sum, comp) => sum + (comp.amount || 0),
+        0
+      );
+
+      if (totalAmount <= 0) {
+        console.log(`Course ${course.name} has zero fee amount, skipping`);
+        continue;
+      }
+
+      // Determine billing frequency and period
+      const frequency = fs.billingFrequency || "term";
+      let periodLabel = "";
+
+      switch (frequency) {
+        case "weekly":
+          periodLabel = `Week of ${now.toISOString().split("T")[0]}`;
+          break;
+        case "monthly":
+          periodLabel = `${now.toLocaleString("default", {
+            month: "long",
+          })} ${currentYear}`;
+          break;
+        case "quarterly":
+          const quarter = Math.floor((currentMonth - 1) / 3) + 1;
+          periodLabel = `Q${quarter} ${currentYear}`;
+          break;
+        case "annual":
+          periodLabel = `Academic Year ${currentYear}`;
+          break;
+        case "term":
+        default:
+          periodLabel = fs.academicTerm || "Term 1";
+          break;
+      }
+
+      // Check if invoice already exists for this student, course, and period
+      const existingInvoice = await Fee.findOne({
+        studentId: studentId,
+        courseId: course._id,
+        periodYear: currentYear,
+        periodMonth: currentMonth,
+        branchId: branchId,
+      });
+
+      if (existingInvoice) {
+        console.log(
+          `Invoice already exists for student ${studentId}, course ${course.name}`
+        );
+        continue;
+      }
+
+      // Determine academic year - use from fee structure or generate current academic year
+      const academicYear =
+        fs.academicYear || `${currentYear}/${currentYear + 1}`;
+
+      // Calculate scholarship amount (prefer student.scholarshipPercentage if present)
+      let scholarshipAmount = 0;
+      let appliedPct = 0;
+      try {
+        const Student = require("../models/Student");
+        const studentDoc = await Student.findById(studentId).select(
+          "scholarshipPercentage"
+        );
+        appliedPct =
+          studentDoc && studentDoc.scholarshipPercentage > 0
+            ? studentDoc.scholarshipPercentage
+            : discountPercentage > 0 && discountPercentage <= 100
+            ? discountPercentage
+            : 0;
+        scholarshipAmount =
+          appliedPct > 0 ? Math.round((totalAmount * appliedPct) / 100) : 0;
+      } catch (err) {
+        console.error("Error fetching student scholarship percentage:", err);
+        appliedPct =
+          discountPercentage > 0 && discountPercentage <= 100
+            ? discountPercentage
+            : 0;
+        scholarshipAmount =
+          appliedPct > 0 ? Math.round((totalAmount * appliedPct) / 100) : 0;
+      }
+
+      const amountAfterScholarship = totalAmount - scholarshipAmount;
+
+      // Create invoice (scholarships reflected in scholarshipAmount; discountAmount reserved for manual invoice-level discounts)
+      const invoice = new Fee({
+        branchId: branchId,
+        studentId: studentId,
+        courseId: course._id,
+        feeComponents: fs.components.map((comp) => ({
+          name: comp.name,
+          amount: comp.amount,
+          isOptional: comp.isOptional || false,
+          description: comp.description || "",
+        })),
+        totalAmountDue: totalAmount,
+        discountAmount: 0,
+        amountPaid: 0,
+        balance: amountAfterScholarship,
+        status: "unpaid",
+        dueDate:
+          fs.dueDate || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+        academicYear: academicYear,
+        academicTermId: null, // Can be set if you have academic term logic
+        invoiceNumber: `INV${currentYear}${currentMonth
+          .toString()
+          .padStart(2, "0")}${Date.now()}`,
+        periodYear: currentYear,
+        periodMonth: currentMonth,
+        periodLabel: periodLabel,
+        frequency: frequency,
+        invoiceType: frequency, // Set invoiceType to match frequency
+        scholarshipAmount: scholarshipAmount,
+        notes:
+          scholarshipAmount > 0
+            ? `Initial invoice generated on student registration for ${course.name}. Scholarship of ${appliedPct}% (KSh ${scholarshipAmount}) applied.`
+            : `Initial invoice generated on student registration for ${course.name}`,
+        createdBy: userId,
+      });
+
+      await invoice.save();
+      createdInvoices.push(invoice);
+      console.log(
+        `✅ Created invoice for student ${studentId}, course: ${course.name}, original: ${totalAmount}, discount: ${discountAmount} (${discountPercentage}%), final: ${amountAfterDiscount}`
+      );
+    }
+
+    return {
+      created: createdInvoices.length,
+      skipped: courseIds.length - createdInvoices.length,
+      invoices: createdInvoices,
+    };
+  } catch (error) {
+    console.error("Error generating initial invoices:", error);
+    // Don't throw error - let student registration succeed even if invoice generation fails
+    return { created: 0, skipped: courseIds.length, error: error.message };
+  }
+}
+
+/**
+ * Helper function to cancel/void unpaid invoices when courses are removed from a student
+ * @param {String} studentId - Student's MongoDB ID
+ * @param {Array} removedCourseIds - Array of course IDs that were removed
+ */
+async function cancelInvoicesForRemovedCourses(studentId, removedCourseIds) {
+  try {
+    const Fee = require("../models/Fee");
+
+    // Find unpaid invoices for the removed courses
+    const unpaidInvoices = await Fee.find({
+      studentId: studentId,
+      courseId: { $in: removedCourseIds },
+      status: { $in: ["unpaid", "partially_paid"] },
+    });
+
+    if (unpaidInvoices.length === 0) {
+      console.log("No unpaid invoices found for removed courses");
+      return { cancelled: 0 };
+    }
+
+    console.log(
+      `Found ${unpaidInvoices.length} unpaid invoices for removed courses`
+    );
+
+    let cancelledCount = 0;
+
+    for (const invoice of unpaidInvoices) {
+      // If invoice has partial payment, we don't auto-cancel it - requires manual review
+      if (invoice.amountPaid > 0) {
+        console.log(
+          `Invoice ${invoice.invoiceNumber} has partial payment (${invoice.amountPaid}), skipping auto-cancellation`
+        );
+        // You could add a flag here to mark it for manual review
+        invoice.notes =
+          (invoice.notes || "") +
+          `\n[ATTENTION] Course removed but invoice has partial payment. Requires manual review.`;
+        await invoice.save();
+        continue;
+      }
+
+      // Cancel fully unpaid invoices
+      invoice.status = "cancelled";
+      invoice.notes =
+        (invoice.notes || "") +
+        `\n[AUTO-CANCELLED] Course removed from student on ${
+          new Date().toISOString().split("T")[0]
+        }`;
+      await invoice.save();
+      cancelledCount++;
+      console.log(
+        `✅ Cancelled invoice ${invoice.invoiceNumber} for removed course`
+      );
+    }
+
+    return {
+      cancelled: cancelledCount,
+      requiresReview: unpaidInvoices.length - cancelledCount,
+    };
+  } catch (error) {
+    console.error("Error cancelling invoices for removed courses:", error);
+    return { cancelled: 0, error: error.message };
+  }
+}
+
 // @desc    Create a new student
 // @route   POST /api/students
 // @access  Private (Admin, Secretary)
@@ -59,6 +309,8 @@ const createStudent = async (req, res) => {
       medicalInfo,
       specialNeeds,
       courses, // Add courses field
+      discountPercentage, // Discount/Scholarship percentage during registration
+      discountReason, // Optional reason for the discount
     } = req.body;
 
     // Check if user with email already exists
@@ -254,7 +506,50 @@ const createStudent = async (req, res) => {
     // If courses were specified, assign them to the student
     if (courses && Array.isArray(courses) && courses.length > 0) {
       await student.assignCourses(courses);
+
+      // If discount/scholarship was specified at registration, create scholarship BEFORE generating invoices
+      const appliedDiscount =
+        discountPercentage || req.body.scholarshipPercentage || 0;
+      if (appliedDiscount && appliedDiscount > 0 && appliedDiscount <= 100) {
+        const Scholarship = require("../models/Scholarship");
+
+        const existingScholarship = await Scholarship.findOne({
+          studentId: student._id,
+          isActive: true,
+        });
+
+        if (!existingScholarship) {
+          const scholarship = new Scholarship({
+            studentId: student._id,
+            branchId: student.branchId,
+            percentage: appliedDiscount,
+            assignedBy: req.user._id,
+            reason: discountReason || "Discount applied during registration",
+          });
+          await scholarship.save();
+
+          // Update student record with scholarship
+          student.scholarshipPercentage = appliedDiscount;
+          student.scholarshipAssignedBy = req.user._id;
+          student.scholarshipAssignedDate = new Date();
+          student.scholarshipReason =
+            discountReason || "Discount applied during registration";
+          await student.save();
+        }
+      }
+
+      // Generate invoices for courses that have createInvoiceOnEnrollment enabled
+      // Scholarship/discount will be applied to invoices as scholarshipAmount
+      await generateInitialInvoicesForStudent(
+        student._id,
+        courses,
+        req.user.branchId,
+        req.user._id,
+        0 // rely on student.scholarshipPercentage instead of direct discount param
+      );
     }
+
+    // Scholarship is applied earlier before invoice generation (if provided during registration).
 
     // Populate student data
     await student.populate([
@@ -415,58 +710,210 @@ const getStudents = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "fees",
+          localField: "_id",
+          foreignField: "studentId",
+          as: "invoices",
+        },
+      },
+      {
         $addFields: {
           classInfo: { $arrayElemAt: ["$classInfo", 0] },
           branchInfo: { $arrayElemAt: ["$branchInfo", 0] },
           departmentInfo: { $arrayElemAt: ["$departmentInfo", 0] },
-          // Calculate scholarship amount based on percentage
+          // Calculate fees from invoices (new invoice-based system)
           fees: {
-            totalFeeStructure: { $ifNull: ["$fees.totalFeeStructure", 0] },
-            totalPaid: { $ifNull: ["$fees.totalPaid", 0] },
-            totalBalance: {
+            totalFeeStructure: {
               $subtract: [
                 {
                   $subtract: [
-                    { $ifNull: ["$fees.totalFeeStructure", 0] },
                     {
-                      $cond: {
-                        if: {
-                          $and: [
-                            { $gt: ["$scholarshipPercentage", 0] },
-                            { $gt: ["$fees.totalFeeStructure", 0] },
-                          ],
+                      $sum: {
+                        $map: {
+                          input: "$invoices",
+                          as: "invoice",
+                          in: { $ifNull: ["$$invoice.totalAmountDue", 0] },
                         },
-                        then: {
-                          $multiply: [
-                            "$fees.totalFeeStructure",
-                            { $divide: ["$scholarshipPercentage", 100] },
-                          ],
+                      },
+                    },
+                    {
+                      $sum: {
+                        $map: {
+                          input: "$invoices",
+                          as: "invoice",
+                          in: { $ifNull: ["$$invoice.discountAmount", 0] },
                         },
-                        else: 0,
                       },
                     },
                   ],
                 },
-                { $ifNull: ["$fees.totalPaid", 0] },
+                {
+                  $sum: {
+                    $map: {
+                      input: "$invoices",
+                      as: "invoice",
+                      in: { $ifNull: ["$$invoice.scholarshipAmount", 0] },
+                    },
+                  },
+                },
               ],
             },
-            feeStatus: { $ifNull: ["$fees.feeStatus", "pending"] },
-            scholarshipApplied: { $gt: ["$scholarshipPercentage", 0] },
-            scholarshipAmount: {
+            totalPaid: {
+              $sum: {
+                $map: {
+                  input: "$invoices",
+                  as: "invoice",
+                  in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                },
+              },
+            },
+            totalBalance: {
+              $subtract: [
+                {
+                  $subtract: [
+                    {
+                      $subtract: [
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.totalAmountDue", 0] },
+                            },
+                          },
+                        },
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.discountAmount", 0] },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    {
+                      $sum: {
+                        $map: {
+                          input: "$invoices",
+                          as: "invoice",
+                          in: { $ifNull: ["$$invoice.scholarshipAmount", 0] },
+                        },
+                      },
+                    },
+                  ],
+                },
+                {
+                  $sum: {
+                    $map: {
+                      input: "$invoices",
+                      as: "invoice",
+                      in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                    },
+                  },
+                },
+              ],
+            },
+            feeStatus: {
               $cond: {
                 if: {
-                  $and: [
-                    { $gt: ["$scholarshipPercentage", 0] },
-                    { $gt: ["$fees.totalFeeStructure", 0] },
+                  $eq: [
+                    {
+                      $subtract: [
+                        {
+                          $subtract: [
+                            {
+                              $subtract: [
+                                {
+                                  $sum: {
+                                    $map: {
+                                      input: "$invoices",
+                                      as: "invoice",
+                                      in: {
+                                        $ifNull: [
+                                          "$$invoice.totalAmountDue",
+                                          0,
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                                {
+                                  $sum: {
+                                    $map: {
+                                      input: "$invoices",
+                                      as: "invoice",
+                                      in: {
+                                        $ifNull: [
+                                          "$$invoice.discountAmount",
+                                          0,
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                            {
+                              $sum: {
+                                $map: {
+                                  input: "$invoices",
+                                  as: "invoice",
+                                  in: {
+                                    $ifNull: ["$$invoice.scholarshipAmount", 0],
+                                  },
+                                },
+                              },
+                            },
+                          ],
+                        },
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    0,
                   ],
                 },
-                then: {
-                  $multiply: [
-                    "$fees.totalFeeStructure",
-                    { $divide: ["$scholarshipPercentage", 100] },
-                  ],
+                then: "paid",
+                else: {
+                  $cond: {
+                    if: {
+                      $gt: [
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                            },
+                          },
+                        },
+                        0,
+                      ],
+                    },
+                    then: "partial",
+                    else: "pending",
+                  },
                 },
-                else: 0,
+              },
+            },
+            scholarshipApplied: { $gt: ["$scholarshipPercentage", 0] },
+            scholarshipAmount: {
+              $sum: {
+                $map: {
+                  input: "$invoices",
+                  as: "invoice",
+                  in: { $ifNull: ["$$invoice.scholarshipAmount", 0] },
+                },
               },
             },
           },
@@ -577,75 +1024,193 @@ const getCurrentStudent = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "fees",
+          localField: "_id",
+          foreignField: "studentId",
+          as: "invoices",
+        },
+      },
+      {
         $addFields: {
           userInfo: { $arrayElemAt: ["$userInfo", 0] },
           classInfo: { $arrayElemAt: ["$classInfo", 0] },
           branchInfo: { $arrayElemAt: ["$branchInfo", 0] },
-          // Calculate scholarship amount based on percentage
+          // Calculate fees from invoices (new invoice-based system)
           calculatedScholarshipAmount: {
-            $cond: {
-              if: {
-                $and: [
-                  { $gt: ["$scholarshipPercentage", 0] },
-                  { $gt: ["$fees.totalFeeStructure", 0] },
-                ],
+            $sum: {
+              $map: {
+                input: "$invoices",
+                as: "invoice",
+                in: { $ifNull: ["$$invoice.scholarshipAmount", 0] },
               },
-              then: {
-                $multiply: [
-                  "$fees.totalFeeStructure",
-                  { $divide: ["$scholarshipPercentage", 100] },
-                ],
-              },
-              else: 0,
             },
           },
           fees: {
-            totalFeeStructure: { $ifNull: ["$fees.totalFeeStructure", 0] },
-            totalPaid: { $ifNull: ["$fees.totalPaid", 0] },
+            totalFeeStructure: {
+              $sum: {
+                $map: {
+                  input: "$invoices",
+                  as: "invoice",
+                  in: { $ifNull: ["$$invoice.totalAmountDue", 0] },
+                },
+              },
+            },
+            totalPaid: {
+              $sum: {
+                $map: {
+                  input: "$invoices",
+                  as: "invoice",
+                  in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                },
+              },
+            },
             totalBalance: {
               $subtract: [
                 {
                   $subtract: [
-                    { $ifNull: ["$fees.totalFeeStructure", 0] },
                     {
-                      $cond: {
-                        if: {
-                          $and: [
-                            { $gt: ["$scholarshipPercentage", 0] },
-                            { $gt: ["$fees.totalFeeStructure", 0] },
-                          ],
+                      $subtract: [
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.totalAmountDue", 0] },
+                            },
+                          },
                         },
-                        then: {
-                          $multiply: [
-                            "$fees.totalFeeStructure",
-                            { $divide: ["$scholarshipPercentage", 100] },
-                          ],
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.discountAmount", 0] },
+                            },
+                          },
                         },
-                        else: 0,
+                      ],
+                    },
+                    {
+                      $sum: {
+                        $map: {
+                          input: "$invoices",
+                          as: "invoice",
+                          in: { $ifNull: ["$$invoice.scholarshipAmount", 0] },
+                        },
                       },
                     },
                   ],
                 },
-                { $ifNull: ["$fees.totalPaid", 0] },
+                {
+                  $sum: {
+                    $map: {
+                      input: "$invoices",
+                      as: "invoice",
+                      in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                    },
+                  },
+                },
               ],
             },
-            feeStatus: { $ifNull: ["$fees.feeStatus", "pending"] },
-            scholarshipApplied: { $gt: ["$scholarshipPercentage", 0] },
-            scholarshipAmount: {
+            feeStatus: {
               $cond: {
                 if: {
-                  $and: [
-                    { $gt: ["$scholarshipPercentage", 0] },
-                    { $gt: ["$fees.totalFeeStructure", 0] },
+                  $eq: [
+                    {
+                      $subtract: [
+                        {
+                          $subtract: [
+                            {
+                              $subtract: [
+                                {
+                                  $sum: {
+                                    $map: {
+                                      input: "$invoices",
+                                      as: "invoice",
+                                      in: {
+                                        $ifNull: [
+                                          "$$invoice.totalAmountDue",
+                                          0,
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                                {
+                                  $sum: {
+                                    $map: {
+                                      input: "$invoices",
+                                      as: "invoice",
+                                      in: {
+                                        $ifNull: [
+                                          "$$invoice.discountAmount",
+                                          0,
+                                        ],
+                                      },
+                                    },
+                                  },
+                                },
+                              ],
+                            },
+                            {
+                              $sum: {
+                                $map: {
+                                  input: "$invoices",
+                                  as: "invoice",
+                                  in: {
+                                    $ifNull: ["$$invoice.scholarshipAmount", 0],
+                                  },
+                                },
+                              },
+                            },
+                          ],
+                        },
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    0,
                   ],
                 },
-                then: {
-                  $multiply: [
-                    "$fees.totalFeeStructure",
-                    { $divide: ["$scholarshipPercentage", 100] },
-                  ],
+                then: "paid",
+                else: {
+                  $cond: {
+                    if: {
+                      $gt: [
+                        {
+                          $sum: {
+                            $map: {
+                              input: "$invoices",
+                              as: "invoice",
+                              in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                            },
+                          },
+                        },
+                        0,
+                      ],
+                    },
+                    then: "partial",
+                    else: "pending",
+                  },
                 },
-                else: 0,
+              },
+            },
+            scholarshipApplied: { $gt: ["$scholarshipPercentage", 0] },
+            scholarshipAmount: {
+              $sum: {
+                $map: {
+                  input: "$invoices",
+                  as: "invoice",
+                  in: { $ifNull: ["$$invoice.scholarshipAmount", 0] },
+                },
               },
             },
           },
@@ -885,8 +1450,42 @@ const updateStudent = async (req, res) => {
 
     // Handle course assignments if provided
     if (courses !== undefined) {
+      // Track old courses before updating
+      const oldCourseIds = currentStudent.courses.map((c) => c.toString());
+
       if (Array.isArray(courses)) {
         await student.assignCourses(courses);
+
+        // Find newly added courses (courses that weren't in oldCourseIds)
+        const newCourseIds = courses.filter(
+          (courseId) => !oldCourseIds.includes(courseId.toString())
+        );
+
+        // Find removed courses (courses that were in oldCourseIds but not in new courses)
+        const removedCourseIds = oldCourseIds.filter(
+          (courseId) => !courses.includes(courseId)
+        );
+
+        // Generate invoices for newly added courses
+        if (newCourseIds.length > 0) {
+          console.log(
+            `Generating invoices for ${newCourseIds.length} newly added courses`
+          );
+          // Pass existing student discount/scholarship percentage to new invoices
+          await generateInitialInvoicesForStudent(
+            student._id,
+            newCourseIds,
+            req.branchId,
+            req.user._id,
+            currentStudent.scholarshipPercentage || 0
+          );
+        }
+
+        // Handle removed courses - cancel unpaid invoices for removed courses
+        if (removedCourseIds.length > 0) {
+          console.log(`Handling ${removedCourseIds.length} removed courses`);
+          await cancelInvoicesForRemovedCourses(student._id, removedCourseIds);
+        }
       } else {
         await student.assignCourses([]);
       }
@@ -1848,6 +2447,8 @@ const recordStudentPayment = async (req, res) => {
 const getStudentPaymentHistory = async (req, res) => {
   try {
     const { id } = req.params;
+    const Fee = require("../models/Fee");
+    const Payment = require("../models/Payment");
 
     // Find student with payment history (use branchId from middleware)
     const student = await Student.findOne({
@@ -1859,7 +2460,9 @@ const getStudentPaymentHistory = async (req, res) => {
         { path: "currentClassId", select: "name capacity" },
         { path: "branchId", select: "name configuration" },
       ])
-      .select("studentId fees userId currentClassId branchId createdAt");
+      .select(
+        "studentId userId currentClassId branchId enrollmentDate createdAt admissionNumber"
+      );
 
     if (!student) {
       return res.status(404).json({
@@ -1868,24 +2471,106 @@ const getStudentPaymentHistory = async (req, res) => {
       });
     }
 
-    // Extract and format payment history
-    const paymentHistory = student.fees?.paymentHistory || [];
-    const sortedPayments = paymentHistory.sort(
-      (a, b) => new Date(b.paymentDate) - new Date(a.paymentDate)
+    // Fetch all invoices for this student with fee structure populated
+    const invoices = await Fee.find({
+      studentId: student._id,
+      branchId: req.branchId,
+    })
+      .populate("feeStructureId")
+      .sort({ dueDate: 1 });
+
+    // Fetch all payments for this student
+    const payments = await Payment.find({
+      studentId: student._id,
+      branchId: req.branchId,
+      status: { $in: ["completed", "verified"] },
+    }).sort({ paymentDate: -1 });
+
+    // Calculate credit balance (payments with feeId: null are credits)
+    const creditPayments = await Payment.find({
+      studentId: student._id,
+      branchId: req.branchId,
+      feeId: null, // Credits don't have specific fee/invoice
+      status: { $in: ["completed", "verified"] },
+    });
+    const creditBalance = creditPayments.reduce(
+      (sum, payment) => sum + payment.amount,
+      0
     );
 
-    // Calculate fee summary
+    // Calculate fee summary from invoices accounting for discounts and scholarships
+    const totalFeeStructure = invoices.reduce((sum, inv) => {
+      return (
+        sum +
+        ((inv.totalAmountDue || 0) -
+          (inv.discountAmount || 0) -
+          (inv.scholarshipAmount || 0))
+      );
+    }, 0);
+    const totalPaid = invoices.reduce(
+      (sum, inv) => sum + (inv.amountPaid || 0),
+      0
+    );
+    const totalBalance = invoices.reduce((sum, inv) => {
+      const expectedAmount =
+        (inv.totalAmountDue || 0) -
+        (inv.discountAmount || 0) -
+        (inv.scholarshipAmount || 0);
+      return sum + (expectedAmount - (inv.amountPaid || 0));
+    }, 0);
+    const totalScholarshipAmount = invoices.reduce((sum, inv) => {
+      return sum + (inv.scholarshipAmount || 0);
+    }, 0);
+
+    let feeStatus = "unpaid";
+    if (totalBalance === 0 && totalFeeStructure > 0) {
+      feeStatus = "paid";
+    } else if (totalPaid > 0 && totalBalance > 0) {
+      feeStatus = "partial";
+    }
+
+    // Format invoices for display using totalAmountDue (correct field)
+    const formattedInvoices = invoices.map((invoice) => {
+      return {
+        _id: invoice._id,
+        type: invoice.invoiceType || invoice.type,
+        dueDate: invoice.dueDate,
+        createdAt: invoice.createdAt,
+        periodMonth: invoice.periodMonth,
+        periodYear: invoice.periodYear,
+        periodLabel: invoice.periodLabel,
+        totalAmount: invoice.totalAmountDue || 0,
+        discountAmount: invoice.discountAmount || 0,
+        scholarshipAmount: invoice.scholarshipAmount || 0,
+        amountPaid: invoice.amountPaid || 0,
+        status: invoice.status,
+        invoiceNumber: invoice.invoiceNumber,
+        period: invoice.period,
+      };
+    });
+
+    // Format payment history with invoice applications
+    const paymentHistory = payments.map((payment) => ({
+      _id: payment._id,
+      amount: payment.amount,
+      paymentMethod: payment.paymentMethod,
+      referenceNumber: payment.receiptNumber,
+      paymentDate: payment.paymentDate,
+      notes: payment.notes,
+      status: payment.status,
+      invoicesPaid: payment.appliedToInvoices || [],
+    }));
+
     const feeSummary = {
-      totalFeeStructure: student.fees?.totalFeeStructure || 0,
-      totalPaid: student.fees?.totalPaid || 0,
-      totalBalance: student.fees?.totalBalance || 0,
-      feeStatus: student.fees?.feeStatus || "pending",
-      scholarshipAmount: student.fees?.scholarshipAmount || 0,
-      lastPaymentDate:
-        paymentHistory.length > 0
-          ? paymentHistory[paymentHistory.length - 1].paymentDate
-          : null,
-      totalPayments: paymentHistory.length,
+      totalFeeStructure,
+      totalPaid,
+      totalBalance,
+      creditBalance: creditBalance,
+      feeStatus,
+      scholarshipAmount: totalScholarshipAmount,
+      lastPaymentDate: payments.length > 0 ? payments[0].paymentDate : null,
+      totalPayments: payments.length,
+      totalInvoices: invoices.length,
     };
 
     res.json({
@@ -1893,14 +2578,15 @@ const getStudentPaymentHistory = async (req, res) => {
       data: {
         student: {
           _id: student._id,
-          studentId: student.studentId,
+          studentId: student.admissionNumber,
           userInfo: student.userId,
           class: student.currentClassId,
           branch: student.branchId,
-          enrollmentDate: student.createdAt,
+          enrollmentDate: student.enrollmentDate || student.createdAt,
         },
         feeSummary,
-        paymentHistory: sortedPayments,
+        invoices: formattedInvoices,
+        paymentHistory,
       },
     });
   } catch (error) {
@@ -2305,4 +2991,6 @@ module.exports = {
   getStudentCourseMaterials,
   getStudentWhatsappGroups,
   suspendStudent,
+  // Exported for tests and external usage
+  generateInitialInvoicesForStudent,
 };

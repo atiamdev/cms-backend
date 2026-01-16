@@ -653,6 +653,33 @@ const login = async (req, res) => {
       });
     }
 
+    // For students, also check academic status
+    if (user.roles.includes("student")) {
+      try {
+        const student = await Student.findOne({ userId: user._id }).select(
+          "academicStatus"
+        );
+        if (student && student.academicStatus !== "active") {
+          // Log failed login attempt for inactive student
+          await AuditLogger.logAuthenticationEvent(
+            user,
+            "USER_LOGIN_FAILED",
+            req,
+            false,
+            `Student academic status is ${student.academicStatus}`
+          );
+
+          return res.status(401).json({
+            success: false,
+            message: "Your student account is not active. Please contact administrator.",
+          });
+        }
+      } catch (error) {
+        console.error("Error checking student status:", error);
+        // Continue with login if student check fails (to avoid blocking valid users)
+      }
+    }
+
     // Reset login attempts on successful login
     if (user.loginAttempts > 0) {
       await user.resetLoginAttempts();

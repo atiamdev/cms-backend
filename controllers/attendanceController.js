@@ -20,9 +20,9 @@ const getBranchFilter = (user) => {
 
 // Helper function to get valid ObjectId from user (handles sync tokens)
 const getValidUserId = (user) => {
-  return mongoose.Types.ObjectId.isValid(user._id) 
-    ? user._id 
-    : (user.generatedBy || null);
+  return mongoose.Types.ObjectId.isValid(user._id)
+    ? user._id
+    : user.generatedBy || null;
 };
 
 // @desc    Get attendance records
@@ -39,6 +39,7 @@ const getAttendanceRecords = async (req, res) => {
       dateTo,
       userType,
       classId,
+      courseId,
       status,
       userId,
       search,
@@ -77,6 +78,25 @@ const getAttendanceRecords = async (req, res) => {
 
     if (userType) query.userType = userType;
     if (classId) query.classId = classId;
+
+    // Handle courseId filtering - need to find students enrolled in that course
+    if (courseId && userType === "student") {
+      const studentsInCourse = await Student.find({
+        $or: [
+          { courses: courseId },
+          { "courseEnrollments.courseId": courseId },
+        ],
+        ...branchFilter,
+      }).select("_id");
+
+      const studentIds = studentsInCourse.map((s) => s._id);
+      query.studentId = { $in: studentIds };
+
+      console.log(
+        `  📚 Filtering by courseId: ${courseId}, found ${studentIds.length} students`
+      );
+    }
+
     if (status) query.status = status;
     if (userId) query.userId = userId;
 
@@ -95,6 +115,7 @@ const getAttendanceRecords = async (req, res) => {
       dateTo,
       userType,
       classId,
+      courseId,
       status,
     });
     console.log("  Final Query:", JSON.stringify(query, null, 2));

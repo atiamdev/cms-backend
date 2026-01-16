@@ -15,7 +15,12 @@ const feeSchema = new mongoose.Schema(
     feeStructureId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "FeeStructure",
-      required: [true, "Fee structure reference is required"],
+      required: false, // Made optional for course-based fees
+    },
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+      required: false, // Used for course-based fees when feeStructureId is null
     },
     academicYear: {
       type: String,
@@ -25,7 +30,7 @@ const feeSchema = new mongoose.Schema(
     academicTermId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "AcademicTerm",
-      required: [true, "Academic term reference is required"],
+      required: false, // Made optional for monthly billing cycles
     },
     feeComponents: [
       {
@@ -73,11 +78,6 @@ const feeSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: [0, "Scholarship amount cannot be negative"],
-    },
-    lateFeeApplied: {
-      type: Number,
-      default: 0,
-      min: [0, "Late fee cannot be negative"],
     },
     dueDate: {
       type: Date,
@@ -132,11 +132,47 @@ const feeSchema = new mongoose.Schema(
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: [true, "Creator reference is required"],
+      required: false, // Made optional for automated/system-generated invoices
     },
     lastModifiedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
+    },
+    // Invoice metadata
+    invoiceType: {
+      type: String,
+      enum: ["term", "weekly", "monthly", "quarterly", "annual"],
+      default: "term",
+    },
+    // Period start date (for weekly/monthly/quarterly/annual invoices)
+    periodStart: {
+      type: Date,
+    },
+    // Legacy/monthly fields (kept for backward compatibility)
+    periodYear: {
+      type: Number,
+    },
+    periodMonth: {
+      type: Number,
+      min: 1,
+      max: 12,
+    },
+    // Optional link to course for course-level invoices
+    courseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Course",
+    },
+    // Consolidated invoice support
+    isConsolidated: {
+      type: Boolean,
+      default: false,
+    },
+    consolidatedFeeStructures: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FeeStructure",
+    }],
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
     },
   },
   {
@@ -151,6 +187,11 @@ feeSchema.index({
   academicYear: 1,
   academicTermId: 1,
 });
+// Ensure we don't create duplicate monthly invoices for same student and feeStructure for a period
+feeSchema.index({ feeStructureId: 1, studentId: 1, periodYear: 1, periodMonth: 1 }, { unique: true, partialFilterExpression: { periodYear: { $exists: true } } });
+// Unique invoice per feeStructure/student/periodStart to support multiple frequencies
+feeSchema.index({ feeStructureId: 1, studentId: 1, periodStart: 1 }, { unique: true, partialFilterExpression: { periodStart: { $exists: true } } });
+feeSchema.index({ branchId: 1, status: 1 });
 feeSchema.index({ branchId: 1, status: 1 });
 feeSchema.index({ branchId: 1, dueDate: 1 });
 feeSchema.index({ studentId: 1, status: 1 });
@@ -162,8 +203,7 @@ feeSchema.pre("save", function (next) {
     this.totalAmountDue -
     this.amountPaid -
     this.discountAmount -
-    this.scholarshipAmount +
-    this.lateFeeApplied;
+    this.scholarshipAmount;
 
   // Update status based on payment
   if (this.balance <= 0) {

@@ -51,7 +51,7 @@ const feeStructureSchema = new mongoose.Schema(
     },
     dueDate: {
       type: Date,
-      required: [true, "Due date is required"],
+      // optional now: monthly billing does not require a fixed due date
     },
     allowInstallments: {
       type: Boolean,
@@ -74,15 +74,21 @@ const feeStructureSchema = new mongoose.Schema(
         },
       },
     ],
-    lateFeeAmount: {
-      type: Number,
-      default: 0,
-      min: [0, "Late fee amount cannot be negative"],
+    // Billing frequency: 'term' = existing term-based invoice; 'monthly' = create monthly invoices
+    billingFrequency: {
+      type: String,
+      enum: ["term", "weekly", "monthly", "quarterly", "annual"],
+      default: "term",
     },
-    lateFeeGracePeriod: {
-      type: Number, // days
-      default: 7,
-      min: [0, "Grace period cannot be negative"],
+    // Create initial invoice upon student enrollment
+    createInvoiceOnEnrollment: {
+      type: Boolean,
+      default: false,
+    },
+    // Optional explicit per-period amount when billing periodically. If not set, totalAmount will be used as per-period amount.
+    perPeriodAmount: {
+      type: Number,
+      min: [0, "Per period amount cannot be negative"],
     },
     isActive: {
       type: Boolean,
