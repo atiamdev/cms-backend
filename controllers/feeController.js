@@ -5,6 +5,7 @@ const Student = require("../models/Student");
 const User = require("../models/User");
 const Notice = require("../models/Notice");
 const Class = require("../models/Class");
+const Course = require("../models/Course");
 const { validationResult } = require("express-validator");
 const {
   canAccessBranchResource,
@@ -13,6 +14,10 @@ const {
   isSuperAdmin,
   hasAdminPrivileges,
 } = require("../utils/accessControl");
+
+const {
+  generateMonthlyInvoices,
+} = require("../services/monthlyInvoiceService");
 
 // @desc    Get all fee structures for a branch
 // @route   GET /api/fees/structures
@@ -172,6 +177,8 @@ const createFeeStructure = async (req, res) => {
       installmentSchedule,
       lateFeeAmount,
       lateFeeGracePeriod,
+      billingFrequency, // 'term' or 'monthly'
+      perPeriodAmount,
     } = req.body;
 
     // Check if fee structure already exists for this class, year, and term
@@ -205,6 +212,9 @@ const createFeeStructure = async (req, res) => {
       installmentSchedule: allowInstallments ? installmentSchedule : [],
       lateFeeAmount,
       lateFeeGracePeriod,
+      billingFrequency: billingFrequency || "term",
+      perPeriodAmount: perPeriodAmount !== undefined ? perPeriodAmount : null,
+      createInvoiceOnEnrollment: req.body.createInvoiceOnEnrollment || false,
       createdBy: req.user._id,
     });
 
@@ -403,6 +413,39 @@ const assignFeesToStudents = async (req, res) => {
       message: "Server error",
       error: error.message,
     });
+  }
+};
+
+// @desc    Generate monthly invoices for 'monthly' fee structures (manual trigger)
+// @route   POST /api/fees/generate-monthly
+// @access  Private (Admin, Secretary)
+const generateMonthlyInvoicesRoute = async (req, res) => {
+  try {
+    const { year, month, branchId } = req.body || {};
+
+    const now = new Date();
+    const periodYear = year ? parseInt(year) : now.getFullYear();
+    const periodMonth = month ? parseInt(month) : now.getMonth() + 1; // 1-12
+
+    const result = await generateMonthlyInvoices({
+      periodYear,
+      periodMonth,
+      branchId,
+      initiatedBy: req.user._id,
+    });
+
+    res.json({
+      success: true,
+      message: `Generated invoices for ${periodYear}-${String(
+        periodMonth
+      ).padStart(2, "0")}`,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Generate monthly invoices error:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
@@ -662,8 +705,19 @@ const getBranchStudentFeeSummaries = async (req, res) => {
       sortBy = "name",
       sortOrder = "asc",
       balanceFilter = "all",
+      viewType, // "monthly" or "total"
+      view, // alias for viewType
+      periodYear,
+      periodMonth,
+      year, // alias for periodYear
+      month, // alias for periodMonth
     } = req.query;
     const branchId = req.user.branchId;
+
+    // Support both parameter naming conventions
+    const actualViewType = viewType || view || "total";
+    const actualYear = periodYear || year;
+    const actualMonth = periodMonth || month;
 
     // Build student query
     const studentQuery = {
@@ -702,50 +756,116 @@ const getBranchStudentFeeSummaries = async (req, res) => {
           return {
             student: {
               _id: student._id,
-              firstName: student.firstName,
-              lastName: student.lastName,
-              email: student.email,
+              userId: student._id,
               studentId: student.profileDetails?.studentId,
+              admissionNumber: student.profileDetails?.studentId,
+              photoUrl: student.profileDetails?.profilePicture,
+              userInfo: {
+                _id: student._id,
+                firstName:
+                  student.firstName || student.profileDetails?.firstName,
+                lastName: student.lastName || student.profileDetails?.lastName,
+                email: student.email,
+                profileDetails: {
+                  profilePicture: student.profileDetails?.profilePicture,
+                  firstName:
+                    student.firstName || student.profileDetails?.firstName,
+                  lastName:
+                    student.lastName || student.profileDetails?.lastName,
+                },
+              },
               class: null,
             },
-            feeSummary: {
-              totalExpected: 0,
-              totalPaid: 0,
-              balance: 0,
-              feesCount: 0,
-            },
+            expected: 0,
+            paid: 0,
+            balance: 0,
+            feesCount: 0,
           };
         }
 
         const studentId = studentProfile._id;
 
-        // Calculate effective amounts accounting for scholarships
-        const totalFeeStructure = studentProfile.fees?.totalFeeStructure || 0;
-        const scholarshipAmount =
-          studentProfile.scholarshipPercentage > 0
-            ? Math.round(
-                (totalFeeStructure * studentProfile.scholarshipPercentage) / 100
-              )
-            : 0;
-        const effectiveExpected = totalFeeStructure - scholarshipAmount;
-        const totalPaid = studentProfile.fees?.totalPaid || 0;
-        const effectiveBalance = effectiveExpected - totalPaid;
+        // Calculate expected amount and paid amount
+        // Expected: From invoices (totalAmountDue - discounts - scholarships = what student should pay)
+        // Paid: From invoices (amountPaid - tracks what was actually applied to that invoice)
+        let totalExpected = 0;
+        let totalPaid = 0;
+
+        if (actualViewType === "monthly" && actualYear && actualMonth) {
+          // Monthly view: Get invoices for specific month
+          const monthFees = await Fee.find({
+            studentId,
+            invoiceType: "monthly",
+            periodYear: parseInt(actualYear),
+            periodMonth: parseInt(actualMonth),
+          });
+
+          // Sum up expected amounts (after discounts/scholarships) and paid amounts
+          totalExpected = monthFees.reduce(
+            (sum, fee) =>
+              sum +
+              ((fee.totalAmountDue || 0) -
+                (fee.discountAmount || 0) -
+                (fee.scholarshipAmount || 0)),
+            0
+          );
+          totalPaid = monthFees.reduce(
+            (sum, fee) => sum + (fee.amountPaid || 0),
+            0
+          );
+        } else {
+          // Total view: Get ALL invoices for this student
+          const allFees = await Fee.find({
+            studentId,
+            invoiceType: "monthly",
+          });
+
+          // Sum up all expected amounts (after discounts/scholarships) and paid amounts across all invoices
+          totalExpected = allFees.reduce(
+            (sum, fee) =>
+              sum +
+              ((fee.totalAmountDue || 0) -
+                (fee.discountAmount || 0) -
+                (fee.scholarshipAmount || 0)),
+            0
+          );
+          totalPaid = allFees.reduce(
+            (sum, fee) => sum + (fee.amountPaid || 0),
+            0
+          );
+        }
+
+        // Note: Scholarships are already applied in the invoice generation
+        // The totalAmountDue in invoices already reflects scholarship discounts
+        const effectiveBalance = totalExpected - totalPaid;
 
         return {
           student: {
-            _id: student._id,
-            firstName: student.firstName,
-            lastName: student.lastName,
-            email: student.email,
-            studentId: student.profileDetails?.studentId,
+            _id: studentProfile._id,
+            userId: student._id,
+            studentId:
+              student.profileDetails?.studentId || studentProfile.studentId,
+            admissionNumber: studentProfile.admissionNumber,
+            photoUrl: student.profileDetails?.profilePicture,
+            userInfo: {
+              _id: student._id,
+              firstName: student.firstName || student.profileDetails?.firstName,
+              lastName: student.lastName || student.profileDetails?.lastName,
+              email: student.email,
+              profileDetails: {
+                profilePicture: student.profileDetails?.profilePicture,
+                firstName:
+                  student.firstName || student.profileDetails?.firstName,
+                lastName: student.lastName || student.profileDetails?.lastName,
+              },
+            },
             class: studentProfile.currentClassId,
+            currentClassId: studentProfile.currentClassId,
           },
-          feeSummary: {
-            totalExpected: effectiveExpected,
-            totalPaid,
-            balance: effectiveBalance,
-            feesCount: studentProfile.courses?.length || 0, // Number of courses = number of fees
-          },
+          expected: totalExpected,
+          paid: totalPaid,
+          balance: effectiveBalance,
+          feesCount: studentProfile.courses?.length || 0,
         };
       })
     );
@@ -756,13 +876,11 @@ const getBranchStudentFeeSummaries = async (req, res) => {
       filteredSummaries = studentSummaries.filter((item) => {
         switch (balanceFilter) {
           case "outstanding":
-            return item.feeSummary.balance > 0;
+            return item.balance > 0;
           case "paid":
-            return (
-              item.feeSummary.balance <= 0 && item.feeSummary.totalPaid > 0
-            );
+            return item.balance <= 0 && item.paid > 0;
           case "overpaid":
-            return item.feeSummary.balance < 0;
+            return item.balance < 0;
           default:
             return true;
         }
@@ -775,21 +893,25 @@ const getBranchStudentFeeSummaries = async (req, res) => {
 
       switch (sortBy) {
         case "balance":
-          aValue = a.feeSummary.balance;
-          bValue = b.feeSummary.balance;
+          aValue = a.balance;
+          bValue = b.balance;
           break;
         case "paid":
-          aValue = a.feeSummary.totalPaid;
-          bValue = b.feeSummary.totalPaid;
+          aValue = a.paid;
+          bValue = b.paid;
           break;
         case "expected":
-          aValue = a.feeSummary.totalExpected;
-          bValue = b.feeSummary.totalExpected;
+          aValue = a.expected;
+          bValue = b.expected;
           break;
         case "name":
         default:
-          aValue = `${a.student.firstName} ${a.student.lastName}`.toLowerCase();
-          bValue = `${b.student.firstName} ${b.student.lastName}`.toLowerCase();
+          aValue = `${a.student.userInfo?.firstName || ""} ${
+            a.student.userInfo?.lastName || ""
+          }`.toLowerCase();
+          bValue = `${b.student.userInfo?.firstName || ""} ${
+            b.student.userInfo?.lastName || ""
+          }`.toLowerCase();
           break;
       }
 
@@ -932,4 +1054,5 @@ module.exports = {
   updateFee,
   getBranchStudentFeeSummaries,
   sendFeeReminders,
+  generateMonthlyInvoicesRoute,
 };

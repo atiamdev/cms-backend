@@ -241,6 +241,19 @@ const courseSchema = new mongoose.Schema(
           },
         },
       ],
+      billingFrequency: {
+        type: String,
+        enum: ["term", "weekly", "monthly", "quarterly", "annual"],
+        default: "term",
+      },
+      perPeriodAmount: {
+        type: Number,
+        min: [0, "Per period amount cannot be negative"],
+      },
+      createInvoiceOnEnrollment: {
+        type: Boolean,
+        default: false,
+      },
       academicTerm: {
         type: String,
         enum: [

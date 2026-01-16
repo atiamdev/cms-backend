@@ -364,60 +364,103 @@ async function getRevenueAnalysis(dateFilter, branchFilter) {
     },
   ]);
 
-  // Get fee data from Student model - fees are embedded in students
-  const Student = require("../models/Student");
-  const studentFeeAggregation = await Student.aggregate([
-    { $match: { ...branchFilter } },
+  // Get fee data from Fee collection (invoices) - NEW INVOICE-BASED SYSTEM
+  const feeMatch = { ...branchFilter };
+  if (Object.keys(dateFilter).length > 0) {
+    // Filter by invoice period date, not creation date
+    feeMatch.periodStart = dateFilter;
+  }
+
+  const feeAggregation = await Fee.aggregate([
+    { $match: feeMatch },
     {
       $group: {
         _id: null,
-        totalFeeCollection: { $sum: "$fees.totalFeeStructure" },
-        totalPaid: { $sum: "$fees.totalPaid" },
-        totalBalance: { $sum: "$fees.totalBalance" },
+        totalAmountDue: { $sum: "$totalAmountDue" },
+        totalPaid: { $sum: "$amountPaid" },
+        totalBalance: { $sum: "$balance" },
+        totalScholarships: { $sum: "$scholarshipAmount" },
+        totalDiscounts: { $sum: "$discountAmount" },
         paidCount: {
-          $sum: { $cond: [{ $eq: ["$fees.feeStatus", "paid"] }, 1, 0] },
+          $sum: { $cond: [{ $eq: ["$status", "paid"] }, 1, 0] },
         },
         partialCount: {
-          $sum: { $cond: [{ $eq: ["$fees.feeStatus", "partial"] }, 1, 0] },
+          $sum: { $cond: [{ $eq: ["$status", "partially_paid"] }, 1, 0] },
         },
         unpaidCount: {
-          $sum: { $cond: [{ $eq: ["$fees.feeStatus", "unpaid"] }, 1, 0] },
+          $sum: { $cond: [{ $eq: ["$status", "unpaid"] }, 1, 0] },
         },
-        studentCount: { $sum: 1 },
+        overdueCount: {
+          $sum: { $cond: [{ $eq: ["$status", "overdue"] }, 1, 0] },
+        },
+        invoiceCount: { $sum: 1 },
+      },
+    },
+  ]);
+
+  // Get overdue amount separately
+  const overdueMatch = {
+    status: "overdue",
+    ...branchFilter,
+  };
+  if (Object.keys(dateFilter).length > 0) {
+    // Filter by invoice period date, not creation date
+    overdueMatch.periodStart = dateFilter;
+  }
+
+  const overdueAggregation = await Fee.aggregate([
+    { $match: overdueMatch },
+    {
+      $group: {
+        _id: null,
+        totalOverdue: { $sum: "$balance" },
       },
     },
   ]);
 
   const revenue = revenueAggregation[0] || { totalPaid: 0, count: 0 };
-  const studentFees = studentFeeAggregation[0] || {
-    totalFeeCollection: 0,
+  const invoices = feeAggregation[0] || {
+    totalAmountDue: 0,
     totalPaid: 0,
     totalBalance: 0,
+    totalScholarships: 0,
+    totalDiscounts: 0,
     paidCount: 0,
     partialCount: 0,
     unpaidCount: 0,
-    studentCount: 0,
+    overdueCount: 0,
+    invoiceCount: 0,
   };
+  const overdueData = overdueAggregation[0] || { totalOverdue: 0 };
 
-  // Use student fees data for accurate totals
-  const totalFeeCollection = studentFees.totalFeeCollection || 0;
-  const totalPaid = studentFees.totalPaid || 0;
-  const totalPending = studentFees.totalBalance || 0;
-  // Overdue = balance from students with partial status past due dates (simplified to partial balance for now)
-  const totalOverdue = 0; // Would need installment due date checking for accurate overdue
+  // Calculate totals from invoices
+  const totalFeeCollection = invoices.totalAmountDue || 0;
+  const totalPaid = invoices.totalPaid || 0;
+  const totalPending = invoices.totalBalance || 0;
+  const totalOverdue = overdueData.totalOverdue || 0;
 
   return {
     totalFeeCollection: totalFeeCollection,
     totalPaid: totalPaid,
     totalPending: totalPending,
     totalOverdue: totalOverdue,
+    totalScholarships: invoices.totalScholarships || 0,
+    totalDiscounts: invoices.totalDiscounts || 0,
+    totalConcessions:
+      (invoices.totalScholarships || 0) + (invoices.totalDiscounts || 0),
     collectionRate:
       totalFeeCollection > 0 ? (totalPaid / totalFeeCollection) * 100 : 0,
     overdueRate:
       totalFeeCollection > 0 ? (totalOverdue / totalFeeCollection) * 100 : 0,
-    paidStudents: studentFees.paidCount,
-    partialStudents: studentFees.partialCount,
-    unpaidStudents: studentFees.unpaidCount,
+    paidInvoices: invoices.paidCount,
+    partialInvoices: invoices.partialCount,
+    unpaidInvoices: invoices.unpaidCount,
+    overdueInvoices: invoices.overdueCount,
+    totalInvoices: invoices.invoiceCount,
+    // Legacy fields for backward compatibility (will be same as invoice counts)
+    paidStudents: invoices.paidCount,
+    partialStudents: invoices.partialCount,
+    unpaidStudents: invoices.unpaidCount,
   };
 }
 
@@ -444,8 +487,9 @@ async function getScholarshipsAnalysis(dateFilter, branchFilter) {
     scholarshipAmount: { $gt: 0 },
     ...branchFilter,
   };
+  // Filter by invoice period date, not creation date
   if (Object.keys(dateFilter).length > 0) {
-    feeScholarshipMatch.createdAt = dateFilter;
+    feeScholarshipMatch.periodStart = dateFilter;
   }
 
   const feeScholarshipAggregation = await Fee.aggregate([
@@ -643,14 +687,43 @@ async function getMonthlyTrends(dateFilter, branchFilter, groupBy) {
     }
   });
 
-  return Array.from(trendsMap.values()).map((item) => ({
-    period: item,
-    revenue: item.revenue,
-    expenses: item.expenses,
-    netProfit: item.revenue - item.expenses,
-    revenueCount: item.revenueCount,
-    expenseCount: item.expenseCount,
-  }));
+  return Array.from(trendsMap.values()).map((item) => {
+    // Format month name for display
+    let monthName = "";
+    if (item.month) {
+      const monthNames = [
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+      ];
+      monthName = `${monthNames[item.month - 1]} ${item.year}`;
+    } else if (item.week) {
+      monthName = `Week ${item.week}, ${item.year}`;
+    } else if (item.quarter) {
+      monthName = `Q${item.quarter} ${item.year}`;
+    } else if (item.year) {
+      monthName = `${item.year}`;
+    }
+
+    return {
+      period: item,
+      month: monthName, // Add formatted month for frontend
+      revenue: item.revenue,
+      expenses: item.expenses,
+      netProfit: item.revenue - item.expenses,
+      revenueCount: item.revenueCount,
+      expenseCount: item.expenseCount,
+    };
+  });
 }
 
 async function getBranchReports(dateFilter) {

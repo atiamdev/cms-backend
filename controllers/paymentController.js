@@ -14,6 +14,11 @@ const {
   isSuperAdmin,
   hasAdminPrivileges,
 } = require("../utils/accessControl");
+const {
+  reconcilePayment,
+  getStudentCreditBalance,
+  getStudentPaymentSummary,
+} = require("../services/paymentReconciliationService");
 
 // Helper functions
 const validateAndFormatPhone = (phoneNumber) => {
@@ -33,87 +38,46 @@ const updateStudentFeesAfterPayment = async (
   checkExisting = false
 ) => {
   const student = await Student.findById(payment.studentId);
-  if (!student || !student.fees) {
-    console.error("Student or student fees not found:", payment.studentId);
+  if (!student) {
+    console.error("Student not found:", payment.studentId);
     return;
   }
 
-  console.log("=== UPDATING STUDENT FEES ===");
+  console.log("=== APPLYING PAYMENT TO INVOICES ===");
   console.log("Student ID:", student.studentId);
   console.log("Payment amount:", payment.amount);
-  console.log("Current totalPaid:", student.fees.totalPaid);
-  console.log("Current totalBalance:", student.fees.totalBalance);
   console.log("Transaction ref:", transactionRef);
 
-  const oldBalance = student.fees.totalBalance;
-  const oldTotalPaid = student.fees.totalPaid;
-
-  // Update totalPaid instead of totalBalance directly
-  // The pre-save middleware will recalculate totalBalance
-  student.fees.totalPaid += payment.amount;
-
-  console.log("New totalPaid after addition:", student.fees.totalPaid);
-
-  // Add to payment history
-  if (
-    !checkExisting ||
-    !student.fees.paymentHistory?.find(
-      (h) => h.referenceNumber === transactionRef
-    )
-  ) {
-    const paymentHistoryEntry = {
-      date: new Date(),
+  try {
+    // Use the payment reconciliation service to apply payment to invoices
+    const reconciliationResult = await reconcilePayment({
+      studentId: payment.studentId,
       amount: payment.amount,
-      paymentMethod:
-        payment.paymentMethod === "equity"
-          ? "equity-mpesa"
-          : payment.paymentMethod,
+      paymentMethod: payment.paymentMethod === "equity" ? "equity-mpesa" : payment.paymentMethod,
       referenceNumber: transactionRef || payment.receiptNumber,
+      paymentDate: new Date(),
+      recordedBy: payment.recordedBy,
       notes: `${
         payment.paymentMethod === "equity"
           ? "Equity Bank M-Pesa STK Push"
           : payment.paymentMethod
       } - Transaction: ${transactionRef || "N/A"}`,
-      recordedBy: payment.recordedBy,
-    };
+      branchId: payment.branchId,
+    });
 
-    if (!student.fees.paymentHistory) {
-      student.fees.paymentHistory = [];
-    }
-    student.fees.paymentHistory.push(paymentHistoryEntry);
-    console.log("Added payment history entry");
-  } else {
-    console.log("Payment history entry already exists, skipping");
+    console.log("Payment reconciliation result:", {
+      studentId: student.studentId,
+      amountApplied: reconciliationResult.amountApplied,
+      invoicesUpdated: reconciliationResult.invoicesUpdated?.length || 0,
+      creditRemaining: reconciliationResult.creditBalance || 0,
+    });
+
+    console.log("=== PAYMENT APPLIED SUCCESSFULLY ===");
+    return reconciliationResult;
+  } catch (error) {
+    console.error("Error applying payment to invoices:", error);
+    throw error;
   }
-
-  try {
-    await student.save();
-    console.log("Student record saved successfully");
-
-    // Verify the save by re-fetching
-    const verifyStudent = await Student.findById(payment.studentId);
-    console.log("Verified totalPaid after save:", verifyStudent.fees.totalPaid);
-    console.log(
-      "Verified totalBalance after save:",
-      verifyStudent.fees.totalBalance
-    );
-  } catch (saveError) {
-    console.error("Error saving student record:", saveError);
-    throw saveError;
-  }
-
-  console.log("Student fees updated:", {
-    studentId: student.studentId,
-    oldBalance,
-    oldTotalPaid,
-    newTotalPaid: student.fees.totalPaid,
-    newBalance:
-      student.fees.totalFeeStructure -
-      student.fees.totalPaid -
-      student.fees.scholarshipAmount,
-    amountPaid: payment.amount,
-  });
-  console.log("=== END UPDATING STUDENT FEES ===");
 };
 
 // Jenga Configuration
@@ -476,36 +440,68 @@ const handleEquityCallback = async (req, res) => {
         parseFloat(amount) || payment.amount;
       payment.equityDetails.status = status;
       payment.equityDetails.remarks = remarks;
+
+      // Mark this payment as completed before deleting
       payment.status = "completed";
       payment.verificationStatus = "verified";
       payment.verificationDate = new Date();
+      await payment.save();
 
-      // Update student fees balance
-      await updateStudentFeesAfterPayment(payment, transactionRef);
+      // Delete this payment record since we'll create proper ones via reconciliation
+      const studentId = payment.studentId;
+      const paymentAmount = payment.amount;
+      const branchId = payment.branchId;
+      const recordedBy = payment.recordedBy;
+      await Payment.findByIdAndDelete(payment._id);
 
-      // Update Fee record balance
-      if (payment.feeId) {
-        const fee = await Fee.findById(payment.feeId);
-        if (fee) {
-          fee.amountPaid += payment.amount;
-          await fee.save();
-          console.log("Fee record updated:", {
-            feeId: fee._id,
-            newAmountPaid: fee.amountPaid,
-          });
-        }
-      }
+      // Use payment reconciliation service to properly apply payment
+      const reconciliationResult = await reconcilePayment({
+        studentId: studentId,
+        amount: paymentAmount,
+        paymentMethod: "equity",
+        paymentDate: transactionDate || new Date(),
+        receiptNumber: transactionRef,
+        branchId: branchId,
+        recordedBy: recordedBy,
+        additionalDetails: {
+          equityDetails: {
+            transactionRef,
+            transactionDate: transactionDate || new Date(),
+            paymentMode,
+            billNumber,
+            serviceCharge,
+            confirmedAmount: parseFloat(amount) || paymentAmount,
+            status,
+            remarks,
+          },
+        },
+      });
 
-      // Handle course enrollment payments
-      if (payment.courseId) {
+      console.log("Payment reconciliation result:", reconciliationResult);
+
+      // Update legacy student.fees (for backward compatibility)
+      await updateStudentFeesAfterPayment(
+        {
+          studentId,
+          amount: paymentAmount,
+          paymentMethod: "equity",
+          receiptNumber: transactionRef,
+          recordedBy,
+        },
+        transactionRef
+      );
+
+      // Handle course enrollment payments (if applicable)
+      const courseId = payment.courseId;
+      if (courseId) {
         const { Enrollment, ECourse } = require("../models/elearning");
 
-        const course = await ECourse.findById(payment.courseId);
+        const course = await ECourse.findById(courseId);
         if (course) {
           const enrollmentData = {
-            studentId: payment.studentId,
-            courseId: payment.courseId,
-            branchId: payment.branchId,
+            studentId: studentId,
+            courseId: courseId,
+            branchId: branchId,
             enrollmentType: course.registration.type,
             status: "active",
           };
@@ -517,12 +513,23 @@ const handleEquityCallback = async (req, res) => {
             "Course enrollment created after successful Equity payment:",
             {
               enrollmentId: enrollment._id,
-              studentId: payment.studentId,
-              courseId: payment.courseId,
+              studentId: studentId,
+              courseId: courseId,
             }
           );
         }
       }
+
+      // Payment object was deleted, create a simple object for notification purposes
+      payment = {
+        _id: transactionRef,
+        studentId: studentId,
+        amount: paymentAmount,
+        status: "completed",
+        equityDetails: {
+          transactionRef,
+        },
+      };
     } else {
       // Payment failed
       console.log("Jenga M-Pesa STK Push payment failed:", status);
@@ -544,9 +551,12 @@ const handleEquityCallback = async (req, res) => {
         "Extracted failure reason:",
         payment.equityDetails.failureReason
       );
+      
+      await payment.save();
     }
 
-    await payment.save();
+    // Note: For successful payments, payment is now a plain object (original was deleted after reconciliation)
+    // For failed payments, payment is still the Mongoose document (saved above)
 
     // Send payment status notification
     try {
@@ -717,8 +727,19 @@ const initiateStudentEquityPayment = async (req, res) => {
       });
     }
 
+    // Check outstanding balance from invoices (new invoice-based system)
+    const unpaidInvoices = await Fee.find({
+      studentId: student._id,
+      status: { $in: ["unpaid", "partially_paid"] },
+    });
+
+    const totalOutstanding = unpaidInvoices.reduce((sum, invoice) => {
+      const balance = (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
+      return sum + balance;
+    }, 0);
+
     // Check if student has outstanding balance
-    if (!student.fees || student.fees.totalBalance <= 0) {
+    if (totalOutstanding <= 0) {
       return res.status(400).json({
         success: false,
         message: "No outstanding fees to pay",
@@ -726,10 +747,10 @@ const initiateStudentEquityPayment = async (req, res) => {
     }
 
     // Validate payment amount
-    if (amount <= 0 || amount > student.fees.totalBalance) {
+    if (amount <= 0 || amount > totalOutstanding) {
       return res.status(400).json({
         success: false,
-        message: `Invalid payment amount. Outstanding balance is ${student.fees.totalBalance}`,
+        message: `Invalid payment amount. Outstanding balance is KES ${totalOutstanding.toLocaleString()}`,
       });
     }
 
@@ -928,7 +949,7 @@ const recordManualPayment = async (req, res) => {
     }
 
     const {
-      feeId,
+      studentId,
       amount,
       paymentMethod,
       paymentDate,
@@ -939,60 +960,62 @@ const recordManualPayment = async (req, res) => {
       notes,
     } = req.body;
 
-    // Validate fee exists and belongs to the user's branch
-    const fee = await Fee.findOne({
-      _id: feeId,
+    // Validate student exists and belongs to the user's branch
+    const student = await Student.findOne({
+      _id: studentId,
       branchId: req.user.branchId,
-    }).populate("studentId", "studentId userId");
+    });
 
-    if (!fee) {
+    if (!student) {
       return res.status(404).json({
         success: false,
-        message: "Fee record not found",
+        message: "Student not found",
       });
     }
 
     // Validate payment amount
-    if (amount <= 0 || amount > fee.balance) {
+    if (amount <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid payment amount",
+        message: "Payment amount must be greater than zero",
       });
     }
 
-    // Create payment record
-    const payment = new Payment({
-      branchId: req.user.branchId,
-      feeId: fee._id,
-      studentId: fee.studentId._id,
-      amount,
-      paymentMethod,
+    // Generate receipt number if not provided
+    const receiptNumber = referenceNumber || `RCP-${Date.now()}`;
+
+    // Use payment reconciliation service
+    const reconciliationResult = await reconcilePayment({
+      studentId: student._id,
+      amount: amount,
+      paymentMethod: paymentMethod,
       paymentDate: paymentDate || new Date(),
-      status: "completed",
-      verificationStatus: "verified", // Secretary-recorded payments are automatically verified
-      manualPaymentDetails: {
-        referenceNumber,
-        bankName,
-        chequeNumber,
-        depositorName,
-        notes,
-      },
+      receiptNumber: receiptNumber,
+      branchId: req.user.branchId,
       recordedBy: req.user._id,
+      additionalDetails: {
+        manualPaymentDetails: {
+          referenceNumber: receiptNumber,
+          bankName,
+          chequeNumber,
+          depositorName,
+          notes,
+        },
+      },
     });
-
-    await payment.save();
-
-    // Update fee balance
-    fee.amountPaid += amount;
-    await fee.save();
-
-    await payment.populate("studentId", "studentId userId");
-    await payment.populate("studentId.userId", "firstName lastName");
 
     res.status(201).json({
       success: true,
-      message: "Manual payment recorded successfully",
-      data: payment,
+      message: reconciliationResult.message,
+      data: {
+        receiptNumber: reconciliationResult.receiptNumber,
+        totalAmount: reconciliationResult.totalAmount,
+        appliedToInvoices: reconciliationResult.appliedToInvoices,
+        creditAmount: reconciliationResult.creditAmount,
+        invoicesUpdated: reconciliationResult.invoicesUpdated,
+        invoicesPaid: reconciliationResult.invoicesPaid,
+        details: reconciliationResult.appliedPayments,
+      },
     });
   } catch (error) {
     console.error("Record manual payment error:", error);
@@ -1365,22 +1388,17 @@ const getUnpaidStudents = async (req, res) => {
           Math.floor((currentDate - dueDate) / (1000 * 60 * 60 * 24))
         );
 
-        // Total outstanding is the remaining balance after scholarship deduction
-        // This represents: (totalFeeStructure - scholarshipAmount) - totalPaid
-        const scholarshipAmount =
-          student.scholarshipPercentage > 0
-            ? Math.round(
-                (student.fees.totalFeeStructure *
-                  student.scholarshipPercentage) /
-                  100
-              )
-            : 0;
-        const effectiveFeeStructure =
-          student.fees.totalFeeStructure - scholarshipAmount;
-        const totalOutstanding = Math.max(
-          0,
-          effectiveFeeStructure - student.fees.totalPaid
-        );
+        // Total outstanding calculated from invoices (new invoice-based system)
+        // Query unpaid invoices for this student
+        const unpaidInvoices = await Fee.find({
+          studentId: student._id,
+          status: { $in: ["unpaid", "partially_paid"] },
+        });
+        
+        const totalOutstanding = unpaidInvoices.reduce((sum, invoice) => {
+          const balance = (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
+          return sum + Math.max(0, balance);
+        }, 0);
 
         unpaidStudents.push({
           _id: student._id,
@@ -1465,8 +1483,16 @@ const sendPaymentReminders = async (req, res) => {
                 (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
               )[0];
 
-        // Get the actual remaining balance (totalBalance)
-        const totalOutstanding = student.fees.totalBalance || 0;
+        // Get the actual remaining balance from invoices (new invoice-based system)
+        const unpaidInvoices = await Fee.find({
+          studentId: student._id,
+          status: { $in: ["unpaid", "partially_paid"] },
+        });
+        
+        const totalOutstanding = unpaidInvoices.reduce((sum, invoice) => {
+          const balance = (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
+          return sum + Math.max(0, balance);
+        }, 0);
 
         // Create payment reminder notice
         const notice = new Notice({
@@ -1531,6 +1557,104 @@ Secretary`,
   }
 };
 
+// @desc    Get student credit balance
+// @route   GET /api/payments/student/:studentId/credit
+// @access  Private (Admin, Secretary, Student - own data)
+const getStudentCredit = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    // Authorization check
+    if (req.user.roles.includes("student")) {
+      const student = await Student.findOne({ userId: req.user._id });
+      if (!student || student._id.toString() !== studentId) {
+        return res.status(403).json({
+          success: false,
+          message: "Unauthorized access",
+        });
+      }
+    }
+
+    // Validate student exists and belongs to the user's branch
+    const student = await Student.findOne({
+      _id: studentId,
+      branchId: req.user.branchId,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const creditBalance = await getStudentCreditBalance(studentId);
+
+    res.json({
+      success: true,
+      data: {
+        studentId,
+        creditBalance,
+        formattedBalance: `KES ${creditBalance.toLocaleString()}`,
+      },
+    });
+  } catch (error) {
+    console.error("Get student credit error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get comprehensive student payment summary
+// @route   GET /api/payments/student/:studentId/summary
+// @access  Private (Admin, Secretary, Student - own data)
+const getStudentPaymentSummaryEndpoint = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    // Authorization check
+    if (req.user.roles.includes("student")) {
+      const student = await Student.findOne({ userId: req.user._id });
+      if (!student || student._id.toString() !== studentId) {
+        return res.status(403).json({
+          success: false,
+          message: "Unauthorized access",
+        });
+      }
+    }
+
+    // Validate student exists and belongs to the user's branch
+    const student = await Student.findOne({
+      _id: studentId,
+      branchId: req.user.branchId,
+    });
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    const summary = await getStudentPaymentSummary(studentId);
+
+    res.json({
+      success: true,
+      data: summary,
+    });
+  } catch (error) {
+    console.error("Get student payment summary error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   initiateEquityPayment,
   initiateStudentEquityPayment,
@@ -1542,4 +1666,6 @@ module.exports = {
   getPayments,
   getUnpaidStudents,
   sendPaymentReminders,
+  getStudentCredit,
+  getStudentPaymentSummaryEndpoint,
 };

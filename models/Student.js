@@ -46,6 +46,26 @@ const studentSchema = new mongoose.Schema(
         ref: "Course",
       },
     ],
+    // Track when each course was enrolled (with enrollment dates)
+    courseEnrollments: [
+      {
+        courseId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Course",
+          required: true,
+        },
+        enrolledAt: {
+          type: Date,
+          default: Date.now,
+          required: true,
+        },
+        status: {
+          type: String,
+          enum: ["active", "completed", "dropped", "suspended"],
+          default: "active",
+        },
+      },
+    ],
     enrollmentDate: {
       type: Date,
       required: [true, "Enrollment date is required"],
@@ -664,6 +684,10 @@ studentSchema.methods.assignCourses = async function (courseIds) {
 
   // Calculate total fee based on assigned courses
   await this.calculateCourseFees();
+
+  // Note: Invoice generation is now handled in studentController.generateInitialInvoicesForStudent()
+  // during student registration and studentController.updateStudent() during updates.
+  // This prevents duplicate invoice creation and provides better control over the process.
 
   return this.save();
 };

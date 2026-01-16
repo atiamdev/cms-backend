@@ -10,36 +10,8 @@ const {
   hasAdminPrivileges,
 } = require("../utils/accessControl");
 
-// Helper function to update student's fee summary
-const updateStudentFeeSummary = async (studentId) => {
-  const fees = await Fee.find({ studentId });
-
-  const totalFeeStructure = fees.reduce(
-    (sum, fee) => sum + fee.totalAmountDue,
-    0
-  );
-  const totalPaid = fees.reduce((sum, fee) => sum + fee.amountPaid, 0);
-  const totalBalance = fees.reduce((sum, fee) => sum + fee.balance, 0);
-  const totalScholarship = fees.reduce(
-    (sum, fee) => sum + fee.scholarshipAmount,
-    0
-  );
-
-  let feeStatus = "pending";
-  if (totalBalance === 0 && totalFeeStructure > 0) {
-    feeStatus = "paid";
-  } else if (totalPaid > 0) {
-    feeStatus = "partial";
-  }
-
-  await Student.findByIdAndUpdate(studentId, {
-    "fees.totalFeeStructure": totalFeeStructure,
-    "fees.totalPaid": totalPaid,
-    "fees.totalBalance": totalBalance,
-    "fees.scholarshipAmount": totalScholarship,
-    "fees.feeStatus": feeStatus,
-  });
-};
+// Note: Student fee summaries are now calculated dynamically from invoices
+// in aggregation queries. No need to update student.fees fields directly.
 
 // @desc    Offer scholarship to a student
 // @route   POST /api/scholarships/offer
@@ -113,15 +85,22 @@ const offerScholarship = async (req, res) => {
     });
 
     for (const fee of unpaidFees) {
-      const scholarshipAmount = Math.round(
+      const computedAmount = Math.round(
         (fee.totalAmountDue * percentage) / 100
       );
-      fee.scholarshipAmount = scholarshipAmount;
+      // If invoice has an existing discount amount from legacy registration and no payments were made, migrate it to scholarshipAmount
+      if (fee.discountAmount > 0 && fee.amountPaid === 0) {
+        // Preserve audit trail: move discountAmount into scholarshipAmount and clear discount
+        fee.scholarshipAmount = fee.discountAmount;
+        fee.discountAmount = 0;
+      } else {
+        // Otherwise set scholarship amount based on computed percentage
+        fee.scholarshipAmount = computedAmount;
+      }
       await fee.save();
     }
 
-    // Recalculate student's total fee balance
-    await updateStudentFeeSummary(studentId);
+    // Note: Student fee summaries are calculated dynamically from invoices in queries
 
     res.status(201).json({
       success: true,
@@ -194,8 +173,7 @@ const revokeScholarship = async (req, res) => {
       await fee.save();
     }
 
-    // Recalculate student's total fee balance
-    await updateStudentFeeSummary(studentId);
+    // Note: Student fee summaries are calculated dynamically from invoices in queries
 
     res.json({
       success: true,

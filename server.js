@@ -159,6 +159,7 @@ app.use("/api/classes", classRoutes);
 app.use("/api/financial-reports", financialReportRoutes);
 app.use("/api/reports", require("./routes/reportRoutes"));
 app.use("/api/system", systemAnalyticsRoutes);
+app.use("/api/system", require("./routes/systemRoutes")); // System monitoring
 app.use("/api/global-settings", globalSettingsRoutes);
 app.use("/api/notices", noticeRoutes);
 app.use("/api/academic-terms", academicTermRoutes);

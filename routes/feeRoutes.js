@@ -12,7 +12,10 @@ const {
   updateFee,
   getBranchStudentFeeSummaries,
   sendFeeReminders,
+  generateMonthlyInvoicesRoute,
 } = require("../controllers/feeController");
+
+const { getStudentFeeSummaries } = require("../controllers/studentFeeSummaryController");
 
 const {
   initiateEquityPayment,
@@ -24,6 +27,8 @@ const {
   getPayments,
   getUnpaidStudents,
   sendPaymentReminders,
+  getStudentCredit,
+  getStudentPaymentSummaryEndpoint,
 } = require("../controllers/paymentController");
 
 const {
@@ -251,6 +256,14 @@ const router = express.Router();
  *         description: Insufficient permissions
  */
 router.get(
+  "/student-summaries",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary"]),
+  getStudentFeeSummaries
+);
+
+router.get(
   "/",
   protect,
   branchAuth,
@@ -319,16 +332,6 @@ router.post(
   [
     body("classId").notEmpty().withMessage("Class ID is required"),
     body("academicYear").notEmpty().withMessage("Academic year is required"),
-    body("academicTerm")
-      .isIn([
-        "Term 1",
-        "Term 2",
-        "Term 3",
-        "Semester 1",
-        "Semester 2",
-        "Annual",
-      ])
-      .withMessage("Invalid academic term"),
     body("feeComponents")
       .isArray({ min: 1 })
       .withMessage("At least one fee component is required"),
@@ -338,7 +341,10 @@ router.post(
     body("feeComponents.*.amount")
       .isFloat({ min: 0 })
       .withMessage("Fee component amount must be a positive number"),
-    body("dueDate").isISO8601().withMessage("Valid due date is required"),
+
+    body("billingFrequency").optional().isIn(["term","weekly","monthly","quarterly","annual"]).withMessage("Invalid billing frequency"),
+    body("createInvoiceOnEnrollment").optional().isBoolean().withMessage("Invalid createInvoiceOnEnrollment value"),
+    body("perPeriodAmount").optional().isFloat({ min: 0 }).withMessage("Per period amount must be a positive number"),
   ],
   createFeeStructure
 );
@@ -364,9 +370,33 @@ router.post(
   assignFeesToStudents
 );
 
+// Manual trigger for monthly invoice generation (admin)
+router.post(
+  "/generate-monthly",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary"]),
+  [
+    body("year").optional().isInt({ min: 2000 }).withMessage("Invalid year"),
+    body("month").optional().isInt({ min: 1, max: 12 }).withMessage("Invalid month"),
+  ],
+  generateMonthlyInvoicesRoute
+);
+
+
 // Fee Management Routes
 router.get("/student/:studentId", protect, branchAuth, getStudentFees);
 
+// Get student fee summaries for branch (with monthly/total filtering)
+router.get(
+  "/branch/student-summaries",
+  protect,
+  branchAuth,
+  authorize(["admin", "branchadmin", "secretary"]),
+  getBranchStudentFeeSummaries
+);
+
+// Legacy route (kept for backwards compatibility)
 router.get(
   "/branch/students",
   protect,
@@ -474,7 +504,7 @@ router.post(
   branchAuth,
   authorize(["admin", "secretary"]),
   [
-    body("feeId").notEmpty().withMessage("Fee ID is required"),
+    body("studentId").notEmpty().withMessage("Student ID is required"),
     body("amount")
       .isFloat({ min: 1 })
       .withMessage("Amount must be greater than 0"),
@@ -507,6 +537,23 @@ router.get(
 router.get("/payments/fee/:feeId", protect, branchAuth, getFeePaymentHistory);
 
 router.get("/payments", protect, branchAuth, getPayments);
+
+// Student credit and payment summary endpoints
+router.get(
+  "/payments/student/:studentId/credit",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary", "student"]),
+  getStudentCredit
+);
+
+router.get(
+  "/payments/student/:studentId/summary",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary", "student"]),
+  getStudentPaymentSummaryEndpoint
+);
 
 // Secretary Routes
 router.get(
