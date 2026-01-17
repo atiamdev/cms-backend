@@ -4,7 +4,9 @@ const Student = require("../models/Student");
 const User = require("../models/User");
 const Course = require("../models/Course");
 const Fee = require("../models/Fee");
-const { generateMonthlyInvoices } = require("../services/monthlyInvoiceService");
+const {
+  generateMonthlyInvoices,
+} = require("../services/monthlyInvoiceService");
 
 /**
  * Generate invoices for each student from their course enrollment dates to now
@@ -53,7 +55,9 @@ function getCourseEnrollmentDate(student, courseId) {
     (e) => String(e.courseId) === String(courseId)
   );
 
-  return enrollment ? enrollment.enrolledAt : student.enrollmentDate || student.createdAt;
+  return enrollment
+    ? enrollment.enrolledAt
+    : student.enrollmentDate || student.createdAt;
 }
 
 async function generateStudentInvoices({
@@ -75,7 +79,7 @@ async function generateStudentInvoices({
   };
 
   // Build query
-  const query = { academicStatus: "active" };
+  const query = { academicStatus: { $in: ["active", "inactive"] } };
   if (branchId) query.branchId = branchId;
   if (studentId) query._id = studentId;
 
@@ -86,7 +90,7 @@ async function generateStudentInvoices({
 
   results.totalStudents = students.length;
 
-  console.log(`\n📊 Found ${students.length} active student(s)\n`);
+  console.log(`\n📊 Found ${students.length} student(s)\n`);
 
   for (const student of students) {
     try {
@@ -111,9 +115,7 @@ async function generateStudentInvoices({
       console.log(
         `\n👤 ${student.userId?.firstName} ${student.userId?.lastName}`
       );
-      console.log(
-        `   Courses with billing: ${coursesWithBilling.length}`
-      );
+      console.log(`   Courses with billing: ${coursesWithBilling.length}`);
 
       // Group periods by month to consolidate invoices later
       const periodsToInvoice = new Map(); // Map<"YYYY-MM", Set<courseId>>
@@ -126,7 +128,9 @@ async function generateStudentInvoices({
         );
 
         console.log(
-          `   - ${course.courseName}: enrolled ${courseEnrollmentDate.toLocaleDateString()}`
+          `   - ${
+            course.courseName
+          }: enrolled ${courseEnrollmentDate.toLocaleDateString()}`
         );
 
         // Get months from this course's enrollment to now
@@ -134,7 +138,10 @@ async function generateStudentInvoices({
 
         // Add to periods map
         for (const month of courseMonths) {
-          const key = `${month.periodYear}-${String(month.periodMonth).padStart(2, "0")}`;
+          const key = `${month.periodYear}-${String(month.periodMonth).padStart(
+            2,
+            "0"
+          )}`;
           if (!periodsToInvoice.has(key)) {
             periodsToInvoice.set(key, {
               periodYear: month.periodYear,
@@ -159,9 +166,7 @@ async function generateStudentInvoices({
           .sort()
           .forEach((key) => {
             const period = periodsToInvoice.get(key);
-            console.log(
-              `     - ${key} (${period.courses.size} course(s))`
-            );
+            console.log(`     - ${key} (${period.courses.size} course(s))`);
           });
         results.studentsProcessed++;
         continue;
@@ -205,7 +210,9 @@ async function generateStudentInvoices({
 
       console.log(`   ✅ Created: ${studentInvoicesCreated} invoices`);
       if (studentInvoicesSkipped > 0) {
-        console.log(`   ⏭️  Skipped: ${studentInvoicesSkipped} (already exist)`);
+        console.log(
+          `   ⏭️  Skipped: ${studentInvoicesSkipped} (already exist)`
+        );
       }
 
       results.studentsProcessed++;
@@ -295,6 +302,7 @@ Examples:
 Features:
   ✅ Invoices each course from its specific enrollment date
   ✅ Respects individual course enrollment history
+  ✅ Works for both active and inactive students
   ✅ Skips students without periodic billing courses
   ✅ Consolidates multiple courses into one invoice per period
   ✅ Checks for existing invoices to avoid duplicates
