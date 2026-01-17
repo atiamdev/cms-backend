@@ -86,7 +86,7 @@ async function generateStudentInvoices({
   // Get all active students
   const students = await Student.find(query)
     .populate("userId", "firstName lastName email")
-    .populate("courses", "courseName feeStructure");
+    .populate("courses", "name feeStructure");
 
   results.totalStudents = students.length;
 
@@ -129,7 +129,7 @@ async function generateStudentInvoices({
 
         console.log(
           `   - ${
-            course.courseName
+            course.name
           }: enrolled ${courseEnrollmentDate.toLocaleDateString()}`
         );
 
