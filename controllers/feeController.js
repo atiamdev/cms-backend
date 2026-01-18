@@ -735,18 +735,19 @@ const getBranchStudentFeeSummaries = async (req, res) => {
       ];
     }
 
-    // Get students with pagination
-    const students = await User.find(studentQuery)
+    // Get all students matching search (limit to reasonable number for performance)
+    const maxStudents = 10000; // Limit to prevent performance issues
+    const allStudents = await User.find(studentQuery)
       .select("firstName lastName email profileDetails")
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
+      .limit(maxStudents)
       .sort({ "profileDetails.firstName": 1, "profileDetails.lastName": 1 });
 
     const totalStudents = await User.countDocuments(studentQuery);
+    const actualTotal = Math.min(totalStudents, maxStudents);
 
     // Get fee summaries for each student
-    const studentSummaries = await Promise.all(
-      students.map(async (student) => {
+    const allStudentSummaries = await Promise.all(
+      allStudents.map(async (student) => {
         // Find the student profile
         const studentProfile = await Student.findOne({
           userId: student._id,
@@ -871,9 +872,9 @@ const getBranchStudentFeeSummaries = async (req, res) => {
     );
 
     // Filter results based on balanceFilter
-    let filteredSummaries = studentSummaries;
+    let filteredSummaries = allStudentSummaries;
     if (balanceFilter !== "all") {
-      filteredSummaries = studentSummaries.filter((item) => {
+      filteredSummaries = allStudentSummaries.filter((item) => {
         switch (balanceFilter) {
           case "outstanding":
             return item.balance > 0;
@@ -922,14 +923,19 @@ const getBranchStudentFeeSummaries = async (req, res) => {
       }
     });
 
+    // Apply pagination after filtering and sorting
+    const startIndex = (page - 1) * limit;
+    const endIndex = startIndex + parseInt(limit);
+    const paginatedSummaries = filteredSummaries.slice(startIndex, endIndex);
+
     res.json({
       success: true,
-      data: filteredSummaries,
+      data: paginatedSummaries,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(filteredSummaries.length / limit),
         totalItems: filteredSummaries.length,
-        hasNext: page * limit < totalStudents,
+        hasNext: endIndex < filteredSummaries.length,
         hasPrev: page > 1,
       },
     });

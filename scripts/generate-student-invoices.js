@@ -79,9 +79,9 @@ async function generateStudentInvoices({
   };
 
   // Build query
-  const query = { academicStatus: { $in: ["active", "inactive"] } };
+  const query = { academicStatus: "active" };
   if (branchId) query.branchId = branchId;
-  if (studentId) query._id = studentId;
+  if (studentId) query.admissionNumber = studentId;
 
   // Get all active students
   const students = await Student.find(query)
@@ -302,7 +302,7 @@ Examples:
 Features:
   ✅ Invoices each course from its specific enrollment date
   ✅ Respects individual course enrollment history
-  ✅ Works for both active and inactive students
+  ✅ Works for active students
   ✅ Skips students without periodic billing courses
   ✅ Consolidates multiple courses into one invoice per period
   ✅ Checks for existing invoices to avoid duplicates

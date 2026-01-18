@@ -116,8 +116,8 @@ const getExpenses = async (req, res) => {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / limit),
         totalItems: total,
-        hasNextPage: page < Math.ceil(total / limit),
-        hasPrevPage: page > 1,
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1,
       },
     });
   } catch (error) {

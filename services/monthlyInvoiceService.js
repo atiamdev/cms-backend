@@ -96,7 +96,7 @@ async function generateMonthlyInvoices({
       const studentQuery = {
         courses: course._id,
         branchId: course.branchId,
-        academicStatus: { $in: ["active", "inactive"] },
+        academicStatus: "active",
       };
 
       // Filter by specific student if provided
@@ -285,7 +285,7 @@ async function generateMonthlyInvoices({
       const studentQuery = {
         courses: course._id,
         branchId: course.branchId,
-        academicStatus: { $in: ["active", "inactive"] },
+        academicStatus: "active",
       };
 
       // Filter by specific student if provided
@@ -477,7 +477,7 @@ async function generateInvoicesForFrequency({
     const studentQuery = {
       courses: course._id,
       branchId: course.branchId,
-      academicStatus: { $in: ["active", "inactive"] },
+      academicStatus: "active",
     };
 
     // Note: generateInvoicesForFrequency doesn't support studentId filtering yet

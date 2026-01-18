@@ -635,14 +635,16 @@ const getStudents = async (req, res) => {
     const branchFilter = getBranchQueryFilter(req.user, branchId);
     const query = { ...branchFilter };
 
-    // Only exclude e-course students if not explicitly requested
-    // For e-course students, allow cross-branch access for admins
-    if (includeEcourse !== "true") {
+    // Handle e-course student filtering
+    if (includeEcourse === "true") {
+      query.studentType = "ecourse";
+      // For e-course students, allow cross-branch access for admins
+      if (!isSuperAdmin(req.user)) {
+        delete query.branchId;
+      }
+    } else {
+      // Exclude e-course students by default
       query.studentType = { $ne: "ecourse" };
-    } else if (includeEcourse === "true" && !isSuperAdmin(req.user)) {
-      // For non-superadmin users fetching e-course students, allow cross-branch access
-      // Remove branch restriction for e-course students
-      delete query.branchId;
     }
 
     // Filter by academic status

@@ -487,7 +487,7 @@ const getAnalyticsDashboard = async (req, res) => {
 
 const getCoursesAnalytics = async (req, res) => {
   try {
-    const { branchId } = req.query;
+    const { branchId, page = 1, limit = 10 } = req.query;
 
     let matchConditions = {};
 
@@ -496,6 +496,97 @@ const getCoursesAnalytics = async (req, res) => {
       matchConditions.branch = mongoose.Types.ObjectId(branchId);
     }
     // Note: Removed automatic branch filtering since courses don't have branch fields
+
+    // Get total count first
+    const total = await ECourse.countDocuments(matchConditions);
+
+    // Calculate summary statistics from all courses
+    const summaryStats = await ECourse.aggregate([
+      { $match: matchConditions },
+      {
+        $lookup: {
+          from: "enrollments",
+          localField: "_id",
+          foreignField: "courseId",
+          as: "enrollments",
+        },
+      },
+      {
+        $lookup: {
+          from: "payments",
+          localField: "_id",
+          foreignField: "courseId",
+          as: "payments",
+        },
+      },
+      {
+        $lookup: {
+          from: "ratings",
+          localField: "_id",
+          foreignField: "courseId",
+          as: "ratings",
+        },
+      },
+      {
+        $addFields: {
+          enrollments: { $ifNull: ["$enrollments", []] },
+          payments: { $ifNull: ["$payments", []] },
+          ratings: { $ifNull: ["$ratings", []] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: {
+            $sum: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: "$payments",
+                      cond: { $eq: ["$$this.status", "completed"] },
+                    },
+                  },
+                  as: "payment",
+                  in: "$$payment.amount",
+                },
+              },
+            },
+          },
+          totalEnrollments: { $sum: { $size: "$enrollments" } },
+          totalCompletions: {
+            $sum: {
+              $size: {
+                $filter: {
+                  input: "$enrollments",
+                  cond: { $eq: ["$$this.status", "completed"] },
+                },
+              },
+            },
+          },
+          totalCourses: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          totalRevenue: 1,
+          totalEnrollments: 1,
+          averageCompletionRate: {
+            $cond: {
+              if: { $gt: ["$totalEnrollments", 0] },
+              then: {
+                $multiply: [
+                  { $divide: ["$totalCompletions", "$totalEnrollments"] },
+                  100,
+                ],
+              },
+              else: 0,
+            },
+          },
+          totalCourses: 1,
+        },
+      },
+    ]);
 
     const coursesAnalytics = await ECourse.aggregate([
       { $match: matchConditions },
@@ -640,12 +731,26 @@ const getCoursesAnalytics = async (req, res) => {
         },
       },
       { $sort: { createdAt: -1 } },
+      { $skip: (parseInt(page) - 1) * parseInt(limit) },
+      { $limit: parseInt(limit) },
     ]);
 
     res.json({
       success: true,
       data: coursesAnalytics,
-      total: coursesAnalytics.length,
+      summary: summaryStats[0] || {
+        totalRevenue: 0,
+        totalEnrollments: 0,
+        averageCompletionRate: 0,
+        totalCourses: 0,
+      },
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(total / limit),
+        totalItems: total,
+        hasNext: parseInt(page) < Math.ceil(total / limit),
+        hasPrev: parseInt(page) > 1,
+      },
     });
   } catch (error) {
     console.error("Error fetching courses analytics:", error);
