@@ -87,7 +87,7 @@ const scheduleLiveSession = async (req, res) => {
     // Get enrolled students for attendees
     const enrollments = await Enrollment.find({ courseId }).populate(
       "studentId",
-      "email"
+      "email",
     );
     const attendeeEmails = enrollments
       .filter((e) => e.studentId && e.studentId.email) // Filter out null studentId and missing emails
@@ -100,13 +100,13 @@ const scheduleLiveSession = async (req, res) => {
       summary: content
         ? `${course.title} - ${module.title}: ${content.title}`
         : module
-        ? `${course.title} - ${module.title}`
-        : `${course.title} - Live Session`,
+          ? `${course.title} - ${module.title}`
+          : `${course.title} - Live Session`,
       description: content
         ? `Live session for ${content.title}`
         : module
-        ? `Live session for ${module.title}`
-        : `Live session for ${course.title}`,
+          ? `Live session for ${module.title}`
+          : `Live session for ${course.title}`,
       startTime: new Date(startAt),
       endTime: new Date(endAt),
       timezone,
@@ -145,7 +145,7 @@ const scheduleLiveSession = async (req, res) => {
         content,
         user.googleTokens,
         timezone,
-        hostUserId
+        hostUserId,
       );
     }
 
@@ -157,7 +157,7 @@ const scheduleLiveSession = async (req, res) => {
       message: `A live session for "${
         content ? content.title : module ? module.title : course.title
       }" has been scheduled for ${new Date(
-        startAt
+        startAt,
       ).toLocaleString()}. Click to join.`,
       type: "scheduled",
       actionUrl: module
@@ -213,7 +213,7 @@ const scheduleLiveSession = async (req, res) => {
 
         await pushController.sendNotification(studentUserIds, payload);
         console.log(
-          `[Live Session] Sent creation notification to ${studentUserIds.length} students`
+          `[Live Session] Sent creation notification to ${studentUserIds.length} students`,
         );
       }
     } catch (error) {
@@ -293,6 +293,7 @@ const updateLiveSession = async (req, res) => {
 
     await googleCalendarService.updateMeetEvent({
       tokens: user.googleTokens,
+      userId: user._id,
       eventId: liveSession.googleEventId,
       updates,
     });
@@ -306,7 +307,7 @@ const updateLiveSession = async (req, res) => {
     // Send notifications to enrolled students
     const course = await ECourse.findById(liveSession.courseId);
     const module = course.modules.find(
-      (m) => m._id.toString() === liveSession.moduleId
+      (m) => m._id.toString() === liveSession.moduleId,
     );
     const content = liveSession.contentId
       ? module.contents.find((c) => c._id.toString() === liveSession.contentId)
@@ -319,7 +320,7 @@ const updateLiveSession = async (req, res) => {
       message: `The live session for "${
         content ? content.title : module.title
       }" has been rescheduled to ${new Date(
-        liveSession.startAt
+        liveSession.startAt,
       ).toLocaleString()}.`,
       type: "updated",
       actionUrl: liveSession.contentId
@@ -377,6 +378,7 @@ const cancelLiveSession = async (req, res) => {
       try {
         await googleCalendarService.deleteMeetEvent({
           tokens: user.googleTokens,
+          userId: user._id,
           eventId: liveSession.googleEventId,
         });
       } catch (error) {
@@ -391,7 +393,7 @@ const cancelLiveSession = async (req, res) => {
     // Send notifications to enrolled students
     const course = await ECourse.findById(liveSession.courseId);
     const module = course.modules.find(
-      (m) => m._id.toString() === liveSession.moduleId
+      (m) => m._id.toString() === liveSession.moduleId,
     );
     const content = liveSession.contentId
       ? module.contents.find((c) => c._id.toString() === liveSession.contentId)
@@ -404,7 +406,7 @@ const cancelLiveSession = async (req, res) => {
       message: `The live session for "${
         content ? content.title : module.title
       }" scheduled for ${new Date(
-        liveSession.startAt
+        liveSession.startAt,
       ).toLocaleString()} has been cancelled.`,
       type: "cancelled",
       actionUrl: liveSession.contentId
@@ -445,7 +447,7 @@ const getUserLiveSessions = async (req, res) => {
         "Student lookup result:",
         student
           ? { id: student._id, userId: student.userId }
-          : "No student found"
+          : "No student found",
       );
 
       if (!student) {
@@ -459,16 +461,16 @@ const getUserLiveSessions = async (req, res) => {
 
       // Get courses where student is enrolled
       const enrollments = await Enrollment.find({ studentId }).select(
-        "courseId status"
+        "courseId status",
       );
       console.log("Found enrollments:", enrollments.length);
       enrollments.forEach((e) =>
-        console.log("Enrollment:", { courseId: e.courseId, status: e.status })
+        console.log("Enrollment:", { courseId: e.courseId, status: e.status }),
       );
 
       // Filter by active/approved/completed enrollments
       const validEnrollments = enrollments.filter((e) =>
-        ["active", "approved", "completed"].includes(e.status)
+        ["active", "approved", "completed"].includes(e.status),
       );
       console.log("Valid enrollments:", validEnrollments.length);
 
@@ -567,7 +569,7 @@ const createRecurringSessions = async (
   content,
   googleTokens,
   timezone,
-  userId
+  userId,
 ) => {
   const sessions = [];
   const startDate = new Date(parentSession.startAt);
@@ -602,27 +604,27 @@ const createRecurringSessions = async (
             "saturday",
           ];
           const targetDays = recurrencePattern.daysOfWeek.map((day) =>
-            dayNames.indexOf(day.toLowerCase())
+            dayNames.indexOf(day.toLowerCase()),
           );
 
           let nextDay = targetDays.find((day) => day > currentDay);
           if (!nextDay) {
             nextDay = targetDays[0];
             currentDate.setDate(
-              currentDate.getDate() + (7 - currentDay + nextDay)
+              currentDate.getDate() + (7 - currentDay + nextDay),
             );
           } else {
             currentDate.setDate(currentDate.getDate() + (nextDay - currentDay));
           }
         } else {
           currentDate.setDate(
-            currentDate.getDate() + 7 * recurrencePattern.interval
+            currentDate.getDate() + 7 * recurrencePattern.interval,
           );
         }
         break;
       case "monthly":
         currentDate.setMonth(
-          currentDate.getMonth() + recurrencePattern.interval
+          currentDate.getMonth() + recurrencePattern.interval,
         );
         if (recurrencePattern.dayOfMonth) {
           currentDate.setDate(recurrencePattern.dayOfMonth);
@@ -649,13 +651,13 @@ const createRecurringSessions = async (
         summary: content
           ? `${course.title} - ${module.title}: ${content.title}`
           : module
-          ? `${course.title} - ${module.title}`
-          : `${course.title} - Live Session`,
+            ? `${course.title} - ${module.title}`
+            : `${course.title} - Live Session`,
         description: content
           ? `Live session for ${content.title} (Recurring)`
           : module
-          ? `Live session for ${module.title} (Recurring)`
-          : `Live session for ${course.title} (Recurring)`,
+            ? `Live session for ${module.title} (Recurring)`
+            : `Live session for ${course.title} (Recurring)`,
         startTime: occurrenceStart,
         endTime: occurrenceEnd,
         timezone,
@@ -682,7 +684,7 @@ const createRecurringSessions = async (
     } catch (error) {
       console.error(
         `Error creating recurring session for ${currentDate}:`,
-        error
+        error,
       );
       // Continue with next occurrence
     }

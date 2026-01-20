@@ -18,7 +18,7 @@ class GoogleCalendarService {
       process.env.GOOGLE_REDIRECT_URI ||
         `${
           process.env.BACKEND_URL || "http://localhost:5000"
-        }/api/auth/google/callback`
+        }/api/auth/google/callback`,
     );
 
     oauth2Client.setCredentials(tokens);
@@ -85,16 +85,23 @@ class GoogleCalendarService {
         meetLink:
           response.data.hangoutLink ||
           response.data.conferenceData?.entryPoints?.find(
-            (ep) => ep.entryPointType === "video"
+            (ep) => ep.entryPointType === "video",
           )?.uri,
         htmlLink: response.data.htmlLink,
         eventData: response.data,
       };
     } catch (error) {
-      // If token is invalid, try to refresh it
-      if (error.message.includes("invalid_grant") && userId) {
+      // If token is invalid/expired, try to refresh it
+      if (
+        (error.message.includes("invalid_grant") ||
+          error.message.includes("access_denied") ||
+          error.message.includes("invalid_token") ||
+          error.code === 401) &&
+        userId &&
+        tokens.refresh_token
+      ) {
         try {
-          const refreshedTokens = await this.refreshTokensIfNeeded(tokens);
+          const refreshedTokens = await this.refreshTokens(tokens);
 
           // Update user's tokens in database
           const User = require("../models/User");
@@ -116,7 +123,7 @@ class GoogleCalendarService {
             meetLink:
               retryResponse.data.hangoutLink ||
               retryResponse.data.conferenceData?.entryPoints?.find(
-                (ep) => ep.entryPointType === "video"
+                (ep) => ep.entryPointType === "video",
               )?.uri,
             htmlLink: retryResponse.data.htmlLink,
             eventData: retryResponse.data,
@@ -124,7 +131,7 @@ class GoogleCalendarService {
         } catch (refreshError) {
           console.error("Error refreshing tokens and retrying:", refreshError);
           throw new Error(
-            `Failed to create Google Meet event: Token refresh failed`
+            `Failed to create Google Meet event: Token refresh failed`,
           );
         }
       }
@@ -142,7 +149,7 @@ class GoogleCalendarService {
    * @param {Object} params.updates - Fields to update
    * @returns {Object} - Updated event data
    */
-  async updateMeetEvent({ tokens, eventId, updates }) {
+  async updateMeetEvent({ tokens, userId, eventId, updates }) {
     const oauth2Client = this.getOAuth2Client(tokens);
 
     try {
@@ -159,12 +166,58 @@ class GoogleCalendarService {
         meetLink:
           response.data.hangoutLink ||
           response.data.conferenceData?.entryPoints?.find(
-            (ep) => ep.entryPointType === "video"
+            (ep) => ep.entryPointType === "video",
           )?.uri,
         htmlLink: response.data.htmlLink,
         eventData: response.data,
       };
     } catch (error) {
+      // If token is invalid/expired, try to refresh it
+      if (
+        (error.message.includes("invalid_grant") ||
+          error.message.includes("access_denied") ||
+          error.message.includes("invalid_token") ||
+          error.code === 401) &&
+        userId &&
+        tokens.refresh_token
+      ) {
+        try {
+          const refreshedTokens = await this.refreshTokens(tokens);
+
+          // Update user's tokens in database
+          const User = require("../models/User");
+          await User.findByIdAndUpdate(userId, {
+            googleTokens: refreshedTokens,
+          });
+
+          // Retry with refreshed tokens
+          const newOauth2Client = this.getOAuth2Client(refreshedTokens);
+          const retryResponse = await this.calendar.events.patch({
+            auth: newOauth2Client,
+            calendarId: "primary",
+            eventId,
+            resource: updates,
+            conferenceDataVersion: 1,
+          });
+
+          return {
+            eventId: retryResponse.data.id,
+            meetLink:
+              retryResponse.data.hangoutLink ||
+              retryResponse.data.conferenceData?.entryPoints?.find(
+                (ep) => ep.entryPointType === "video",
+              )?.uri,
+            htmlLink: retryResponse.data.htmlLink,
+            eventData: retryResponse.data,
+          };
+        } catch (refreshError) {
+          console.error("Error refreshing tokens for update:", refreshError);
+          throw new Error(
+            `Failed to update Google Meet event after token refresh: ${refreshError.message}`,
+          );
+        }
+      }
+
       console.error("Error updating Google Meet event:", error);
       throw new Error(`Failed to update Google Meet event: ${error.message}`);
     }
@@ -176,7 +229,7 @@ class GoogleCalendarService {
    * @param {Object} params.tokens - User's OAuth tokens
    * @param {string} params.eventId - Google event ID
    */
-  async deleteMeetEvent({ tokens, eventId }) {
+  async deleteMeetEvent({ tokens, userId, eventId }) {
     const oauth2Client = this.getOAuth2Client(tokens);
 
     try {
@@ -186,8 +239,41 @@ class GoogleCalendarService {
         eventId,
       });
     } catch (error) {
-      console.error("Error deleting Google Meet event:", error);
-      throw new Error(`Failed to delete Google Meet event: ${error.message}`);
+      // If token is invalid/expired, try to refresh it
+      if (
+        (error.message.includes("invalid_grant") ||
+          error.message.includes("access_denied") ||
+          error.message.includes("invalid_token") ||
+          error.code === 401) &&
+        userId &&
+        tokens.refresh_token
+      ) {
+        try {
+          const refreshedTokens = await this.refreshTokens(tokens);
+
+          // Update user's tokens in database
+          const User = require("../models/User");
+          await User.findByIdAndUpdate(userId, {
+            googleTokens: refreshedTokens,
+          });
+
+          // Retry with refreshed tokens
+          const newOauth2Client = this.getOAuth2Client(refreshedTokens);
+          await this.calendar.events.delete({
+            auth: newOauth2Client,
+            calendarId: "primary",
+            eventId,
+          });
+        } catch (refreshError) {
+          console.error("Error refreshing tokens for delete:", refreshError);
+          throw new Error(
+            `Failed to delete Google Meet event after token refresh: ${refreshError.message}`,
+          );
+        }
+      } else {
+        console.error("Error deleting Google Meet event:", error);
+        throw new Error(`Failed to delete Google Meet event: ${error.message}`);
+      }
     }
   }
 
@@ -220,19 +306,27 @@ class GoogleCalendarService {
    * @param {Object} tokens - Current tokens
    * @returns {Object} - Refreshed tokens
    */
-  async refreshTokensIfNeeded(tokens) {
+  async refreshTokens(tokens) {
     const oauth2Client = this.getOAuth2Client(tokens);
 
     try {
-      const { credentials } = await oauth2Client.refreshAccessToken();
+      // Use the newer refreshToken method instead of deprecated refreshAccessToken
+      const { credentials } = await oauth2Client.refreshToken(
+        tokens.refresh_token,
+      );
       return {
         ...tokens,
         access_token: credentials.access_token,
+        refresh_token: credentials.refresh_token || tokens.refresh_token, // Refresh token might be rotated
         expiry_date: credentials.expiry_date,
+        token_type: credentials.token_type || tokens.token_type,
+        scope: credentials.scope || tokens.scope,
       };
     } catch (error) {
       console.error("Error refreshing tokens:", error);
-      throw new Error("Failed to refresh Google OAuth tokens");
+      throw new Error(
+        `Failed to refresh Google OAuth tokens: ${error.message}`,
+      );
     }
   }
 }

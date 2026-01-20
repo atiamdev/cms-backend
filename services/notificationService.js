@@ -24,6 +24,33 @@ class NotificationService {
         return "all";
     }
   }
+
+  /**
+   * Get or create a system user for automated notifications
+   * @param {string} branchId - Branch ID
+   * @returns {Object} System user
+   */
+  async getSystemUser(branchId) {
+    const systemEmail = "system@cms.internal";
+    let systemUser = await User.findOne({ email: systemEmail });
+
+    if (!systemUser) {
+      systemUser = await User.create({
+        email: systemEmail,
+        password: require("crypto").randomBytes(32).toString("hex"),
+        firstName: "System",
+        lastName: "Automated",
+        roles: ["admin"],
+        branchId: branchId,
+        emailVerified: true,
+        status: "active",
+      });
+      console.log("✅ Created system user for automated notifications");
+    }
+
+    return systemUser;
+  }
+
   /**
    * Send notification to enrolled students about live session
    * @param {Object} params
@@ -46,7 +73,7 @@ class NotificationService {
       // Get enrolled students
       const { Enrollment } = require("../models/elearning");
       const enrollments = await Enrollment.find({ courseId }).populate(
-        "studentId"
+        "studentId",
       );
 
       // Filter out enrollments with null studentId
@@ -59,6 +86,9 @@ class NotificationService {
       const studentIds = validEnrollments.map((e) => e.studentId._id);
       const branchId = validEnrollments[0].studentId.branchId; // Assume all students in same branch
 
+      // Get system user for notifications
+      const systemUser = await this.getSystemUser(branchId);
+
       // Create notice for students
       const notice = await Notice.create({
         title,
@@ -68,7 +98,7 @@ class NotificationService {
         targetAudience: "students", // Changed from array to string
         branchId,
         author: {
-          userId: "system", // Use dedicated system user for system-generated notifications
+          userId: systemUser._id, // Use system user ID
           name: "System",
         },
         isActive: true,
@@ -83,7 +113,7 @@ class NotificationService {
       });
 
       console.log(
-        `Created notification for ${studentIds.length} students: ${title}`
+        `Created notification for ${studentIds.length} students: ${title}`,
       );
       return notice;
     } catch (error) {
@@ -157,7 +187,7 @@ class NotificationService {
       // Get enrolled students
       const { Enrollment } = require("../models/elearning");
       const enrollments = await Enrollment.find({ courseId }).populate(
-        "studentId"
+        "studentId",
       );
 
       const validEnrollments = enrollments.filter((e) => e.studentId);
@@ -192,7 +222,7 @@ class NotificationService {
       });
 
       console.log(
-        `Created course update notification for ${studentIds.length} students: ${title}`
+        `Created course update notification for ${studentIds.length} students: ${title}`,
       );
       return notice;
     } catch (error) {
@@ -256,7 +286,7 @@ class NotificationService {
       });
 
       console.log(
-        `Created quiz result notification for student ${studentId}: ${title}`
+        `Created quiz result notification for student ${studentId}: ${title}`,
       );
       return notice;
     } catch (error) {

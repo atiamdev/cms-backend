@@ -25,7 +25,7 @@ const protect = async (req, res, next) => {
         if (token && token !== "null" && token !== "undefined") {
           console.warn(
             "Invalid token format received:",
-            token?.substring(0, 20)
+            token?.substring(0, 20),
           );
         }
         return res.status(401).json({
@@ -53,6 +53,28 @@ const protect = async (req, res, next) => {
           success: false,
           message: "Account is not active",
         });
+      }
+
+      // For students, also check academic status
+      if (user.roles.includes("student")) {
+        try {
+          const Student = require("../models/Student");
+          const student = await Student.findOne({ userId: user._id }).select(
+            "academicStatus",
+          );
+          if (student && student.academicStatus !== "active") {
+            return res.status(401).json({
+              success: false,
+              message: "Your student account is not active",
+            });
+          }
+        } catch (error) {
+          console.error(
+            "Error checking student status in auth middleware:",
+            error,
+          );
+          // Continue with request if student check fails (to avoid blocking valid users)
+        }
       }
 
       // Check if account is locked

@@ -171,11 +171,11 @@ const createTeacher = async (req, res) => {
           to: createdUser.email,
           ...emailTemplates.emailVerification(
             `${createdUser.firstName} ${createdUser.lastName}`,
-            verificationUrl
+            verificationUrl,
           ),
         });
         console.log(
-          `Verification email sent successfully to teacher: ${createdUser.email}`
+          `Verification email sent successfully to teacher: ${createdUser.email}`,
         );
       } catch (emailError) {
         console.error("Teacher verification email sending failed:", emailError);
@@ -362,7 +362,7 @@ const getTeachers = async (req, res) => {
     // Add pagination
     pipeline.push(
       { $skip: (page - 1) * parseInt(limit) },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit) },
     );
 
     // Execute aggregation
@@ -480,7 +480,7 @@ const getMyProfile = async (req, res) => {
       },
       {
         path: "classes.courses",
-        select: "name level category credits",
+        select: "name level category credits whatsappGroupLink",
       },
       {
         path: "subjects.courseId",
@@ -586,7 +586,7 @@ const updateTeacher = async (req, res) => {
     const teacher = await Teacher.findOneAndUpdate(
       { _id: id, branchId: req.branchId },
       { ...updateData, updatedAt: Date.now() },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate([
       { path: "userId", select: "firstName lastName email profileDetails" },
       { path: "branchId", select: "name" },
@@ -670,7 +670,7 @@ const deleteTeacher = async (req, res) => {
 
     // Check if teacher has active class assignments
     const activeAssignments = teacher.classes.filter(
-      (cls) => !cls.endDate || cls.endDate > new Date()
+      (cls) => !cls.endDate || cls.endDate > new Date(),
     );
 
     if (activeAssignments.length > 0) {

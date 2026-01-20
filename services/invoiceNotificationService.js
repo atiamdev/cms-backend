@@ -1,6 +1,6 @@
 /**
  * Invoice Notification Service
- * 
+ *
  * Handles notifications for invoice generation, sending alerts to students
  * via email, SMS, push notifications, and in-app notices.
  */
@@ -15,7 +15,9 @@ try {
   const emailService = require("../utils/emailService");
   sendEmail = emailService.sendEmail;
 } catch (err) {
-  console.warn("Email service not available - email notifications will be skipped");
+  console.warn(
+    "Email service not available - email notifications will be skipped",
+  );
 }
 
 // Import push controller for push notifications (optional - graceful degradation)
@@ -23,7 +25,9 @@ let pushController = null;
 try {
   pushController = require("../controllers/pushController");
 } catch (err) {
-  console.warn("Push notification controller not available - push notifications will be skipped");
+  console.warn(
+    "Push notification controller not available - push notifications will be skipped",
+  );
 }
 
 /**
@@ -36,7 +40,14 @@ try {
  * @param {String} params.period - Period description (e.g., "January 2026")
  * @param {String} params.branchId - Branch ID
  */
-async function notifyStudentOfInvoice({ studentId, feeId, amount, dueDate, period, branchId }) {
+async function notifyStudentOfInvoice({
+  studentId,
+  feeId,
+  amount,
+  dueDate,
+  period,
+  branchId,
+}) {
   try {
     // Load Student model if not loaded
     let Student;
@@ -59,10 +70,14 @@ async function notifyStudentOfInvoice({ studentId, feeId, amount, dueDate, perio
     if (student.userId) {
       try {
         const User = require("../models/User");
-        user = await User.findById(student.userId).select("firstName lastName email phoneNumber").lean();
+        user = await User.findById(student.userId)
+          .select("firstName lastName email phoneNumber")
+          .lean();
       } catch (err) {
         // User model not loaded or user not found - we'll use student data instead
-        console.warn(`Could not load user for student ${studentId}, using student data`);
+        console.warn(
+          `Could not load user for student ${studentId}, using student data`,
+        );
       }
     }
 
@@ -72,17 +87,17 @@ async function notifyStudentOfInvoice({ studentId, feeId, amount, dueDate, perio
     const email = user?.email || student.email || null;
     const phoneNumber = user?.phoneNumber || student.phoneNumber || null;
     const studentName = `${firstName} ${lastName}`.trim();
-    
+
     // Format amount and due date
-    const formattedAmount = new Intl.NumberFormat('en-KE', {
-      style: 'currency',
-      currency: 'KES'
+    const formattedAmount = new Intl.NumberFormat("en-KE", {
+      style: "currency",
+      currency: "KES",
     }).format(amount);
-    
-    const formattedDueDate = new Date(dueDate).toLocaleDateString('en-KE', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
+
+    const formattedDueDate = new Date(dueDate).toLocaleDateString("en-KE", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
     });
 
     // Create in-app notice (only if userId exists)
@@ -94,7 +109,7 @@ async function notifyStudentOfInvoice({ studentId, feeId, amount, dueDate, perio
         await Notice.create({
           branchId,
           title: noticeTitle,
-          content: noticeContent,
+          content: noticeContent, // Changed from message to content
           targetAudience: "students", // Note: plural form
           specificRecipients: [student.userId],
           priority: "high",
@@ -102,9 +117,10 @@ async function notifyStudentOfInvoice({ studentId, feeId, amount, dueDate, perio
           author: {
             userId: student.userId,
             name: "System",
-            department: "Finance"
+            department: "Finance",
           },
           isActive: true,
+          publishDate: new Date(),
         });
       } catch (noticeError) {
         console.error("Error creating notice:", noticeError.message);
@@ -125,7 +141,7 @@ async function notifyStudentOfInvoice({ studentId, feeId, amount, dueDate, perio
             type: "invoice",
             feeId,
             studentId,
-            url: "/student/fees"
+            url: "/student/fees",
           },
         });
       } catch (pushError) {
@@ -157,8 +173,8 @@ async function notifyStudentsOfInvoices(invoices) {
   const batchSize = 10;
   for (let i = 0; i < invoices.length; i += batchSize) {
     const batch = invoices.slice(i, i + batchSize);
-    
-    const promises = batch.map(invoice => notifyStudentOfInvoice(invoice));
+
+    const promises = batch.map((invoice) => notifyStudentOfInvoice(invoice));
     const batchResults = await Promise.allSettled(promises);
 
     batchResults.forEach((result, idx) => {
@@ -175,7 +191,7 @@ async function notifyStudentsOfInvoices(invoices) {
 
     // Small delay between batches to prevent rate limiting
     if (i + batchSize < invoices.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 
@@ -191,18 +207,25 @@ async function notifyStudentsOfInvoices(invoices) {
  * @param {Date} params.dueDate - Payment due date
  * @param {Number} params.daysOverdue - Days past due (0 if not overdue)
  */
-async function sendPaymentReminder({ studentId, feeId, balance, dueDate, daysOverdue = 0 }) {
+async function sendPaymentReminder({
+  studentId,
+  feeId,
+  balance,
+  dueDate,
+  daysOverdue = 0,
+}) {
   try {
     const student = await Student.findById(studentId)
       .populate("userId", "firstName lastName email")
       .lean();
 
-    if (!student || !student.userId) return { success: false, reason: "no_user" };
+    if (!student || !student.userId)
+      return { success: false, reason: "no_user" };
 
     const user = student.userId;
-    const formattedBalance = new Intl.NumberFormat('en-KE', {
-      style: 'currency',
-      currency: 'KES'
+    const formattedBalance = new Intl.NumberFormat("en-KE", {
+      style: "currency",
+      currency: "KES",
     }).format(balance);
 
     const isOverdue = daysOverdue > 0;
@@ -215,14 +238,19 @@ async function sendPaymentReminder({ studentId, feeId, balance, dueDate, daysOve
     await Notice.create({
       branchId: student.branchId,
       title: `${urgency}Payment Reminder`,
-      message,
-      targetAudience: "student",
-      targetUsers: [student.userId._id],
+      content: message,
+      targetAudience: "students", // Changed to plural
+      specificRecipients: [student.userId._id], // Changed from targetUsers
       priority: isOverdue ? "urgent" : "high",
-      type: "fee",
-      metadata: { feeId, studentId, balance, dueDate, daysOverdue },
+      type: "fee_reminder", // Changed from "fee" to valid enum
+      author: {
+        userId: student.userId._id,
+        name: "System",
+        department: "Finance",
+      },
       isActive: true,
-      publishedBy: null,
+      publishDate: new Date(),
+      metadata: { feeId, studentId, balance, dueDate, daysOverdue },
     });
 
     // Send email if available
