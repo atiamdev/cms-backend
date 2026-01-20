@@ -108,12 +108,16 @@ const noticeSchema = new mongoose.Schema(
         },
       },
     ],
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
   {
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for performance
@@ -147,14 +151,14 @@ noticeSchema.virtual("isCurrent").get(function () {
 // Virtual for read status by user
 noticeSchema.methods.isReadByUser = function (userId) {
   return this.readBy.some(
-    (read) => read.userId.toString() === userId.toString()
+    (read) => read.userId.toString() === userId.toString(),
   );
 };
 
 // Virtual for hidden status by user
 noticeSchema.methods.isHiddenByUser = function (userId) {
   return this.hiddenBy.some(
-    (hidden) => hidden.userId.toString() === userId.toString()
+    (hidden) => hidden.userId.toString() === userId.toString(),
   );
 };
 
@@ -178,7 +182,7 @@ noticeSchema.methods.hideForUser = function (userId) {
 noticeSchema.methods.unhideForUser = function (userId) {
   const userObjectId = new mongoose.Types.ObjectId(userId);
   this.hiddenBy = this.hiddenBy.filter(
-    (hidden) => hidden.userId.toString() !== userObjectId.toString()
+    (hidden) => hidden.userId.toString() !== userObjectId.toString(),
   );
 };
 

@@ -10,15 +10,18 @@ const AuditLogger = require("../utils/auditLogger");
 const oauthStates = new Map();
 
 // Clean up expired states every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [state, data] of oauthStates.entries()) {
-    if (now - data.timestamp > 10 * 60 * 1000) {
-      // 10 minutes expiry
-      oauthStates.delete(state);
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [state, data] of oauthStates.entries()) {
+      if (now - data.timestamp > 10 * 60 * 1000) {
+        // 10 minutes expiry
+        oauthStates.delete(state);
+      }
     }
-  }
-}, 5 * 60 * 1000);
+  },
+  5 * 60 * 1000,
+);
 
 // Generate JWT Token
 const generateToken = (id) => {
@@ -142,7 +145,7 @@ const register = async (req, res) => {
 
       // Ensure roles are valid
       const invalidRoles = finalRoles.filter(
-        (role) => !allowedRoles.includes(role) && role !== "superadmin"
+        (role) => !allowedRoles.includes(role) && role !== "superadmin",
       );
       if (invalidRoles.length > 0) {
         return res.status(400).json({
@@ -178,7 +181,7 @@ const register = async (req, res) => {
     if (isFirstUser) {
       // Send welcome email for first user
       console.log(
-        `Sending welcome email to ${user.email} for user ${user.firstName} ${user.lastName}`
+        `Sending welcome email to ${user.email} for user ${user.firstName} ${user.lastName}`,
       );
       try {
         const { sendEmail, emailTemplates } = require("../utils/emailService");
@@ -190,7 +193,7 @@ const register = async (req, res) => {
           to: user.email,
           ...emailTemplates.welcome(
             `${user.firstName} ${user.lastName}`,
-            loginUrl
+            loginUrl,
           ),
         });
         console.log(`Welcome email sent successfully to ${user.email}`);
@@ -201,7 +204,7 @@ const register = async (req, res) => {
     } else {
       // Send verification email for subsequent users
       console.log(
-        `Sending verification email to ${user.email} for user ${user.firstName} ${user.lastName}`
+        `Sending verification email to ${user.email} for user ${user.firstName} ${user.lastName}`,
       );
       try {
         const { sendEmail, emailTemplates } = require("../utils/emailService");
@@ -213,7 +216,7 @@ const register = async (req, res) => {
           to: user.email,
           ...emailTemplates.emailVerification(
             `${user.firstName} ${user.lastName}`,
-            verificationUrl
+            verificationUrl,
           ),
         });
         console.log(`Verification email sent successfully to ${user.email}`);
@@ -409,7 +412,7 @@ const registerECourseStudent = async (req, res) => {
         to: user.email,
         ...emailTemplates.emailVerification(
           `${user.firstName} ${user.lastName}`,
-          verificationUrl
+          verificationUrl,
         ),
       });
     } catch (emailError) {
@@ -520,7 +523,7 @@ const verifyEmail = async (req, res) => {
         to: user.email,
         ...emailTemplates.accountActivated(
           `${user.firstName} ${user.lastName}`,
-          loginUrl
+          loginUrl,
         ),
       });
       console.log(`Welcome email sent successfully to ${user.email}`);
@@ -570,7 +573,7 @@ const login = async (req, res) => {
         "USER_LOGIN_FAILED",
         req,
         false,
-        "User not found"
+        "User not found",
       );
 
       return res.status(401).json({
@@ -587,7 +590,7 @@ const login = async (req, res) => {
         "USER_LOGIN_FAILED",
         req,
         false,
-        "Account is locked"
+        "Account is locked",
       );
 
       return res.status(423).json({
@@ -610,7 +613,7 @@ const login = async (req, res) => {
         "USER_LOGIN_FAILED",
         req,
         false,
-        "Invalid password"
+        "Invalid password",
       );
 
       return res.status(401).json({
@@ -627,7 +630,7 @@ const login = async (req, res) => {
         "USER_LOGIN_FAILED",
         req,
         false,
-        "Email not verified"
+        "Email not verified",
       );
 
       return res.status(401).json({
@@ -644,7 +647,7 @@ const login = async (req, res) => {
         "USER_LOGIN_FAILED",
         req,
         false,
-        "Account is not active"
+        "Account is not active",
       );
 
       return res.status(401).json({
@@ -657,7 +660,7 @@ const login = async (req, res) => {
     if (user.roles.includes("student")) {
       try {
         const student = await Student.findOne({ userId: user._id }).select(
-          "academicStatus"
+          "academicStatus",
         );
         if (student && student.academicStatus !== "active") {
           // Log failed login attempt for inactive student
@@ -666,12 +669,13 @@ const login = async (req, res) => {
             "USER_LOGIN_FAILED",
             req,
             false,
-            `Student academic status is ${student.academicStatus}`
+            `Student academic status is ${student.academicStatus}`,
           );
 
           return res.status(401).json({
             success: false,
-            message: "Your student account is not active. Please contact administrator.",
+            message:
+              "Your student account is not active. Please contact administrator.",
           });
         }
       } catch (error) {
@@ -701,7 +705,7 @@ const login = async (req, res) => {
     if (user.roles.includes("student")) {
       try {
         const student = await Student.findOne({ userId: user._id }).select(
-          "studentType"
+          "studentType",
         );
         studentType = student ? student.studentType : "regular";
       } catch (error) {
@@ -767,7 +771,7 @@ const getMe = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).populate(
       "branchId",
-      "name configuration"
+      "name configuration",
     );
 
     // Get student type if user is a student
@@ -775,7 +779,7 @@ const getMe = async (req, res) => {
     if (user.roles.includes("student")) {
       try {
         const student = await Student.findOne({ userId: user._id }).select(
-          "studentType"
+          "studentType",
         );
         studentType = student ? student.studentType : "regular";
       } catch (error) {
@@ -844,6 +848,28 @@ const refreshToken = async (req, res) => {
         success: false,
         message: "Invalid refresh token",
       });
+    }
+
+    // For students, also check academic status
+    if (user.roles.includes("student")) {
+      try {
+        const Student = require("../models/Student");
+        const student = await Student.findOne({ userId: user._id }).select(
+          "academicStatus",
+        );
+        if (student && student.academicStatus !== "active") {
+          return res.status(401).json({
+            success: false,
+            message: "Your student account is not active",
+          });
+        }
+      } catch (error) {
+        console.error(
+          "Error checking student status during token refresh:",
+          error,
+        );
+        // Continue with token refresh if student check fails (to avoid blocking valid users)
+      }
     }
 
     // Generate new access token
@@ -972,7 +998,7 @@ const forgotPassword = async (req, res) => {
         to: user.email,
         ...emailTemplates.passwordReset(
           resetUrl,
-          `${user.firstName} ${user.lastName}`
+          `${user.firstName} ${user.lastName}`,
         ),
       });
 
@@ -1224,7 +1250,7 @@ const getUsers = async (req, res) => {
     // Add pagination
     pipeline.push(
       { $skip: (page - 1) * parseInt(limit) },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit) },
     );
 
     // Remove sensitive fields
@@ -1362,7 +1388,7 @@ const getGoogleAuthUrl = async (req, res) => {
       process.env.GOOGLE_REDIRECT_URI ||
         `${
           process.env.BACKEND_URL || "http://localhost:5000"
-        }/api/auth/google/callback`
+        }/api/auth/google/callback`,
     );
 
     const scopes = [
@@ -1418,7 +1444,7 @@ const connectGoogleAccount = async (req, res) => {
       return res.redirect(
         `${
           process.env.FRONTEND_URL || "http://localhost:3000"
-        }/profile?google=error`
+        }/profile?google=error`,
       );
     }
 
@@ -1429,7 +1455,7 @@ const connectGoogleAccount = async (req, res) => {
       return res.redirect(
         `${
           process.env.FRONTEND_URL || "http://localhost:3000"
-        }/profile?google=error`
+        }/profile?google=error`,
       );
     }
 
@@ -1441,7 +1467,7 @@ const connectGoogleAccount = async (req, res) => {
       return res.redirect(
         `${
           process.env.FRONTEND_URL || "http://localhost:3000"
-        }/profile?google=error`
+        }/profile?google=error`,
       );
     }
 
@@ -1456,7 +1482,7 @@ const connectGoogleAccount = async (req, res) => {
       process.env.GOOGLE_REDIRECT_URI ||
         `${
           process.env.BACKEND_URL || "http://localhost:5000"
-        }/api/auth/google/callback`
+        }/api/auth/google/callback`,
     );
 
     const { tokens } = await oauth2Client.getToken(code);
@@ -1471,18 +1497,8 @@ const connectGoogleAccount = async (req, res) => {
     // Set credentials
     oauth2Client.setCredentials(tokens);
 
-    // Try to refresh access token to ensure validity
-    let finalTokens = tokens;
-    try {
-      await oauth2Client.refreshAccessToken();
-      finalTokens = oauth2Client.credentials;
-    } catch (refreshError) {
-      console.warn(
-        "Token refresh failed, using original tokens:",
-        refreshError.message
-      );
-      finalTokens = tokens;
-    }
+    // Tokens are fresh from OAuth flow, no need to refresh immediately
+    const finalTokens = tokens;
 
     // Get user info
     const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
@@ -1492,7 +1508,7 @@ const connectGoogleAccount = async (req, res) => {
     await User.findByIdAndUpdate(userId, {
       googleTokens: {
         access_token: finalTokens.access_token,
-        refresh_token: finalTokens.refresh_token || tokens.refresh_token,
+        refresh_token: finalTokens.refresh_token,
         expiry_date: finalTokens.expiry_date,
         token_type: finalTokens.token_type,
         scope: finalTokens.scope,
@@ -1506,21 +1522,21 @@ const connectGoogleAccount = async (req, res) => {
     });
 
     console.log(
-      `Google account connected successfully for user: ${userId} (${userInfo.email})`
+      `Google account connected successfully for user: ${userId} (${userInfo.email})`,
     );
 
     // Redirect to frontend with success
     res.redirect(
       `${
         process.env.FRONTEND_URL || "http://localhost:3000"
-      }/profile?google=connected`
+      }/profile?google=connected`,
     );
   } catch (error) {
     console.error("Connect Google account error:", error);
     res.redirect(
       `${
         process.env.FRONTEND_URL || "http://localhost:3000"
-      }/profile?google=error`
+      }/profile?google=error`,
     );
   }
 };

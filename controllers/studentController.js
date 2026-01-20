@@ -30,7 +30,7 @@ async function generateInitialInvoicesForStudent(
   courseIds,
   branchId,
   userId,
-  discountPercentage = 0
+  discountPercentage = 0,
 ) {
   try {
     const Fee = require("../models/Fee");
@@ -47,7 +47,7 @@ async function generateInitialInvoicesForStudent(
     }
 
     console.log(
-      `Generating initial invoices for ${courses.length} courses with auto-invoice enabled`
+      `Generating initial invoices for ${courses.length} courses with auto-invoice enabled`,
     );
 
     const createdInvoices = [];
@@ -65,7 +65,7 @@ async function generateInitialInvoicesForStudent(
       // Calculate total amount from fee components
       const totalAmount = fs.components.reduce(
         (sum, comp) => sum + (comp.amount || 0),
-        0
+        0,
       );
 
       if (totalAmount <= 0) {
@@ -110,7 +110,7 @@ async function generateInitialInvoicesForStudent(
 
       if (existingInvoice) {
         console.log(
-          `Invoice already exists for student ${studentId}, course ${course.name}`
+          `Invoice already exists for student ${studentId}, course ${course.name}`,
         );
         continue;
       }
@@ -125,14 +125,14 @@ async function generateInitialInvoicesForStudent(
       try {
         const Student = require("../models/Student");
         const studentDoc = await Student.findById(studentId).select(
-          "scholarshipPercentage"
+          "scholarshipPercentage",
         );
         appliedPct =
           studentDoc && studentDoc.scholarshipPercentage > 0
             ? studentDoc.scholarshipPercentage
             : discountPercentage > 0 && discountPercentage <= 100
-            ? discountPercentage
-            : 0;
+              ? discountPercentage
+              : 0;
         scholarshipAmount =
           appliedPct > 0 ? Math.round((totalAmount * appliedPct) / 100) : 0;
       } catch (err) {
@@ -186,7 +186,7 @@ async function generateInitialInvoicesForStudent(
       await invoice.save();
       createdInvoices.push(invoice);
       console.log(
-        `✅ Created invoice for student ${studentId}, course: ${course.name}, original: ${totalAmount}, discount: ${discountAmount} (${discountPercentage}%), final: ${amountAfterDiscount}`
+        `✅ Created invoice for student ${studentId}, course: ${course.name}, original: ${totalAmount}, scholarship: ${scholarshipAmount} (${appliedPct}%), final: ${amountAfterScholarship}`,
       );
     }
 
@@ -224,7 +224,7 @@ async function cancelInvoicesForRemovedCourses(studentId, removedCourseIds) {
     }
 
     console.log(
-      `Found ${unpaidInvoices.length} unpaid invoices for removed courses`
+      `Found ${unpaidInvoices.length} unpaid invoices for removed courses`,
     );
 
     let cancelledCount = 0;
@@ -233,7 +233,7 @@ async function cancelInvoicesForRemovedCourses(studentId, removedCourseIds) {
       // If invoice has partial payment, we don't auto-cancel it - requires manual review
       if (invoice.amountPaid > 0) {
         console.log(
-          `Invoice ${invoice.invoiceNumber} has partial payment (${invoice.amountPaid}), skipping auto-cancellation`
+          `Invoice ${invoice.invoiceNumber} has partial payment (${invoice.amountPaid}), skipping auto-cancellation`,
         );
         // You could add a flag here to mark it for manual review
         invoice.notes =
@@ -253,7 +253,7 @@ async function cancelInvoicesForRemovedCourses(studentId, removedCourseIds) {
       await invoice.save();
       cancelledCount++;
       console.log(
-        `✅ Cancelled invoice ${invoice.invoiceNumber} for removed course`
+        `✅ Cancelled invoice ${invoice.invoiceNumber} for removed course`,
       );
     }
 
@@ -445,7 +445,7 @@ const createStudent = async (req, res) => {
           to: createdUser.email,
           ...emailTemplates.emailVerification(
             `${createdUser.firstName} ${createdUser.lastName}`,
-            verificationUrl
+            verificationUrl,
           ),
         });
       } catch (emailError) {
@@ -545,7 +545,7 @@ const createStudent = async (req, res) => {
         courses,
         req.user.branchId,
         req.user._id,
-        0 // rely on student.scholarshipPercentage instead of direct discount param
+        0, // rely on student.scholarshipPercentage instead of direct discount param
       );
     }
 
@@ -944,7 +944,7 @@ const getStudents = async (req, res) => {
     // Add pagination
     pipeline.push(
       { $skip: (page - 1) * parseInt(limit) },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit) },
     );
 
     // Execute aggregation
@@ -1327,7 +1327,7 @@ const getStudent = async (req, res) => {
       const Course = require("../models/Course");
       const mongoose = require("mongoose");
       const courseIds = student.courses.map((id) =>
-        typeof id === "string" ? mongoose.Types.ObjectId(id) : id
+        typeof id === "string" ? mongoose.Types.ObjectId(id) : id,
       );
 
       console.log("Looking for course IDs:", courseIds);
@@ -1349,7 +1349,7 @@ const getStudent = async (req, res) => {
       // Add progress to each course and store in a separate variable
       var enrichedCourses = courses.map((course) => {
         const enrollment = enrollments.find(
-          (e) => e.courseId.toString() === course._id.toString()
+          (e) => e.courseId.toString() === course._id.toString(),
         );
         const mappedCourse = {
           _id: course._id,
@@ -1381,7 +1381,7 @@ const getStudent = async (req, res) => {
 
     console.log(
       "Final studentObj.courses:",
-      JSON.stringify(studentObj.courses, null, 2)
+      JSON.stringify(studentObj.courses, null, 2),
     );
 
     res.json({
@@ -1442,7 +1442,7 @@ const updateStudent = async (req, res) => {
         ...(photoUrl !== undefined && { photoUrl }),
         updatedAt: Date.now(),
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate([
       { path: "userId", select: "firstName lastName email profileDetails" },
       { path: "currentClassId", select: "name" },
@@ -1460,18 +1460,18 @@ const updateStudent = async (req, res) => {
 
         // Find newly added courses (courses that weren't in oldCourseIds)
         const newCourseIds = courses.filter(
-          (courseId) => !oldCourseIds.includes(courseId.toString())
+          (courseId) => !oldCourseIds.includes(courseId.toString()),
         );
 
         // Find removed courses (courses that were in oldCourseIds but not in new courses)
         const removedCourseIds = oldCourseIds.filter(
-          (courseId) => !courses.includes(courseId)
+          (courseId) => !courses.includes(courseId),
         );
 
         // Generate invoices for newly added courses
         if (newCourseIds.length > 0) {
           console.log(
-            `Generating invoices for ${newCourseIds.length} newly added courses`
+            `Generating invoices for ${newCourseIds.length} newly added courses`,
           );
           // Pass existing student discount/scholarship percentage to new invoices
           await generateInitialInvoicesForStudent(
@@ -1479,7 +1479,7 @@ const updateStudent = async (req, res) => {
             newCourseIds,
             req.branchId,
             req.user._id,
-            currentStudent.scholarshipPercentage || 0
+            currentStudent.scholarshipPercentage || 0,
           );
         }
 
@@ -1572,7 +1572,7 @@ const deleteStudent = async (req, res) => {
     // Remove student from all classes where they are enrolled
     await Class.updateMany(
       { branchId: req.branchId, "students.studentId": id },
-      { $pull: { students: { studentId: id } } }
+      { $pull: { students: { studentId: id } } },
     );
 
     // Delete student photo from Cloudflare if it exists
@@ -1777,7 +1777,7 @@ const getStudentStatistics = async (req, res) => {
       23,
       59,
       59,
-      999
+      999,
     );
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(
@@ -1787,7 +1787,7 @@ const getStudentStatistics = async (req, res) => {
       23,
       59,
       59,
-      999
+      999,
     );
     const startOfYear = new Date(now.getFullYear(), 0, 1);
     const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
@@ -1850,27 +1850,21 @@ const getStudentStatistics = async (req, res) => {
         enrollmentDate: { $gte: startOfYear },
       }),
 
-      // Status breakdown (with date filter if provided)
+      // Status breakdown (current status of all students - no date filter)
       Student.aggregate([
         {
           $match: {
             branchId: branchObjectId,
-            ...(hasDateFilter && {
-              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
-            }),
           },
         },
         { $group: { _id: "$academicStatus", count: { $sum: 1 } } },
       ]),
 
-      // Students by class (with date filter if provided)
+      // Students by class (current class distribution)
       Student.aggregate([
         {
           $match: {
             branchId: branchObjectId,
-            ...(hasDateFilter && {
-              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
-            }),
           },
         },
         { $group: { _id: "$currentClassId", count: { $sum: 1 } } },
@@ -1886,14 +1880,11 @@ const getStudentStatistics = async (req, res) => {
         { $sort: { count: -1 } },
       ]),
 
-      // Students by department (with date filter if provided)
+      // Students by department (current department distribution)
       Student.aggregate([
         {
           $match: {
             branchId: branchObjectId,
-            ...(hasDateFilter && {
-              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
-            }),
           },
         },
         { $group: { _id: "$departmentId", count: { $sum: 1 } } },
@@ -1914,14 +1905,11 @@ const getStudentStatistics = async (req, res) => {
         { $sort: { count: -1 } },
       ]),
 
-      // Gender distribution (from User model via lookup) - with date filter if provided
+      // Gender distribution (from User model via lookup) - current students only
       Student.aggregate([
         {
           $match: {
             branchId: branchObjectId,
-            ...(hasDateFilter && {
-              enrollmentDate: { $gte: filterStartDate, $lte: filterEndDate },
-            }),
           },
         },
         {
@@ -2035,8 +2023,8 @@ const getStudentStatistics = async (req, res) => {
             newEnrollmentsLastMonth) *
           100
         : newEnrollmentsThisMonth > 0
-        ? 100
-        : 0;
+          ? 100
+          : 0;
 
     // Retention rate: % of students from 3+ months ago still active
     const stillActiveFromThreeMonthsAgo = await Student.countDocuments({
@@ -2415,7 +2403,7 @@ const recordStudentPayment = async (req, res) => {
           },
         },
       },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate("userId", "firstName lastName email phone");
 
     res.status(200).json({
@@ -2463,7 +2451,7 @@ const getStudentPaymentHistory = async (req, res) => {
         { path: "branchId", select: "name configuration" },
       ])
       .select(
-        "studentId userId currentClassId branchId enrollmentDate createdAt admissionNumber"
+        "studentId userId currentClassId branchId enrollmentDate createdAt admissionNumber",
       );
 
     if (!student) {
@@ -2497,7 +2485,7 @@ const getStudentPaymentHistory = async (req, res) => {
     });
     const creditBalance = creditPayments.reduce(
       (sum, payment) => sum + payment.amount,
-      0
+      0,
     );
 
     // Calculate fee summary from invoices accounting for discounts and scholarships
@@ -2511,7 +2499,7 @@ const getStudentPaymentHistory = async (req, res) => {
     }, 0);
     const totalPaid = invoices.reduce(
       (sum, inv) => sum + (inv.amountPaid || 0),
-      0
+      0,
     );
     const totalBalance = invoices.reduce((sum, inv) => {
       const expectedAmount =
@@ -2638,7 +2626,7 @@ const generateStudentPaymentReceipt = async (req, res) => {
 
     // Find the payment in history by reference number
     const paymentEntry = student.fees?.paymentHistory?.find(
-      (payment) => payment.referenceNumber === reference
+      (payment) => payment.referenceNumber === reference,
     );
 
     if (!paymentEntry) {
@@ -2724,7 +2712,7 @@ const downloadStudentPaymentReceipt = async (req, res) => {
     if (reference && reference.trim() !== "" && reference !== "unknown") {
       // Search by reference number if provided and not "unknown"
       paymentEntry = student.fees?.paymentHistory?.find(
-        (payment) => payment.referenceNumber === reference
+        (payment) => payment.referenceNumber === reference,
       );
     } else if (req.query.amount && req.query.paymentDate) {
       // Search by amount and payment date if reference is empty or "unknown"
@@ -2732,7 +2720,7 @@ const downloadStudentPaymentReceipt = async (req, res) => {
         (payment) =>
           payment.amount === parseFloat(req.query.amount) &&
           new Date(payment.paymentDate).getTime() ===
-            new Date(req.query.paymentDate).getTime()
+            new Date(req.query.paymentDate).getTime(),
       );
     }
 
@@ -2770,7 +2758,7 @@ const downloadStudentPaymentReceipt = async (req, res) => {
       "Content-Disposition",
       `attachment; filename="Receipt-${
         paymentEntry.referenceNumber || "UNKNOWN"
-      }.pdf"`
+      }.pdf"`,
     );
     res.setHeader("Content-Length", pdfBytes.length);
 
@@ -2806,7 +2794,7 @@ const getStudentCourseMaterials = async (req, res) => {
 
     // Check if student is enrolled in this course
     const isEnrolled = student.courses.some(
-      (course) => course._id.toString() === courseId
+      (course) => course._id.toString() === courseId,
     );
     if (!isEnrolled) {
       return res.status(403).json({
@@ -2817,7 +2805,7 @@ const getStudentCourseMaterials = async (req, res) => {
 
     // Get the course with modules and materials
     const course = await Course.findById(courseId).select(
-      "name code resources.modules resources.materials"
+      "name code resources.modules resources.materials",
     );
     if (!course) {
       return res.status(404).json({

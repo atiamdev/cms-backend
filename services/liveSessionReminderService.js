@@ -25,11 +25,18 @@ async function checkUpcomingLiveSessions() {
     }).populate("courseId hostUserId");
 
     console.log(
-      `[Live Session Reminder] Found ${sessions.length} sessions starting in ~2 hours`
+      `[Live Session Reminder] Found ${sessions.length} sessions starting in ~2 hours`,
     );
 
     for (const session of sessions) {
       try {
+        if (!session.courseId) {
+          console.log(
+            `[Live Session Reminder] No course found for session ${session._id}`,
+          );
+          continue;
+        }
+
         // Get enrolled students
         const enrollments = await Enrollment.find({
           courseId: session.courseId._id,
@@ -44,13 +51,13 @@ async function checkUpcomingLiveSessions() {
 
         if (studentUserIds.length === 0) {
           console.log(
-            `[Live Session Reminder] No students enrolled in course ${session.courseId.title}`
+            `[Live Session Reminder] No students enrolled in course ${session.courseId.title}`,
           );
           continue;
         }
 
         console.log(
-          `[Live Session Reminder] Sending reminder to ${studentUserIds.length} students for session ${session._id}`
+          `[Live Session Reminder] Sending reminder to ${studentUserIds.length} students for session ${session._id}`,
         );
 
         // Send push notification
@@ -80,17 +87,17 @@ async function checkUpcomingLiveSessions() {
 
         const result = await pushController.sendNotification(
           studentUserIds,
-          payload
+          payload,
         );
 
         console.log(
           `[Live Session Reminder] Notification sent for session ${session._id}:`,
-          result
+          result,
         );
       } catch (error) {
         console.error(
           `[Live Session Reminder] Error sending notification for session ${session._id}:`,
-          error
+          error,
         );
       }
     }
@@ -107,7 +114,7 @@ async function checkUpcomingLiveSessions() {
 async function checkTeacherLiveSessionReminders() {
   try {
     console.log(
-      "[Teacher Live Session Reminder] Checking for upcoming sessions..."
+      "[Teacher Live Session Reminder] Checking for upcoming sessions...",
     );
 
     const now = moment().tz("Africa/Nairobi");
@@ -123,14 +130,21 @@ async function checkTeacherLiveSessionReminders() {
     }).populate("courseId hostUserId");
 
     console.log(
-      `[Teacher Live Session Reminder] Found ${sessions.length} sessions starting in ~1 hour`
+      `[Teacher Live Session Reminder] Found ${sessions.length} sessions starting in ~1 hour`,
     );
 
     for (const session of sessions) {
       try {
         if (!session.hostUserId) {
           console.log(
-            `[Teacher Live Session Reminder] No host found for session ${session._id}`
+            `[Teacher Live Session Reminder] No host found for session ${session._id}`,
+          );
+          continue;
+        }
+
+        if (!session.courseId) {
+          console.log(
+            `[Teacher Live Session Reminder] No course found for session ${session._id}`,
           );
           continue;
         }
@@ -143,7 +157,7 @@ async function checkTeacherLiveSessionReminders() {
         const studentCount = enrollments.length;
 
         console.log(
-          `[Teacher Live Session Reminder] Sending reminder to teacher ${session.hostUserId._id} for session ${session._id}`
+          `[Teacher Live Session Reminder] Sending reminder to teacher ${session.hostUserId._id} for session ${session._id}`,
         );
 
         // Send push notification to teacher
@@ -174,16 +188,16 @@ async function checkTeacherLiveSessionReminders() {
 
         await pushController.sendNotification(
           [session.hostUserId._id],
-          payload
+          payload,
         );
 
         console.log(
-          `[Teacher Live Session Reminder] Notification sent for session ${session._id}`
+          `[Teacher Live Session Reminder] Notification sent for session ${session._id}`,
         );
       } catch (error) {
         console.error(
           `[Teacher Live Session Reminder] Error sending notification for session ${session._id}:`,
-          error
+          error,
         );
       }
     }
@@ -192,7 +206,7 @@ async function checkTeacherLiveSessionReminders() {
   } catch (error) {
     console.error(
       "[Teacher Live Session Reminder] Error checking sessions:",
-      error
+      error,
     );
   }
 }
@@ -211,7 +225,7 @@ function initializeLiveSessionReminderScheduler() {
   });
 
   console.log(
-    "[Live Session Reminder] Scheduler initialized - checking every 10 minutes"
+    "[Live Session Reminder] Scheduler initialized - checking every 10 minutes",
   );
 
   // Run once on startup (after 30 seconds)

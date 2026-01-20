@@ -93,7 +93,7 @@ const getAttendanceRecords = async (req, res) => {
       query.studentId = { $in: studentIds };
 
       console.log(
-        `  📚 Filtering by courseId: ${courseId}, found ${studentIds.length} students`
+        `  📚 Filtering by courseId: ${courseId}, found ${studentIds.length} students`,
       );
     }
 
@@ -106,7 +106,7 @@ const getAttendanceRecords = async (req, res) => {
       "  User:",
       req.user.firstName,
       req.user.lastName,
-      `(${req.user.email})`
+      `(${req.user.email})`,
     );
     console.log("  User Role:", req.user.roles);
     console.log("  User Branch ID:", req.user.branchId);
@@ -175,7 +175,7 @@ const getAttendanceRecords = async (req, res) => {
 
       const anyRecordsForDate = await Attendance.countDocuments(dateOnlyQuery);
       console.log(
-        `  ⚠️ Found ${anyRecordsForDate} total records for this date (all branches)`
+        `  ⚠️ Found ${anyRecordsForDate} total records for this date (all branches)`,
       );
 
       if (anyRecordsForDate > 0) {
@@ -190,14 +190,14 @@ const getAttendanceRecords = async (req, res) => {
           console.log(`      Attendance branchId: ${record.branchId}`);
           console.log(`      User branchId: ${record.userId?.branchId}`);
           console.log(
-            `      User: ${record.userId?.firstName} ${record.userId?.lastName}`
+            `      User: ${record.userId?.firstName} ${record.userId?.lastName}`,
           );
           console.log(
             `      Match: ${
               record.branchId?.toString() === req.user.branchId?.toString()
                 ? "✅ YES"
                 : "❌ NO"
-            }`
+            }`,
           );
         });
       }
@@ -304,7 +304,7 @@ const markAttendance = async (req, res) => {
     const dateOnly = new Date(
       attendanceDate.getFullYear(),
       attendanceDate.getMonth(),
-      attendanceDate.getDate()
+      attendanceDate.getDate(),
     );
 
     // Check if attendance already exists for this user and date
@@ -351,7 +351,33 @@ const markAttendance = async (req, res) => {
         });
       }
       attendanceData.studentId = student._id;
-      attendanceData.classId = student.currentClassId;
+
+      // Determine classId - use provided classId, or student's currentClassId, or find from class enrollments
+      let finalClassId = classId || student.currentClassId;
+
+      // If still no classId, try to find from class enrollments (student enrolled in classes)
+      if (!finalClassId) {
+        const classWithStudent = await Class.findOne({
+          branchId: req.user.branchId,
+          "students.studentId": student._id,
+          "students.status": "active",
+        }).sort({ createdAt: -1 }); // Get most recent class
+
+        if (classWithStudent) {
+          finalClassId = classWithStudent._id;
+        }
+      }
+
+      // If we still don't have a classId, return an error
+      if (!finalClassId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Student must be assigned to a class before marking attendance. Please assign the student to a class first.",
+        });
+      }
+
+      attendanceData.classId = finalClassId;
     } else if (userType === "teacher") {
       const teacher = await Teacher.findOne({
         userId,
@@ -627,7 +653,7 @@ const syncFromZKTeco = async (req, res) => {
           const dateOnly = new Date(
             attendanceDate.getFullYear(),
             attendanceDate.getMonth(),
-            attendanceDate.getDate()
+            attendanceDate.getDate(),
           );
 
           // Check if attendance already exists
@@ -645,8 +671,8 @@ const syncFromZKTeco = async (req, res) => {
               userType: user.roles.includes("student")
                 ? "student"
                 : user.roles.includes("teacher")
-                ? "teacher"
-                : "admin",
+                  ? "teacher"
+                  : "admin",
               date: dateOnly,
               attendanceType: "biometric",
               deviceId: deviceIp,
@@ -678,7 +704,32 @@ const syncFromZKTeco = async (req, res) => {
               const student = await Student.findOne({ userId: user._id });
               if (student) {
                 attendanceData.studentId = student._id;
-                attendanceData.classId = student.currentClassId;
+
+                // Determine classId - use student's currentClassId, or find from class enrollments
+                let finalClassId = student.currentClassId;
+
+                // If no classId, try to find from class enrollments (student enrolled in classes)
+                if (!finalClassId) {
+                  const classWithStudent = await Class.findOne({
+                    branchId: req.user.branchId,
+                    "students.studentId": student._id,
+                    "students.status": "active",
+                  }).sort({ createdAt: -1 }); // Get most recent class
+
+                  if (classWithStudent) {
+                    finalClassId = classWithStudent._id;
+                  }
+                }
+
+                // If we still don't have a classId, skip this attendance record
+                if (!finalClassId) {
+                  console.warn(
+                    `Skipping attendance for student ${student.studentId} - no class assignment found`,
+                  );
+                  continue; // Skip this record
+                }
+
+                attendanceData.classId = finalClassId;
               }
             } else if (attendanceData.userType === "teacher") {
               const teacher = await Teacher.findOne({ userId: user._id });
@@ -749,7 +800,7 @@ const getAttendanceSummary = async (req, res) => {
     const startOfDay = new Date(
       targetDate.getFullYear(),
       targetDate.getMonth(),
-      targetDate.getDate()
+      targetDate.getDate(),
     );
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
@@ -881,7 +932,7 @@ const syncFromBranch = async (req, res) => {
     console.log(
       `📥 Receiving ${logs.length} attendance logs from ${
         branchName || "branch"
-      } (Branch ID: ${targetBranchId})`
+      } (Branch ID: ${targetBranchId})`,
     );
 
     if (req.isCrossBranchSync) {
@@ -939,7 +990,7 @@ const syncFromBranch = async (req, res) => {
         console.log(
           `🔍 Processing attendance: Enroll ${log.enrollNumber}, Timestamp: ${
             log.timestamp
-          }, Parsed: ${attendanceDate.toISOString()}`
+          }, Parsed: ${attendanceDate.toISOString()}`,
         );
 
         // Validate date
@@ -954,14 +1005,14 @@ const syncFromBranch = async (req, res) => {
 
         // Convert local time to UTC for storage (since frontend expects UTC)
         const utcDate = new Date(
-          attendanceDate.getTime() + attendanceDate.getTimezoneOffset() * 60000
+          attendanceDate.getTime() + attendanceDate.getTimezoneOffset() * 60000,
         );
 
         // Create date-only key for grouping
         const dateOnly = new Date(
           attendanceDate.getFullYear(),
           attendanceDate.getMonth(),
-          attendanceDate.getDate()
+          attendanceDate.getDate(),
         );
 
         // Find or create attendance record for this user/date
@@ -982,8 +1033,25 @@ const syncFromBranch = async (req, res) => {
             }
             if (student) {
               studentId = student._id;
-              classId = student.currentClassId;
               userType = "student";
+
+              // Determine classId - use student's currentClassId, or find from class enrollments
+              let finalClassId = student.currentClassId;
+
+              // If no classId, try to find from class enrollments (student enrolled in classes)
+              if (!finalClassId) {
+                const classWithStudent = await Class.findOne({
+                  branchId: targetBranchId,
+                  "students.studentId": student._id,
+                  "students.status": "active",
+                }).sort({ createdAt: -1 }); // Get most recent class
+
+                if (classWithStudent) {
+                  finalClassId = classWithStudent._id;
+                }
+              }
+
+              classId = finalClassId;
             }
           } else if (user.roles.includes("teacher")) {
             const teacher = await Teacher.findOne({ userId: user._id });
@@ -1050,18 +1118,18 @@ const syncFromBranch = async (req, res) => {
           try {
             const reactivateResult = await checkAndAutoReactivate(
               student._id,
-              getValidUserId(req.user)
+              getValidUserId(req.user),
             );
             if (reactivateResult.reactivated) {
               console.log(
-                `🔄 Auto-reactivated student ${log.admissionNumber} upon attendance`
+                `🔄 Auto-reactivated student ${log.admissionNumber} upon attendance`,
               );
             }
           } catch (reactivateError) {
             // Don't fail the sync if reactivation fails, just log it
             console.warn(
               `⚠️ Failed to check auto-reactivate for ${log.admissionNumber}:`,
-              reactivateError.message
+              reactivateError.message,
             );
           }
         }
@@ -1113,7 +1181,7 @@ const syncFromBranch = async (req, res) => {
     });
 
     console.log(
-      `✅ Synced ${processedRecords.length} records, ${syncErrors.length} errors`
+      `✅ Synced ${processedRecords.length} records, ${syncErrors.length} errors`,
     );
 
     res.json({

@@ -98,6 +98,18 @@ const getDepartments = async (req, res) => {
       includeStats = false,
     } = req.query;
 
+    console.log("getDepartments called with:", {
+      page,
+      limit,
+      branchId,
+      isActive,
+      search,
+      includeStats,
+    });
+    console.log("User roles:", req.user?.roles);
+    console.log("User branchId:", req.user?.branchId);
+    console.log("Req.branchId from middleware:", req.branchId);
+
     const query = {};
 
     // Filter by branch for non-superadmin users
@@ -108,8 +120,17 @@ const getDepartments = async (req, res) => {
     //   query.branchId = branchId;
     // }
     if (branchId) {
-      query.branchId = branchId;
+      query.branchId = new mongoose.Types.ObjectId(branchId);
     }
+
+    console.log("Final query:", query);
+
+    // Temporarily log all departments to debug
+    const allDepts = await Department.find({}).limit(10);
+    console.log(
+      "All departments in DB (first 10):",
+      allDepts.map((d) => ({ name: d.name, branchId: d.branchId })),
+    );
 
     // Filter by active status
     if (isActive !== undefined) {
@@ -142,6 +163,7 @@ const getDepartments = async (req, res) => {
     if (includeStats === "true") {
       // Use aggregation for statistics
       const pipeline = [
+        { $match: query },
         { $match: query },
         {
           $lookup: {
@@ -190,6 +212,19 @@ const getDepartments = async (req, res) => {
       const totalDocs = await Department.countDocuments(query);
       departments = await Department.aggregate(pipeline);
 
+      console.log(
+        "Aggregation results - departments found:",
+        departments.length,
+      );
+      console.log(
+        "Departments data (agg):",
+        departments.map((d) => ({
+          name: d.name,
+          branchId: d.branchId,
+          _id: d._id,
+        })),
+      );
+
       pagination = {
         currentPage: parseInt(page),
         totalPages: Math.ceil(totalDocs / parseInt(limit)),
@@ -205,6 +240,16 @@ const getDepartments = async (req, res) => {
         .sort({ name: 1 })
         .skip((parseInt(page) - 1) * parseInt(limit))
         .limit(parseInt(limit));
+
+      console.log("Query results - departments found:", departments.length);
+      console.log(
+        "Departments data:",
+        departments.map((d) => ({
+          name: d.name,
+          branchId: d.branchId,
+          _id: d._id,
+        })),
+      );
 
       pagination = {
         currentPage: parseInt(page),
@@ -339,7 +384,7 @@ const updateDepartment = async (req, res) => {
     const updatedDepartment = await Department.findByIdAndUpdate(
       id,
       updateData,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate([
       { path: "branchId", select: "name abbreviation" },
       { path: "headOfDepartment", select: "firstName lastName email" },
@@ -586,19 +631,19 @@ const getDepartmentStatistics = async (req, res) => {
     // Calculate totals
     const totalDepartments = stats.reduce(
       (sum, branch) => sum + branch.departmentCount,
-      0
+      0,
     );
     const totalStudents = stats.reduce(
       (sum, branch) => sum + branch.studentCount,
-      0
+      0,
     );
     const totalCourses = stats.reduce(
       (sum, branch) => sum + branch.courseCount,
-      0
+      0,
     );
     const totalStaff = stats.reduce(
       (sum, branch) => sum + branch.staffCount,
-      0
+      0,
     );
 
     // Count active departments

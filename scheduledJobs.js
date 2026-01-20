@@ -17,12 +17,42 @@ const activeJobs = {};
 
 // Store job execution history for monitoring
 const jobHistory = {
-  studentInactivityCheck: { lastRun: null, lastSuccess: null, failures: 0, consecutiveFailures: 0 },
-  atRiskNotifications: { lastRun: null, lastSuccess: null, failures: 0, consecutiveFailures: 0 },
-  monthlyInvoiceGeneration: { lastRun: null, lastSuccess: null, failures: 0, consecutiveFailures: 0 },
-  weeklyInvoiceGeneration: { lastRun: null, lastSuccess: null, failures: 0, consecutiveFailures: 0 },
-  quarterlyInvoiceGeneration: { lastRun: null, lastSuccess: null, failures: 0, consecutiveFailures: 0 },
-  annualInvoiceGeneration: { lastRun: null, lastSuccess: null, failures: 0, consecutiveFailures: 0 },
+  studentInactivityCheck: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  atRiskNotifications: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  monthlyInvoiceGeneration: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  weeklyInvoiceGeneration: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  quarterlyInvoiceGeneration: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  annualInvoiceGeneration: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
 };
 
 /**
@@ -46,11 +76,17 @@ async function sendJobFailureAlert(jobName, error, consecutiveFailures) {
     await Notice.create({
       title: `⚠️ CRITICAL: Scheduled Job Failure`,
       message: alertMessage,
-      targetAudience: "admin",
-      targetUsers: admins.map(a => a._id),
+      targetAudience: "staff", // Changed from "admin" to valid enum value
+      specificRecipients: admins.map((a) => a._id), // Changed from targetUsers to specificRecipients
       priority: "urgent",
-      type: "system",
+      type: "urgent", // Changed from "system" to valid enum value
       isActive: true,
+      branchId: admins[0]?.branchId, // Add branchId from first admin
+      author: {
+        userId: admins[0]?._id, // Use first admin as author
+        name: "System",
+      },
+      publishDate: new Date(),
       metadata: {
         jobName,
         error: error.message || String(error),
@@ -59,7 +95,9 @@ async function sendJobFailureAlert(jobName, error, consecutiveFailures) {
       },
     });
 
-    console.error(`🚨 ALERT SENT: Job ${jobName} failed ${consecutiveFailures} times`);
+    console.error(
+      `🚨 ALERT SENT: Job ${jobName} failed ${consecutiveFailures} times`,
+    );
   } catch (alertError) {
     console.error("Failed to send job failure alert:", alertError);
   }
@@ -73,29 +111,31 @@ async function executeJobWithRetry(jobName, jobFunction, maxRetries = 3) {
   history.lastRun = new Date();
 
   let lastError = null;
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`\n🕐 [${jobName}] Attempt ${attempt}/${maxRetries}...`);
-      
+
       const result = await jobFunction();
-      
+
       // Success!
       history.lastSuccess = new Date();
       history.consecutiveFailures = 0;
-      
+
       console.log(`✅ [${jobName}] Completed successfully`);
       return { success: true, result };
-      
     } catch (error) {
       lastError = error;
-      console.error(`❌ [${jobName}] Attempt ${attempt} failed:`, error.message);
-      
+      console.error(
+        `❌ [${jobName}] Attempt ${attempt} failed:`,
+        error.message,
+      );
+
       if (attempt < maxRetries) {
         // Exponential backoff: 2^attempt seconds
         const backoffMs = Math.pow(2, attempt) * 1000;
-        console.log(`   Retrying in ${backoffMs/1000} seconds...`);
-        await new Promise(resolve => setTimeout(resolve, backoffMs));
+        console.log(`   Retrying in ${backoffMs / 1000} seconds...`);
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
       }
     }
   }
@@ -103,7 +143,7 @@ async function executeJobWithRetry(jobName, jobFunction, maxRetries = 3) {
   // All retries failed
   history.failures++;
   history.consecutiveFailures++;
-  
+
   console.error(`🚨 [${jobName}] FAILED after ${maxRetries} attempts`);
 
   // Send alert if we have multiple consecutive failures
@@ -126,32 +166,29 @@ const scheduleStudentInactivityCheck = () => {
   const job = cron.schedule(
     "0 6 * * 1-5",
     async () => {
-      await executeJobWithRetry(
-        "studentInactivityCheck",
-        async () => {
-          const result = await checkAndMarkInactiveStudents();
-          
-          if (result && result.success) {
-            console.log(
-              `   Marked ${result.summary?.totalMarkedInactive || 0} students inactive.`
-            );
-          } else {
-            throw new Error(result?.error || "Inactivity check failed");
-          }
-          
-          return result;
+      await executeJobWithRetry("studentInactivityCheck", async () => {
+        const result = await checkAndMarkInactiveStudents();
+
+        if (result && result.success) {
+          console.log(
+            `   Marked ${result.summary?.totalMarkedInactive || 0} students inactive.`,
+          );
+        } else {
+          throw new Error(result?.error || "Inactivity check failed");
         }
-      );
+
+        return result;
+      });
     },
     {
       scheduled: true,
       timezone: "Africa/Nairobi", // Adjust to your timezone
-    }
+    },
   );
 
   activeJobs.studentInactivityCheck = job;
   console.log(
-    "📅 Scheduled: Student inactivity check (daily at 6:00 AM, Mon-Fri)"
+    "📅 Scheduled: Student inactivity check (daily at 6:00 AM, Mon-Fri)",
   );
 
   return job;
@@ -168,32 +205,29 @@ const scheduleAtRiskNotifications = () => {
   const job = cron.schedule(
     "0 8 * * 1-5",
     async () => {
-      await executeJobWithRetry(
-        "atRiskNotifications",
-        async () => {
-          const result = await sendAtRiskNotificationsAllBranches();
+      await executeJobWithRetry("atRiskNotifications", async () => {
+        const result = await sendAtRiskNotificationsAllBranches();
 
-          if (result.success) {
-            console.log(
-              `   Sent ${result.totalNotificationsSent} notifications.`
-            );
-          } else {
-            throw new Error(result.error || "At-risk notifications failed");
-          }
-          
-          return result;
+        if (result.success) {
+          console.log(
+            `   Sent ${result.totalNotificationsSent} notifications.`,
+          );
+        } else {
+          throw new Error(result.error || "At-risk notifications failed");
         }
-      );
+
+        return result;
+      });
     },
     {
       scheduled: true,
       timezone: "Africa/Nairobi", // Adjust to your timezone
-    }
+    },
   );
 
   activeJobs.atRiskNotifications = job;
   console.log(
-    "📅 Scheduled: At-risk notifications (daily at 8:00 AM, Mon-Fri)"
+    "📅 Scheduled: At-risk notifications (daily at 8:00 AM, Mon-Fri)",
   );
 
   return job;
@@ -224,21 +258,26 @@ const initializeScheduledJobs = () => {
           "monthlyInvoiceGeneration",
           async () => {
             const now = new Date();
-            const result = await monthlyInvoiceService.generateInvoicesForFrequency({ 
-              frequency: 'monthly', 
-              date: now 
-            });
-            console.log(`   Created: ${result.created}, Skipped: ${result.skipped}, Notifications: ${result.notificationsPending}`);
+            const result =
+              await monthlyInvoiceService.generateInvoicesForFrequency({
+                frequency: "monthly",
+                date: now,
+              });
+            console.log(
+              `   Created: ${result.created}, Skipped: ${result.skipped}, Notifications: ${result.notificationsPending}`,
+            );
             return result;
           },
-          2 // Fewer retries for invoice generation to avoid duplicates
+          2, // Fewer retries for invoice generation to avoid duplicates
         );
       },
-      { scheduled: true, timezone: "Africa/Nairobi" }
+      { scheduled: true, timezone: "Africa/Nairobi" },
     );
 
     activeJobs.monthlyInvoiceGeneration = job;
-    console.log("📅 Scheduled: Monthly invoice generation (1st day each month at 03:00)");
+    console.log(
+      "📅 Scheduled: Monthly invoice generation (1st day each month at 03:00)",
+    );
 
     // Weekly invoices (every Monday at 03:00)
     const weeklyJob = cron.schedule(
@@ -248,21 +287,26 @@ const initializeScheduledJobs = () => {
           "weeklyInvoiceGeneration",
           async () => {
             const now = new Date();
-            const result = await monthlyInvoiceService.generateInvoicesForFrequency({ 
-              frequency: 'weekly', 
-              date: now 
-            });
-            console.log(`   Created: ${result.created}, Skipped: ${result.skipped}`);
+            const result =
+              await monthlyInvoiceService.generateInvoicesForFrequency({
+                frequency: "weekly",
+                date: now,
+              });
+            console.log(
+              `   Created: ${result.created}, Skipped: ${result.skipped}`,
+            );
             return result;
           },
-          2
+          2,
         );
       },
-      { scheduled: true, timezone: "Africa/Nairobi" }
+      { scheduled: true, timezone: "Africa/Nairobi" },
     );
 
     activeJobs.weeklyInvoiceGeneration = weeklyJob;
-    console.log("📅 Scheduled: Weekly invoice generation (every Monday at 03:00)");
+    console.log(
+      "📅 Scheduled: Weekly invoice generation (every Monday at 03:00)",
+    );
 
     // Quarterly invoices (1st day of Jan, Apr, Jul, Oct at 03:00)
     const quarterlyJob = cron.schedule(
@@ -272,21 +316,26 @@ const initializeScheduledJobs = () => {
           "quarterlyInvoiceGeneration",
           async () => {
             const now = new Date();
-            const result = await monthlyInvoiceService.generateInvoicesForFrequency({ 
-              frequency: 'quarterly', 
-              date: now 
-            });
-            console.log(`   Created: ${result.created}, Skipped: ${result.skipped}`);
+            const result =
+              await monthlyInvoiceService.generateInvoicesForFrequency({
+                frequency: "quarterly",
+                date: now,
+              });
+            console.log(
+              `   Created: ${result.created}, Skipped: ${result.skipped}`,
+            );
             return result;
           },
-          2
+          2,
         );
       },
-      { scheduled: true, timezone: "Africa/Nairobi" }
+      { scheduled: true, timezone: "Africa/Nairobi" },
     );
 
     activeJobs.quarterlyInvoiceGeneration = quarterlyJob;
-    console.log("📅 Scheduled: Quarterly invoice generation (1st day of Jan/Apr/Jul/Oct at 03:00)");
+    console.log(
+      "📅 Scheduled: Quarterly invoice generation (1st day of Jan/Apr/Jul/Oct at 03:00)",
+    );
 
     // Annual invoices (Jan 1st at 03:00)
     const annualJob = cron.schedule(
@@ -296,23 +345,29 @@ const initializeScheduledJobs = () => {
           "annualInvoiceGeneration",
           async () => {
             const now = new Date();
-            const result = await monthlyInvoiceService.generateInvoicesForFrequency({ 
-              frequency: 'annual', 
-              date: now 
-            });
-            console.log(`   Created: ${result.created}, Skipped: ${result.skipped}`);
+            const result =
+              await monthlyInvoiceService.generateInvoicesForFrequency({
+                frequency: "annual",
+                date: now,
+              });
+            console.log(
+              `   Created: ${result.created}, Skipped: ${result.skipped}`,
+            );
             return result;
           },
-          2
+          2,
         );
       },
-      { scheduled: true, timezone: "Africa/Nairobi" }
+      { scheduled: true, timezone: "Africa/Nairobi" },
     );
 
     activeJobs.annualInvoiceGeneration = annualJob;
     console.log("📅 Scheduled: Annual invoice generation (Jan 1st at 03:00)");
   } catch (error) {
-    console.error("Error initializing monthly invoice generation job:", error.message);
+    console.error(
+      "Error initializing monthly invoice generation job:",
+      error.message,
+    );
   }
 
   console.log("=".repeat(50) + "\n");
@@ -380,13 +435,21 @@ const getJobsHealthReport = () => {
 
   Object.keys(jobHistory).forEach((jobName) => {
     const history = jobHistory[jobName];
-    const timeSinceLastRun = history.lastRun ? Date.now() - history.lastRun.getTime() : null;
-    const timeSinceLastSuccess = history.lastSuccess ? Date.now() - history.lastSuccess.getTime() : null;
+    const timeSinceLastRun = history.lastRun
+      ? Date.now() - history.lastRun.getTime()
+      : null;
+    const timeSinceLastSuccess = history.lastSuccess
+      ? Date.now() - history.lastSuccess.getTime()
+      : null;
 
     const jobStatus = {
       ...history,
-      timeSinceLastRun: timeSinceLastRun ? `${Math.round(timeSinceLastRun / 60000)} minutes` : "Never run",
-      timeSinceLastSuccess: timeSinceLastSuccess ? `${Math.round(timeSinceLastSuccess / 60000)} minutes` : "Never succeeded",
+      timeSinceLastRun: timeSinceLastRun
+        ? `${Math.round(timeSinceLastRun / 60000)} minutes`
+        : "Never run",
+      timeSinceLastSuccess: timeSinceLastSuccess
+        ? `${Math.round(timeSinceLastSuccess / 60000)} minutes`
+        : "Never succeeded",
       health: "good",
     };
 
@@ -394,12 +457,17 @@ const getJobsHealthReport = () => {
     if (history.consecutiveFailures >= 3) {
       jobStatus.health = "critical";
       report.healthStatus = "critical";
-      report.alerts.push(`${jobName}: ${history.consecutiveFailures} consecutive failures`);
+      report.alerts.push(
+        `${jobName}: ${history.consecutiveFailures} consecutive failures`,
+      );
     } else if (history.consecutiveFailures >= 2) {
       jobStatus.health = "warning";
       if (report.healthStatus === "healthy") report.healthStatus = "warning";
-      report.alerts.push(`${jobName}: ${history.consecutiveFailures} consecutive failures`);
-    } else if (timeSinceLastSuccess && timeSinceLastSuccess > 86400000 * 2) { // 2 days
+      report.alerts.push(
+        `${jobName}: ${history.consecutiveFailures} consecutive failures`,
+      );
+    } else if (timeSinceLastSuccess && timeSinceLastSuccess > 86400000 * 2) {
+      // 2 days
       jobStatus.health = "stale";
       if (report.healthStatus === "healthy") report.healthStatus = "warning";
       report.alerts.push(`${jobName}: No successful run in over 2 days`);
