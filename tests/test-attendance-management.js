@@ -2,15 +2,15 @@ const mongoose = require("mongoose");
 require("dotenv").config();
 
 // Import models
-const Attendance = require("./models/Attendance");
-const User = require("./models/User");
-const Student = require("./models/Student");
-const Teacher = require("./models/Teacher");
-const Branch = require("./models/Branch");
-const Class = require("./models/Class");
+const Attendance = require("../models/Attendance");
+const User = require("../models/User");
+const Student = require("../models/Student");
+const Teacher = require("../models/Teacher");
+const Branch = require("../models/Branch");
+const Class = require("../models/Class");
 
 // Import services and helpers
-const ZKTecoService = require("./services/zktecoService");
+const ZKTecoService = require("../services/zktecoService");
 const {
   calculateAttendanceStats,
   getAttendanceBreakdownByUserType,
@@ -19,7 +19,7 @@ const {
   getTopPerformers,
   getAttendanceAlerts,
   validateAttendanceData,
-} = require("./utils/attendanceHelpers");
+} = require("../utils/attendanceHelpers");
 
 // Test data
 const testBranchData = {
@@ -76,7 +76,7 @@ const testUsersData = [
 async function connectDB() {
   try {
     await mongoose.connect(
-      process.env.MONGODB_URI || "mongodb://localhost:27017/atiam_cms_test"
+      process.env.MONGODB_URI || "mongodb://localhost:27017/atiam_cms_test",
     );
     console.log("✅ Connected to MongoDB");
   } catch (error) {
@@ -172,7 +172,7 @@ async function createTestAttendanceRecords(
   users,
   students,
   teachers,
-  testClass
+  testClass,
 ) {
   try {
     console.log("\n📊 Creating test attendance records...");
@@ -190,7 +190,7 @@ async function createTestAttendanceRecords(
       for (let i = 0; i < students.length; i++) {
         const student = students[i];
         const user = users.find(
-          (u) => u._id.toString() === student.userId.toString()
+          (u) => u._id.toString() === student.userId.toString(),
         );
 
         // Simulate different attendance patterns
@@ -226,9 +226,9 @@ async function createTestAttendanceRecords(
               ? Math.floor(
                   (clockInTime.getTime() -
                     new Date(
-                      attendanceDate.getTime() + 8 * 60 * 60 * 1000
+                      attendanceDate.getTime() + 8 * 60 * 60 * 1000,
                     ).getTime()) /
-                    (1000 * 60)
+                    (1000 * 60),
                 )
               : 0,
             recordedBy: users[0]._id, // Admin user
@@ -246,7 +246,7 @@ async function createTestAttendanceRecords(
       for (let i = 0; i < teachers.length; i++) {
         const teacher = teachers[i];
         const user = users.find(
-          (u) => u._id.toString() === teacher.userId.toString()
+          (u) => u._id.toString() === teacher.userId.toString(),
         );
 
         const isPresent = Math.random() > 0.05; // 95% attendance rate for teachers
@@ -282,7 +282,7 @@ async function createTestAttendanceRecords(
 
     console.log(
       "✅ Test attendance records created:",
-      attendanceRecords.length
+      attendanceRecords.length,
     );
     return attendanceRecords;
   } catch (error) {
@@ -305,7 +305,7 @@ async function testAttendanceModel() {
       console.log("✅ Formatted clock in:", sampleAttendance.formattedClockIn);
       console.log(
         "✅ Formatted clock out:",
-        sampleAttendance.formattedClockOut
+        sampleAttendance.formattedClockOut,
       );
       console.log("✅ Day name:", sampleAttendance.dayName);
       console.log("✅ Total hours:", sampleAttendance.totalHours);
@@ -321,7 +321,7 @@ async function testAttendanceModel() {
       branch._id,
       startDate,
       endDate,
-      "student"
+      "student",
     );
     console.log("✅ Attendance summary entries:", summary.length);
 
@@ -345,7 +345,7 @@ async function testAttendanceHelpers() {
     const stats = await calculateAttendanceStats(
       branch._id,
       startDate,
-      endDate
+      endDate,
     );
     console.log("✅ Attendance statistics:");
     console.log("   - Total records:", stats.totalRecords);
@@ -357,12 +357,12 @@ async function testAttendanceHelpers() {
     const breakdown = await getAttendanceBreakdownByUserType(
       branch._id,
       startDate,
-      endDate
+      endDate,
     );
     console.log("✅ User type breakdown:", breakdown.length, "types");
     breakdown.forEach((item) => {
       console.log(
-        `   - ${item.userType}: ${item.attendanceRate}% (${item.totalRecords} records)`
+        `   - ${item.userType}: ${item.attendanceRate}% (${item.totalRecords} records)`,
       );
     });
 
@@ -374,7 +374,7 @@ async function testAttendanceHelpers() {
     const classSummary = await getClasswiseAttendanceSummary(
       branch._id,
       startDate,
-      endDate
+      endDate,
     );
     console.log("✅ Classwise summary:", classSummary.length, "classes");
 
@@ -384,7 +384,7 @@ async function testAttendanceHelpers() {
       startDate,
       endDate,
       "student",
-      5
+      5,
     );
     console.log("✅ Top performers:", topPerformers.length);
 
@@ -422,20 +422,20 @@ async function testZKTecoService() {
     console.log("✅ ZKTeco service initialized");
     console.log(
       "✅ Commands available:",
-      Object.keys(ZKTecoService.COMMANDS).length
+      Object.keys(ZKTecoService.COMMANDS).length,
     );
     console.log(
       "✅ Responses available:",
-      Object.keys(ZKTecoService.RESPONSE).length
+      Object.keys(ZKTecoService.RESPONSE).length,
     );
 
     // Test command creation
     const testCommand = zkService.createCommand(
-      ZKTecoService.COMMANDS.CMD_CONNECT
+      ZKTecoService.COMMANDS.CMD_CONNECT,
     );
     console.log(
       "✅ Command creation working, buffer length:",
-      testCommand.length
+      testCommand.length,
     );
 
     console.log("✅ ZKTeco service tests passed (structure only)");
@@ -457,7 +457,7 @@ async function testAttendanceQueries() {
     const startOfDay = new Date(
       today.getFullYear(),
       today.getMonth(),
-      today.getDate()
+      today.getDate(),
     );
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
@@ -538,7 +538,7 @@ async function runTests() {
       users,
       students,
       teachers,
-      testClass
+      testClass,
     );
     await testAttendanceModel();
     await testAttendanceHelpers();
@@ -555,7 +555,7 @@ async function runTests() {
     console.log("✅ Student, teacher, and staff attendance tracking");
     console.log("✅ Class-wise attendance management");
     console.log(
-      "✅ Attendance status management (present, absent, late, half-day)"
+      "✅ Attendance status management (present, absent, late, half-day)",
     );
     console.log("✅ Comprehensive reporting and analytics");
     console.log("✅ Dashboard with attendance trends and statistics");
@@ -566,7 +566,7 @@ async function runTests() {
     console.log("✅ Attendance approval workflow");
     console.log("✅ Geolocation support for mobile attendance");
     console.log(
-      "✅ Multiple attendance types (biometric, card, manual, mobile)"
+      "✅ Multiple attendance types (biometric, card, manual, mobile)",
     );
   } catch (error) {
     console.error("\n❌ Test failed:", error);

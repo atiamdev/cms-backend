@@ -22,6 +22,7 @@ const {
   downloadStudentPaymentReceipt,
   getStudentCourseMaterials,
   getStudentWhatsappGroups,
+  getStudentsFeeStatusChanges,
 } = require("../controllers/studentController");
 const {
   protect,
@@ -365,7 +366,15 @@ router.get(
   "/statistics",
   canAccessStudents,
   validateBranchAccess("read"),
-  getStudentStatistics
+  getStudentStatistics,
+);
+
+router.get(
+  "/fee-status-changes",
+  protect,
+  canAccessStudents,
+  validateBranchAccess("read"),
+  getStudentsFeeStatusChanges,
 );
 
 /**
@@ -479,7 +488,7 @@ router.post(
   logBranchAdminAction("CREATE_STUDENT"),
   validateBranchAccess("create"),
   studentValidation,
-  createStudent
+  createStudent,
 );
 
 /**
@@ -537,10 +546,11 @@ router.post(
  */
 router.get(
   "/",
+  protect,
   canAccessStudents,
   filterByBranch,
   validateBranchAccess("read"),
-  getStudents
+  getStudents,
 );
 
 /**
@@ -652,7 +662,7 @@ router.put(
   canAccessStudents,
   validateBranchOwnership(Student),
   logBranchAdminAction("UPDATE_STUDENT"),
-  updateStudent
+  updateStudent,
 );
 
 /**
@@ -737,7 +747,7 @@ router.delete(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 /**
@@ -774,7 +784,7 @@ router.delete(
   canAccessStudents,
   validateBranchOwnership(Student),
   logBranchAdminAction("DELETE_STUDENT"),
-  deleteStudent
+  deleteStudent,
 );
 
 /**
@@ -1002,7 +1012,7 @@ router.post("/:id/assign-class", canAccessStudents, assignStudentToClass);
 router.delete(
   "/:id/remove-from-class",
   canAccessStudents,
-  removeStudentFromClass
+  removeStudentFromClass,
 );
 
 // @desc    Get payment history for student
@@ -1030,7 +1040,7 @@ router.post(
       .withMessage("Reference number must be a string"),
     body("notes").optional().isString().withMessage("Notes must be a string"),
   ],
-  recordStudentPayment
+  recordStudentPayment,
 );
 
 // @desc    Generate receipt for student payment history entry
@@ -1040,7 +1050,7 @@ router.get(
   "/:id/payment-receipt/:reference",
   protect,
   branchAuth,
-  generateStudentPaymentReceipt
+  generateStudentPaymentReceipt,
 );
 
 // @desc    Download receipt for student payment history entry
@@ -1050,7 +1060,7 @@ router.get(
   "/:id/payment-receipt/:reference/download",
   protect,
   branchAuth,
-  downloadStudentPaymentReceipt
+  downloadStudentPaymentReceipt,
 );
 
 // @desc    Get course materials for enrolled student
@@ -1104,7 +1114,7 @@ router.patch(
   requireAdmin,
   validateBranchOwnership(Student),
   logBranchAdminAction("SUSPEND_STUDENT"),
-  suspendStudent
+  suspendStudent,
 );
 
 module.exports = router;

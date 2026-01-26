@@ -5,7 +5,7 @@ const Teacher = require("../models/Teacher");
 const Class = require("../models/Class");
 const { validationResult } = require("express-validator");
 const mongoose = require("mongoose");
-const ZKTecoService = require("../services/zktecoService");
+const BioTimeService = require("../services/bioTimeService");
 const { isSuperAdmin } = require("../utils/accessControl");
 
 // Import student inactivity service for auto-reactivation
@@ -1312,6 +1312,276 @@ const getMyAttendance = async (req, res) => {
   }
 };
 
+// @desc    Update student access control based on fee status
+// @route   POST /api/attendance/update-access
+// @access  Private (Admin, Secretary)
+const updateStudentAccess = async (req, res) => {
+  try {
+    const { studentId, feeStatus } = req.body;
+
+    if (!studentId || !feeStatus) {
+      return res.status(400).json({
+        success: false,
+        message: "Student ID and fee status are required",
+      });
+    }
+
+    // Validate fee status
+    const validStatuses = ["paid", "pending", "partial"];
+    if (!validStatuses.includes(feeStatus)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid fee status. Must be 'paid', 'pending', or 'partial'",
+      });
+    }
+
+    // Check if user has permission for this student's branch
+    const student = await Student.findOne({ studentId }).populate("branchId");
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    // Check branch access
+    if (
+      !isSuperAdmin(req.user) &&
+      student.branchId._id.toString() !== req.user.branchId.toString()
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied: Student belongs to different branch",
+      });
+    }
+
+    // Initialize BioTime service
+    const bioTimeService = new BioTimeService();
+
+    // Update access in BioTime
+    const success = await bioTimeService.updateStudentAccess(
+      studentId,
+      feeStatus,
+    );
+
+    if (success) {
+      // Update fee status in CMS database
+      await Student.findByIdAndUpdate(student._id, {
+        "fees.feeStatus": feeStatus,
+        "fees.updatedAt": new Date(),
+      });
+
+      res.json({
+        success: true,
+        message: `Student access updated successfully. Status: ${feeStatus}`,
+        data: {
+          studentId,
+          feeStatus,
+          accessEnabled: feeStatus === "paid",
+        },
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: "Student not found in BioTime system",
+      });
+    }
+  } catch (error) {
+    console.error("Update student access error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update student access",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Sync attendance from BioTime
+// @route   POST /api/attendance/sync-biotime
+// @access  Private (Admin, Secretary)
+const syncFromBioTime = async (req, res) => {
+  try {
+    const bioTimeService = new BioTimeService();
+
+    // Upload transactions from all devices first
+    const devices = await bioTimeService.getDevices();
+    if (devices.data && devices.data.length > 0) {
+      const deviceIds = devices.data.map((device) => device.id);
+      await bioTimeService.uploadTransactionsFromDevice(deviceIds);
+      console.log(`Uploaded transactions from ${deviceIds.length} devices`);
+    }
+
+    // Get recent transactions
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000); // Last 24 hours
+    const transactions = await bioTimeService.getTransactions({
+      start_time: since.toISOString(),
+      page_size: 1000,
+    });
+
+    let processedRecords = 0;
+    let syncErrors = [];
+
+    if (transactions.data && transactions.data.length > 0) {
+      for (const transaction of transactions.data) {
+        try {
+          // Find student by emp_code (studentId)
+          const student = await Student.findOne({
+            studentId: transaction.emp_code,
+            branchId: req.user.branchId,
+          });
+
+          if (student) {
+            // Check if attendance record already exists
+            const existingAttendance = await Attendance.findOne({
+              studentId: student._id,
+              punchTime: new Date(transaction.punch_time),
+            });
+
+            if (!existingAttendance) {
+              // Create new attendance record
+              const attendanceData = {
+                studentId: student._id,
+                classId: student.classId,
+                branchId: student.branchId,
+                date: new Date(transaction.punch_time)
+                  .toISOString()
+                  .split("T")[0],
+                punchTime: new Date(transaction.punch_time),
+                punchState: transaction.punch_state,
+                punchStateDisplay: transaction.punch_state_display,
+                verifyType: transaction.verify_type,
+                verifyTypeDisplay: transaction.verify_type_display,
+                terminalSN: transaction.terminal_sn,
+                terminalAlias: transaction.terminal_alias,
+                temperature: transaction.temperature,
+                source: "biotime",
+              };
+
+              await Attendance.create(attendanceData);
+              processedRecords++;
+            }
+          } else {
+            syncErrors.push({
+              emp_code: transaction.emp_code,
+              message: "Student not found for employee code",
+            });
+          }
+        } catch (error) {
+          syncErrors.push({
+            emp_code: transaction.emp_code,
+            message: error.message,
+          });
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `BioTime sync completed successfully`,
+      data: {
+        processedRecords,
+        syncErrors: syncErrors.length,
+        errors: syncErrors.slice(0, 10), // Show first 10 errors
+      },
+    });
+  } catch (error) {
+    console.error("BioTime sync error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to sync from BioTime",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Create attendance record from sync
+// @route   POST /api/attendance
+// @access  Private (Admin, Secretary)
+const createAttendanceRecord = async (req, res) => {
+  console.log("POST /api/attendance called with body:", req.body);
+  try {
+    const {
+      studentId,
+      punchTime,
+      punchState,
+      punchStateDisplay,
+      verifyType,
+      verifyTypeDisplay,
+      terminalSN,
+      terminalAlias,
+      temperature,
+      source,
+      branchId,
+    } = req.body;
+
+    // Find student
+    const student = await Student.findOne({
+      studentId: studentId,
+      branchId: new mongoose.Types.ObjectId(branchId),
+    });
+
+    console.log(
+      `Student lookup: studentId=${studentId}, branchId=${branchId}, found=${!!student}`,
+    );
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    // Check if attendance record already exists
+    const existingAttendance = await Attendance.findOne({
+      userId: student.userId,
+      branchId: student.branchId,
+      date: new Date(punchTime).toISOString().split("T")[0],
+    });
+
+    if (existingAttendance) {
+      return res.status(200).json({
+        success: true,
+        message: "Attendance record already exists",
+      });
+    }
+
+    // Create attendance record
+    const attendanceData = {
+      userId: student.userId,
+      userType: "student",
+      studentId: student._id,
+      classId: student.classId,
+      branchId: student.branchId,
+      date: new Date(punchTime).toISOString().split("T")[0],
+      clockInTime: new Date(punchTime),
+      punchTime: new Date(punchTime),
+      punchState,
+      punchStateDisplay,
+      verifyType,
+      verifyTypeDisplay,
+      terminalSN,
+      terminalAlias,
+      temperature,
+      source: source || "biotime",
+    };
+
+    const attendance = await Attendance.create(attendanceData);
+
+    res.status(201).json({
+      success: true,
+      message: "Attendance record created successfully",
+      data: attendance,
+    });
+  } catch (error) {
+    console.error("Create attendance error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to create attendance record",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getAttendanceRecords,
   markAttendance,
@@ -1319,6 +1589,9 @@ module.exports = {
   updateAttendance,
   deleteAttendance,
   syncFromZKTeco,
+  syncFromBioTime,
+  createAttendanceRecord,
+  updateStudentAccess,
   getAttendanceSummary,
   syncFromBranch,
   getLastSyncStatus,

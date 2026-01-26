@@ -61,9 +61,7 @@ const attendanceSchema = new mongoose.Schema(
     classId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Class",
-      required: function () {
-        return this.userType === "student";
-      },
+      required: false,
     },
     deviceId: {
       type: String,
@@ -169,7 +167,7 @@ const attendanceSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Compound indexes for efficient queries
@@ -188,7 +186,7 @@ attendanceSchema.index(
   {
     unique: true,
     partialFilterExpression: { date: { $exists: true } },
-  }
+  },
 );
 
 // Pre-save middleware to calculate total hours and determine status
@@ -205,7 +203,7 @@ attendanceSchema.pre("save", function (next) {
     this.date = new Date(
       attendanceDate.getFullYear(),
       attendanceDate.getMonth(),
-      attendanceDate.getDate()
+      attendanceDate.getDate(),
     );
   }
 
@@ -258,7 +256,7 @@ attendanceSchema.statics.getAttendanceSummary = async function (
   branchId,
   startDate,
   endDate,
-  userType
+  userType,
 ) {
   const matchStage = {
     branchId,

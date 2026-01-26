@@ -2,15 +2,15 @@ const mongoose = require("mongoose");
 require("dotenv").config();
 
 // Import models
-const Expense = require("./models/Expense");
-const User = require("./models/User");
-const Branch = require("./models/Branch");
+const Expense = require("../models/Expense");
+const User = require("../models/User");
+const Branch = require("../models/Branch");
 
 // Import utility functions
 const {
   calculateExpenseStats,
   getExpenseBreakdownByCategory,
-} = require("./utils/expenseHelpers");
+} = require("../utils/expenseHelpers");
 
 // Test data
 const testBranchData = {
@@ -75,7 +75,7 @@ const testExpenseData = [
 async function connectDB() {
   try {
     await mongoose.connect(
-      process.env.MONGODB_URI || "mongodb://localhost:27017/atiam_cms_test"
+      process.env.MONGODB_URI || "mongodb://localhost:27017/atiam_cms_test",
     );
     console.log("✅ Connected to MongoDB");
   } catch (error) {
@@ -219,7 +219,7 @@ async function testExpenseHelpers() {
     console.log("✅ Category breakdown:");
     breakdown.forEach((item) => {
       console.log(
-        `   - ${item.category}: KES ${item.totalAmount} (${item.count} items)`
+        `   - ${item.category}: KES ${item.totalAmount} (${item.count} items)`,
       );
     });
 
@@ -282,7 +282,7 @@ async function testExpenseAggregations() {
     console.log(
       "✅ Payment method breakdown:",
       paymentBreakdown.length,
-      "methods"
+      "methods",
     );
 
     console.log("✅ Expense aggregation tests passed");
@@ -382,7 +382,7 @@ async function runTests() {
     console.log("✅ Category and subcategory management");
     console.log("✅ Vendor information tracking");
     console.log(
-      "✅ Payment method support (cash, bank transfer, M-Pesa, etc.)"
+      "✅ Payment method support (cash, bank transfer, M-Pesa, etc.)",
     );
     console.log("✅ Approval workflow (pending, approved, rejected, on hold)");
     console.log("✅ Attachment support");

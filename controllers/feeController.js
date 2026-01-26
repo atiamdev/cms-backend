@@ -19,6 +19,9 @@ const {
   generateMonthlyInvoices,
 } = require("../services/monthlyInvoiceService");
 
+// WhatsApp Integration Service
+const WhatsAppIntegrationService = require("../services/whatsappIntegrationService");
+
 // @desc    Get all fee structures for a branch
 // @route   GET /api/fees/structures
 // @access  Private (Admin, Secretary)
@@ -338,10 +341,21 @@ const assignFeesToStudents = async (req, res) => {
         await fee.save();
         assignedFees.push(fee);
 
+        // Send WhatsApp invoice notification
+        try {
+          const whatsappService = new WhatsAppIntegrationService();
+          await whatsappService.notifyInvoiceGenerated(fee._id);
+        } catch (whatsappError) {
+          console.error(
+            "WhatsApp invoice notification failed (non-blocking):",
+            whatsappError,
+          );
+        }
+
         // Send push notification for new fee assignment
         try {
           const populatedStudent = await Student.findById(student._id).populate(
-            "userId"
+            "userId",
           );
           if (populatedStudent && populatedStudent.userId) {
             const pushController = require("./pushController");
@@ -376,16 +390,16 @@ const assignFeesToStudents = async (req, res) => {
 
             await pushController.sendNotification(
               [populatedStudent.userId._id],
-              payload
+              payload,
             );
             console.log(
-              `[Fee] Sent assignment notification to student ${populatedStudent.userId._id}`
+              `[Fee] Sent assignment notification to student ${populatedStudent.userId._id}`,
             );
           }
         } catch (notifError) {
           console.error(
             "[Fee] Error sending assignment notification:",
-            notifError
+            notifError,
           );
         }
       } catch (error) {
@@ -437,7 +451,7 @@ const generateMonthlyInvoicesRoute = async (req, res) => {
     res.json({
       success: true,
       message: `Generated invoices for ${periodYear}-${String(
-        periodMonth
+        periodMonth,
       ).padStart(2, "0")}`,
       data: result,
     });
@@ -808,11 +822,11 @@ const getBranchStudentFeeSummaries = async (req, res) => {
               ((fee.totalAmountDue || 0) -
                 (fee.discountAmount || 0) -
                 (fee.scholarshipAmount || 0)),
-            0
+            0,
           );
           totalPaid = monthFees.reduce(
             (sum, fee) => sum + (fee.amountPaid || 0),
-            0
+            0,
           );
         } else {
           // Total view: Get ALL invoices for this student
@@ -828,11 +842,11 @@ const getBranchStudentFeeSummaries = async (req, res) => {
               ((fee.totalAmountDue || 0) -
                 (fee.discountAmount || 0) -
                 (fee.scholarshipAmount || 0)),
-            0
+            0,
           );
           totalPaid = allFees.reduce(
             (sum, fee) => sum + (fee.amountPaid || 0),
-            0
+            0,
           );
         }
 
@@ -868,7 +882,7 @@ const getBranchStudentFeeSummaries = async (req, res) => {
           balance: effectiveBalance,
           feesCount: studentProfile.courses?.length || 0,
         };
-      })
+      }),
     );
 
     // Filter results based on balanceFilter
@@ -997,9 +1011,9 @@ const sendFeeReminders = async (req, res) => {
           content: `Dear ${student.firstName} ${
             student.lastName
           },\n\nThis is a reminder that you have an outstanding fee balance of KES ${Math.abs(
-            balance
+            balance,
           ).toLocaleString()}.\n\nTotal Fees: KES ${totalFee.toLocaleString()}\nAmount Paid: KES ${totalPaid.toLocaleString()}\nOutstanding Balance: KES ${Math.abs(
-            balance
+            balance,
           ).toLocaleString()}\n\nPlease make the payment at your earliest convenience to avoid any disruptions to your studies.\n\nThank you,\n${
             req.user.firstName
           } ${req.user.lastName}\nFee Administrator`,
@@ -1026,7 +1040,7 @@ const sendFeeReminders = async (req, res) => {
       } catch (error) {
         console.error(
           `Error sending reminder to student ${student._id}:`,
-          error
+          error,
         );
       }
     }

@@ -37,8 +37,35 @@ const protect = async (req, res, next) => {
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+      let userId = decoded.id || (decoded.user && decoded.user.id);
+      let userData = decoded.user || decoded;
+
       // Get user from the token
-      const user = await User.findById(decoded.id).select("-password");
+      let user = null;
+      if (userId && /^[a-f\d]{24}$/i.test(userId)) {
+        // Check if valid ObjectId
+        user = await User.findById(userId).select("-password");
+      }
+
+      // If user not found in DB, but token has user data (for sync tokens), create virtual user
+      if (!user && userData) {
+        user = {
+          ...userData,
+          hasRole: function (role) {
+            return this.roles && this.roles.includes(role);
+          },
+          hasAnyRole: function (roles) {
+            return roles.some((role) => this.hasRole(role));
+          },
+          canAccessBranch: function (branchId) {
+            return (
+              this.hasRole("superadmin") ||
+              (this.branchId &&
+                this.branchId.toString() === branchId.toString())
+            );
+          },
+        };
+      }
 
       if (!user) {
         return res.status(401).json({
@@ -47,8 +74,8 @@ const protect = async (req, res, next) => {
         });
       }
 
-      // Check if user account is active
-      if (user.status !== "active") {
+      // Check if user account is active (skip for virtual users)
+      if (user._id && user.status !== "active") {
         return res.status(401).json({
           success: false,
           message: "Account is not active",

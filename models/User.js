@@ -198,6 +198,13 @@ const userSchema = new mongoose.Schema(
         relationship: { type: String, trim: true },
       },
 
+      // WhatsApp notification preferences
+      whatsappNotifications: {
+        enabled: { type: Boolean, default: true },
+        invoiceNotifications: { type: Boolean, default: true },
+        attendanceReports: { type: Boolean, default: true },
+      },
+
       // Teacher-specific fields
       employeeId: { type: String, trim: true },
       department: { type: String, trim: true },
@@ -269,7 +276,7 @@ const userSchema = new mongoose.Schema(
       },
     },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for performance
@@ -400,7 +407,7 @@ userSchema.methods.addBranch = function (branchId) {
 userSchema.methods.removeBranch = function (branchId) {
   if (this.branchIds && this.branchIds.length > 0) {
     this.branchIds = this.branchIds.filter(
-      (id) => id.toString() !== branchId.toString()
+      (id) => id.toString() !== branchId.toString(),
     );
     // If removing primary branch, set new primary
     if (this.branchId && this.branchId.toString() === branchId.toString()) {

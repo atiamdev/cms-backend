@@ -34,6 +34,7 @@ const systemAnalyticsRoutes = require("./routes/systemAnalyticsRoutes");
 const globalSettingsRoutes = require("./routes/globalSettingsRoutes");
 const noticeRoutes = require("./routes/noticeRoutes");
 const academicTermRoutes = require("./routes/academicTermRoutes");
+const whatsappRoutes = require("./routes/whatsappRoutes");
 
 // Landing page content routes
 const newsRoutes = require("./routes/newsRoutes");
@@ -167,6 +168,7 @@ app.use("/api/security", require("./routes/securityRoutes"));
 app.use("/api/audit", require("./routes/auditRoutes"));
 app.use("/api/branch-admins", require("./routes/branchAdminRoutes"));
 app.use("/api/departments", departmentRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 
 // Landing page content routes
 app.use("/api/landing/news", newsRoutes);
@@ -271,7 +273,7 @@ const startServer = async () => {
   } catch (error) {
     console.error(
       "Error initializing live session reminder service:",
-      error.message
+      error.message,
     );
   }
 
@@ -289,7 +291,7 @@ const startServer = async () => {
   } catch (error) {
     console.error(
       "Error initializing teacher class reminder service:",
-      error.message
+      error.message,
     );
   }
 
@@ -299,7 +301,7 @@ const startServer = async () => {
   } catch (error) {
     console.error(
       "Error initializing grading reminder service:",
-      error.message
+      error.message,
     );
   }
 

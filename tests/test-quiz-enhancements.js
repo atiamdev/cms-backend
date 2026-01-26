@@ -1,8 +1,8 @@
 const axios = require("axios");
 const moment = require("moment-timezone");
 const mongoose = require("mongoose");
-const Course = require("./models/Course");
-const Branch = require("./models/Branch");
+const Course = require("../models/Course");
+const Branch = require("../models/Branch");
 require("dotenv").config();
 
 // Test configuration
@@ -18,7 +18,9 @@ const TEST_CONFIG = {
 async function createSampleCourses() {
   try {
     console.log("🔄 Connecting to database...");
-    await mongoose.connect(process.env.MONGO_URI || "mongodb://localhost:27017/atiam-cms-dev");
+    await mongoose.connect(
+      process.env.MONGO_URI || "mongodb://localhost:27017/atiam-cms-dev",
+    );
 
     // Get first branch
     const branch = await Branch.findOne();
@@ -58,9 +60,11 @@ async function createSampleCourses() {
             },
             {
               title: "Getting Started Guide",
-              description: "Step-by-step guide to set up your development environment",
+              description:
+                "Step-by-step guide to set up your development environment",
               type: "text",
-              content: "Welcome to CS101! This guide will help you set up your development environment...\n\n1. Install Node.js\n2. Install VS Code\n3. Create your first 'Hello World' program",
+              content:
+                "Welcome to CS101! This guide will help you set up your development environment...\n\n1. Install Node.js\n2. Install VS Code\n3. Create your first 'Hello World' program",
               createdAt: new Date(),
               updatedAt: new Date(),
             },
@@ -71,7 +75,8 @@ async function createSampleCourses() {
         branchId: branch._id,
         code: "MATH201",
         name: "Calculus I",
-        description: "Fundamental concepts of differential and integral calculus",
+        description:
+          "Fundamental concepts of differential and integral calculus",
         category: "core",
         level: "Intermediate",
         credits: 4,
@@ -199,7 +204,7 @@ class QuizEnhancementTester {
       const response = await axios.post(
         `${this.baseURL}/elearning/quizzes`,
         quizData,
-        { headers: this.headers }
+        { headers: this.headers },
       );
 
       if (response.data.success) {
@@ -216,7 +221,7 @@ class QuizEnhancementTester {
         `❌ Quiz creation error: ${
           error.response?.data?.message || error.message
         }`,
-        "ERROR"
+        "ERROR",
       );
       return null;
     }
@@ -255,7 +260,7 @@ class QuizEnhancementTester {
       const response = await axios.post(
         `${this.baseURL}/elearning/quizzes/${quizId}/questions`,
         { questions },
-        { headers: this.headers }
+        { headers: this.headers },
       );
 
       if (response.data.success) {
@@ -271,7 +276,7 @@ class QuizEnhancementTester {
         `❌ Question addition error: ${
           error.response?.data?.message || error.message
         }`,
-        "ERROR"
+        "ERROR",
       );
       return false;
     }
@@ -292,7 +297,7 @@ class QuizEnhancementTester {
       const response = await axios.put(
         `${this.baseURL}/elearning/quizzes/${quizId}/schedule`,
         newSchedule,
-        { headers: this.headers }
+        { headers: this.headers },
       );
 
       if (response.data.success) {
@@ -308,7 +313,7 @@ class QuizEnhancementTester {
         `❌ Schedule update error: ${
           error.response?.data?.message || error.message
         }`,
-        "ERROR"
+        "ERROR",
       );
       return false;
     }
@@ -320,7 +325,7 @@ class QuizEnhancementTester {
     try {
       const response = await axios.get(
         `${this.baseURL}/elearning/quizzes/${quizId}`,
-        { headers: this.headers }
+        { headers: this.headers },
       );
 
       if (response.data.success) {
@@ -328,7 +333,7 @@ class QuizEnhancementTester {
         this.log("✅ Quiz availability checked", "SUCCESS");
         this.log(`   Currently available: ${quiz.isAvailable || "false"}`);
         this.log(
-          `   Time until start: ${quiz.timeUntilStart?.formatted || "N/A"}`
+          `   Time until start: ${quiz.timeUntilStart?.formatted || "N/A"}`,
         );
         return true;
       } else {
@@ -340,7 +345,7 @@ class QuizEnhancementTester {
         `❌ Availability check error: ${
           error.response?.data?.message || error.message
         }`,
-        "ERROR"
+        "ERROR",
       );
       return false;
     }
@@ -349,10 +354,10 @@ class QuizEnhancementTester {
   printTestSummary() {
     this.log("\n📊 Test Summary:");
     const successCount = this.testResults.filter(
-      (r) => r.status === "SUCCESS"
+      (r) => r.status === "SUCCESS",
     ).length;
     const errorCount = this.testResults.filter(
-      (r) => r.status === "ERROR"
+      (r) => r.status === "ERROR",
     ).length;
 
     this.log(`   ✅ Successful tests: ${successCount}`);
