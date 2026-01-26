@@ -2173,6 +2173,48 @@ const getStudentStatistics = async (req, res) => {
   }
 };
 
+// @desc    Get students with fee status changes since a date
+// @route   GET /api/students/fee-status-changes
+// @access  Private (Admin, Secretary)
+const getStudentsFeeStatusChanges = async (req, res) => {
+  try {
+    const { branchId, since } = req.query;
+
+    if (!branchId) {
+      return res.status(400).json({
+        success: false,
+        message: "Branch ID is required",
+      });
+    }
+
+    const sinceDate = since
+      ? new Date(since)
+      : new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const students = await Student.find({
+      branchId: branchId,
+      "fees.updatedAt": { $gte: sinceDate },
+    }).select("studentId firstName lastName fees");
+
+    res.json({
+      success: true,
+      data: students.map((student) => ({
+        studentId: student.studentId,
+        firstName: student.firstName,
+        lastName: student.lastName,
+        feeStatus: student.fees?.feeStatus,
+        updatedAt: student.fees?.updatedAt,
+      })),
+    });
+  } catch (error) {
+    console.error("Get students fee status changes error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching fee status changes",
+    });
+  }
+};
+
 // @desc    Clean up orphaned user records (users without corresponding student records)
 // @route   POST /api/students/cleanup-orphaned-users
 // @access  Private (Admin only)
@@ -2981,6 +3023,7 @@ module.exports = {
   getStudentCourseMaterials,
   getStudentWhatsappGroups,
   suspendStudent,
+  getStudentsFeeStatusChanges,
   // Exported for tests and external usage
   generateInitialInvoicesForStudent,
 };

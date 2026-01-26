@@ -30,6 +30,16 @@ try {
   );
 }
 
+// Import WhatsApp notification service (optional - graceful degradation)
+let whatsAppNotificationService = null;
+try {
+  whatsAppNotificationService = require("./whatsappNotificationService");
+} catch (err) {
+  console.warn(
+    "WhatsApp notification service not available - WhatsApp notifications will be skipped",
+  );
+}
+
 /**
  * Send notification to student about new invoice
  * @param {Object} params - Notification parameters
@@ -58,7 +68,7 @@ async function notifyStudentOfInvoice({
       return { success: false, reason: "model_unavailable" };
     }
 
-    const student = await Student.findById(studentId).lean();
+    const student = await Student.findOne({ studentId }).lean();
 
     if (!student) {
       console.error(`Cannot notify student ${studentId}: Student not found`);
@@ -149,7 +159,110 @@ async function notifyStudentOfInvoice({
       }
     }
 
-    return { success: true, studentId, methods: ["notice", "push"] };
+    // Send WhatsApp notifications (if available and enabled)
+    if (whatsAppNotificationService && phoneNumber) {
+      try {
+        // Check if user has WhatsApp notifications enabled
+        const whatsappEnabled =
+          user?.profileDetails?.whatsappNotifications?.enabled !== false;
+        const invoiceNotificationsEnabled =
+          user?.profileDetails?.whatsappNotifications?.invoiceNotifications !==
+          false;
+
+        if (whatsappEnabled && invoiceNotificationsEnabled) {
+          // Send to student
+          const studentInvoiceData = {
+            studentName,
+            studentId: student.studentId,
+            academicYear:
+              period.split(" ")[1] || new Date().getFullYear().toString(),
+            academicTerm: period.split(" ")[0] || "Term",
+            totalAmount: amount,
+            balance: amount, // Assuming full amount is due
+            dueDate,
+            feeComponents: [], // Could be populated from fee details if available
+            branchName: "ATIAM COLLEGE",
+          };
+
+          const studentResult =
+            await whatsAppNotificationService.sendInvoiceNotification(
+              studentInvoiceData,
+              phoneNumber,
+              {
+                studentId: student._id,
+                recipientType: "student",
+                testMode: false,
+              },
+            );
+
+          if (studentResult.success) {
+            console.log(
+              `✅ WhatsApp invoice notification sent to student ${studentName}`,
+            );
+          } else {
+            console.warn(
+              `⚠️ Failed to send WhatsApp invoice notification to student ${studentName}:`,
+              studentResult.error,
+            );
+          }
+
+          // Send to emergency contact if available
+          if (user?.profileDetails?.emergencyContact?.phone) {
+            const emergencyContact = user.profileDetails.emergencyContact;
+
+            const emergencyInvoiceData = {
+              ...studentInvoiceData,
+              contactName: emergencyContact.name,
+              relationship: emergencyContact.relationship,
+            };
+
+            const emergencyResult =
+              await whatsAppNotificationService.sendEmergencyContactInvoiceNotification(
+                emergencyInvoiceData,
+                emergencyContact.phone,
+                {
+                  studentId: student._id,
+                  recipientType: "emergency_contact",
+                  testMode: false,
+                },
+              );
+
+            if (emergencyResult.success) {
+              console.log(
+                `✅ WhatsApp invoice notification sent to emergency contact ${emergencyContact.name}`,
+              );
+            } else {
+              console.warn(
+                `⚠️ Failed to send WhatsApp invoice notification to emergency contact ${emergencyContact.name}:`,
+                emergencyResult.error,
+              );
+            }
+          }
+        }
+      } catch (whatsappError) {
+        console.error(
+          "Error sending WhatsApp notification:",
+          whatsappError.message,
+        );
+      }
+    }
+
+    // Build methods array based on what was sent
+    const methods = ["notice", "push"];
+    if (
+      whatsAppNotificationService &&
+      phoneNumber &&
+      user?.profileDetails?.whatsappNotifications?.enabled !== false &&
+      user?.profileDetails?.whatsappNotifications?.invoiceNotifications !==
+        false
+    ) {
+      methods.push("whatsapp");
+      if (user?.profileDetails?.emergencyContact?.phone) {
+        methods.push("whatsapp_emergency");
+      }
+    }
+
+    return { success: true, studentId, methods };
   } catch (error) {
     console.error("Error in notifyStudentOfInvoice:", error);
     return { success: false, error: error.message };

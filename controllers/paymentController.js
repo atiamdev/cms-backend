@@ -20,6 +20,9 @@ const {
   getStudentPaymentSummary,
 } = require("../services/paymentReconciliationService");
 
+// WhatsApp Integration Service
+const WhatsAppIntegrationService = require("../services/whatsappIntegrationService");
+
 // Helper functions
 const validateAndFormatPhone = (phoneNumber) => {
   if (!phoneNumber) {
@@ -35,7 +38,7 @@ const validateAndFormatPhone = (phoneNumber) => {
 const updateStudentFeesAfterPayment = async (
   payment,
   transactionRef,
-  checkExisting = false
+  checkExisting = false,
 ) => {
   const student = await Student.findById(payment.studentId);
   if (!student) {
@@ -53,7 +56,10 @@ const updateStudentFeesAfterPayment = async (
     const reconciliationResult = await reconcilePayment({
       studentId: payment.studentId,
       amount: payment.amount,
-      paymentMethod: payment.paymentMethod === "equity" ? "equity-mpesa" : payment.paymentMethod,
+      paymentMethod:
+        payment.paymentMethod === "equity"
+          ? "equity-mpesa"
+          : payment.paymentMethod,
       referenceNumber: transactionRef || payment.receiptNumber,
       paymentDate: new Date(),
       recordedBy: payment.recordedBy,
@@ -112,7 +118,7 @@ const getJengaAccessToken = async () => {
           "Api-Key": config.apiKey,
         },
         timeout: 30000, // 30 second timeout
-      }
+      },
     );
 
     console.log("Access token:", response.data.accessToken);
@@ -120,7 +126,7 @@ const getJengaAccessToken = async () => {
   } catch (error) {
     console.error(
       "Jenga access token error:",
-      error.response?.data || error.message
+      error.response?.data || error.message,
     );
     throw new Error("Failed to get Jenga access token");
   }
@@ -287,7 +293,7 @@ const initiateEquityPayment = async (req, res) => {
     } catch (jengaError) {
       console.error(
         "Jenga payment initiation error:",
-        jengaError.response?.data || jengaError.message
+        jengaError.response?.data || jengaError.message,
       );
 
       res.status(500).json({
@@ -331,7 +337,7 @@ const handleEquityCallback = async (req, res) => {
     if (callbackData.transaction && callbackData.transaction.reference) {
       console.log(
         "Searching by transaction.reference:",
-        callbackData.transaction.reference
+        callbackData.transaction.reference,
       );
       // Find by transaction reference (from Jenga callback)
       payment = await Payment.findOne({
@@ -364,14 +370,14 @@ const handleEquityCallback = async (req, res) => {
       console.error("Searched using:");
       console.error(
         "- transaction.reference:",
-        callbackData.transaction?.reference
+        callbackData.transaction?.reference,
       );
       console.error("- root reference:", callbackData.reference);
       console.error("- transactionRef:", callbackData.transactionRef);
       console.error("- paymentId:", paymentId);
       console.error(
         "Full callback data:",
-        JSON.stringify(callbackData, null, 2)
+        JSON.stringify(callbackData, null, 2),
       );
 
       // Let's also check what payments exist with similar references
@@ -379,11 +385,11 @@ const handleEquityCallback = async (req, res) => {
         method: "equity",
         createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
       }).select(
-        "_id equityDetails.orderReference equityDetails.transactionRef createdAt"
+        "_id equityDetails.orderReference equityDetails.transactionRef createdAt",
       );
       console.error(
         "Recent Equity payments in DB:",
-        JSON.stringify(allRecentPayments, null, 2)
+        JSON.stringify(allRecentPayments, null, 2),
       );
 
       return res.status(404).json({
@@ -479,6 +485,26 @@ const handleEquityCallback = async (req, res) => {
 
       console.log("Payment reconciliation result:", reconciliationResult);
 
+      // Send WhatsApp payment receipt notification
+      try {
+        const whatsappService = new WhatsAppIntegrationService();
+        // Find the actual payment record created by reconciliation
+        const actualPayment = await Payment.findOne({
+          studentId: studentId,
+          transactionRef: transactionRef,
+          status: "completed",
+        }).sort({ createdAt: -1 });
+
+        if (actualPayment) {
+          await whatsappService.notifyPaymentCompleted(actualPayment._id);
+        }
+      } catch (whatsappError) {
+        console.error(
+          "WhatsApp notification failed (non-blocking):",
+          whatsappError,
+        );
+      }
+
       // Update legacy student.fees (for backward compatibility)
       await updateStudentFeesAfterPayment(
         {
@@ -488,7 +514,7 @@ const handleEquityCallback = async (req, res) => {
           receiptNumber: transactionRef,
           recordedBy,
         },
-        transactionRef
+        transactionRef,
       );
 
       // Handle course enrollment payments (if applicable)
@@ -515,7 +541,7 @@ const handleEquityCallback = async (req, res) => {
               enrollmentId: enrollment._id,
               studentId: studentId,
               courseId: courseId,
-            }
+            },
           );
         }
       }
@@ -535,7 +561,7 @@ const handleEquityCallback = async (req, res) => {
       console.log("Jenga M-Pesa STK Push payment failed:", status);
       console.log(
         "Full callback data for failed payment:",
-        JSON.stringify(callbackData, null, 2)
+        JSON.stringify(callbackData, null, 2),
       );
       payment.status = "failed";
       payment.equityDetails.status = status || "FAILED";
@@ -549,9 +575,9 @@ const handleEquityCallback = async (req, res) => {
         "Payment failed";
       console.log(
         "Extracted failure reason:",
-        payment.equityDetails.failureReason
+        payment.equityDetails.failureReason,
       );
-      
+
       await payment.save();
     }
 
@@ -563,14 +589,14 @@ const handleEquityCallback = async (req, res) => {
       const notificationService = require("../services/notificationService");
       const pushController = require("./pushController");
       const student = await Student.findById(payment.studentId).populate(
-        "userId"
+        "userId",
       );
 
       if (student) {
         let description = "Fee payment via Equity Bank";
         if (payment.courseId) {
           const course = await require("../models/elearning").ECourse.findById(
-            payment.courseId
+            payment.courseId,
           );
           description = course
             ? `Course: ${course.title}`
@@ -622,7 +648,7 @@ const handleEquityCallback = async (req, res) => {
 
           await pushController.sendNotification([student.userId._id], payload);
           console.log(
-            `[Payment] Sent success notification to student ${student.userId._id}`
+            `[Payment] Sent success notification to student ${student.userId._id}`,
           );
         } else if (payment.status === "failed") {
           const {
@@ -652,7 +678,7 @@ const handleEquityCallback = async (req, res) => {
 
           await pushController.sendNotification([student.userId._id], payload);
           console.log(
-            `[Payment] Sent failure notification to student ${student.userId._id}`
+            `[Payment] Sent failure notification to student ${student.userId._id}`,
           );
         }
       }
@@ -870,7 +896,7 @@ const initiateStudentEquityPayment = async (req, res) => {
         console.error(
           "STK Push failed:",
           err.response?.status,
-          err.response?.data || err.message
+          err.response?.data || err.message,
         );
         payment.status = "failed";
         payment.equityDetails.error = {
@@ -912,7 +938,7 @@ const initiateStudentEquityPayment = async (req, res) => {
     } catch (jengaError) {
       console.error(
         "Jenga M-Pesa STK Push error:",
-        jengaError.response?.data || jengaError.message
+        jengaError.response?.data || jengaError.message,
       );
 
       res.status(500).json({
@@ -1119,7 +1145,8 @@ const getPaymentStatus = async (req, res) => {
     console.log("User branchId:", req.user.branchId);
     console.log(
       "Are studentIds equal?",
-      req.user.studentProfile?.toString() === payment.studentId?._id?.toString()
+      req.user.studentProfile?.toString() ===
+        payment.studentId?._id?.toString(),
     );
     console.log("============================");
 
@@ -1131,7 +1158,7 @@ const getPaymentStatus = async (req, res) => {
       // For student users, check if this payment belongs to them
       // We need to check if payment.studentId.userId matches req.user._id
       const student = await Student.findById(payment.studentId).populate(
-        "userId"
+        "userId",
       );
       console.log("Found student:", student ? student._id : "null");
       console.log("Student userId:", student?.userId?._id);
@@ -1354,7 +1381,7 @@ const getUnpaidStudents = async (req, res) => {
 
       // Get ALL unpaid installments (regardless of due date)
       const allUnpaidInstallments = installmentPlan.schedule.filter(
-        (installment) => installment.status !== "paid"
+        (installment) => installment.status !== "paid",
       );
 
       if (allUnpaidInstallments.length === 0) {
@@ -1366,17 +1393,17 @@ const getUnpaidStudents = async (req, res) => {
         (installment) => {
           const dueDate = new Date(installment.dueDate);
           return dueDate <= currentDate; // Due today or overdue
-        }
+        },
       );
 
       // If no overdue installments, get the next upcoming unpaid installment
       const currentInstallment =
         dueOrOverdueInstallments.length > 0
           ? dueOrOverdueInstallments.sort(
-              (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+              (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
             )[0]
           : allUnpaidInstallments.sort(
-              (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+              (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
             )[0];
 
       // Only show students with at least one installment due or overdue
@@ -1385,7 +1412,7 @@ const getUnpaidStudents = async (req, res) => {
         const dueDate = new Date(currentInstallment.dueDate);
         const daysOverdue = Math.max(
           0,
-          Math.floor((currentDate - dueDate) / (1000 * 60 * 60 * 24))
+          Math.floor((currentDate - dueDate) / (1000 * 60 * 60 * 24)),
         );
 
         // Total outstanding calculated from invoices (new invoice-based system)
@@ -1394,9 +1421,10 @@ const getUnpaidStudents = async (req, res) => {
           studentId: student._id,
           status: { $in: ["unpaid", "partially_paid"] },
         });
-        
+
         const totalOutstanding = unpaidInvoices.reduce((sum, invoice) => {
-          const balance = (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
+          const balance =
+            (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
           return sum + Math.max(0, balance);
         }, 0);
 
@@ -1460,7 +1488,7 @@ const sendPaymentReminders = async (req, res) => {
         const currentDate = new Date();
 
         const unpaidInstallments = installmentPlan.schedule.filter(
-          (inst) => inst.status !== "paid"
+          (inst) => inst.status !== "paid",
         );
 
         if (unpaidInstallments.length === 0) continue;
@@ -1470,17 +1498,17 @@ const sendPaymentReminders = async (req, res) => {
           (installment) => {
             const dueDate = new Date(installment.dueDate);
             return dueDate <= currentDate; // Due today or overdue
-          }
+          },
         );
 
         // If no overdue installments, get the next upcoming unpaid installment
         const currentInstallment =
           dueOrOverdueInstallments.length > 0
             ? dueOrOverdueInstallments.sort(
-                (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+                (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
               )[0]
             : unpaidInstallments.sort(
-                (a, b) => new Date(a.dueDate) - new Date(b.dueDate)
+                (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
               )[0];
 
         // Get the actual remaining balance from invoices (new invoice-based system)
@@ -1488,9 +1516,10 @@ const sendPaymentReminders = async (req, res) => {
           studentId: student._id,
           status: { $in: ["unpaid", "partially_paid"] },
         });
-        
+
         const totalOutstanding = unpaidInvoices.reduce((sum, invoice) => {
-          const balance = (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
+          const balance =
+            (invoice.totalAmountDue || 0) - (invoice.amountPaid || 0);
           return sum + Math.max(0, balance);
         }, 0);
 
@@ -1538,7 +1567,7 @@ Secretary`,
       } catch (error) {
         console.error(
           `Error sending reminder to student ${student._id}:`,
-          error
+          error,
         );
       }
     }

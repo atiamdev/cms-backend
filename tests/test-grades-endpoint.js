@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
-const Grade = require("./models/Grade");
-const Student = require("./models/Student");
-const Course = require("./models/Course");
+const Grade = require("../models/Grade");
+const Student = require("../models/Student");
+const Course = require("../models/Course");
 
 async function testGradesEndpoint() {
   try {
@@ -20,20 +20,20 @@ async function testGradesEndpoint() {
       "Testing with student:",
       student._id,
       "and course:",
-      course._id
+      course._id,
     );
 
     // Test the static method directly
     const grades = await Grade.getStudentGradesForCourse(
       student._id,
-      course._id
+      course._id,
     );
     console.log("Grades found:", grades.length);
 
     // Test overall grade calculation
     const overallGrade = await Grade.calculateOverallGrade(
       student._id,
-      course._id
+      course._id,
     );
     console.log("Overall grade:", overallGrade);
 

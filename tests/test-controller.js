@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
-const Grade = require("./models/Grade");
-const Student = require("./models/Student");
-const Course = require("./models/Course");
+const Grade = require("../models/Grade");
+const Student = require("../models/Student");
+const Course = require("../models/Course");
 
 async function testControllerMethod() {
   try {
@@ -29,7 +29,7 @@ async function testControllerMethod() {
 
     // Verify student is enrolled
     const isEnrolled = courseIds.some(
-      (course) => course.toString() === courseId.toString()
+      (course) => course.toString() === courseId.toString(),
     );
     console.log("Student enrolled:", isEnrolled);
 
@@ -40,7 +40,7 @@ async function testControllerMethod() {
     // Calculate overall grade
     const overallGrade = await Grade.calculateOverallGrade(
       student._id,
-      courseId
+      courseId,
     );
     console.log("Overall grade:", overallGrade);
 

@@ -12,6 +12,9 @@ const {
   sendAtRiskNotificationsAllBranches,
 } = require("./services/studentInactivityService");
 
+// WhatsApp Integration Service
+const WhatsAppIntegrationService = require("./services/whatsappIntegrationService");
+
 // Store active cron jobs for management
 const activeJobs = {};
 
@@ -48,6 +51,12 @@ const jobHistory = {
     consecutiveFailures: 0,
   },
   annualInvoiceGeneration: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  weeklyAttendanceReports: {
     lastRun: null,
     lastSuccess: null,
     failures: 0,
@@ -306,6 +315,32 @@ const initializeScheduledJobs = () => {
     activeJobs.weeklyInvoiceGeneration = weeklyJob;
     console.log(
       "📅 Scheduled: Weekly invoice generation (every Monday at 03:00)",
+    );
+
+    // Weekly attendance reports (every Friday at 17:00)
+    const attendanceJob = cron.schedule(
+      "0 17 * * 5",
+      async () => {
+        await executeJobWithRetry(
+          "weeklyAttendanceReports",
+          async () => {
+            const whatsappService = new WhatsAppIntegrationService();
+            const result = await whatsappService.sendWeeklyAttendanceReports();
+
+            console.log(
+              `📊 Weekly attendance reports sent: ${result.successful}/${result.total} successful`,
+            );
+            return result;
+          },
+          2,
+        );
+      },
+      { scheduled: true, timezone: "Africa/Nairobi" },
+    );
+
+    activeJobs.weeklyAttendanceReports = attendanceJob;
+    console.log(
+      "📅 Scheduled: Weekly attendance reports (every Friday at 17:00)",
     );
 
     // Quarterly invoices (1st day of Jan, Apr, Jul, Oct at 03:00)

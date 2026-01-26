@@ -17,10 +17,10 @@ const QuizAttempt = require("./mo        exam = await Exam.create({
           weightage: 100, // Required field
           teacherId: quiz.createdBy, // Required field
         });uizAttempt");
-const Exam = require("./models/Exam");
-const Grade = require("./models/Grade");
-const Student = require("./models/Student");
-const Quiz = require("./models/elearning/Quiz");
+const Exam = require("../models/Exam");
+const Grade = require("../models/Grade");
+const Student = require("../models/Student");
+const Quiz = require("../models/elearning/Quiz");
 
 async function createGradesForExistingAttempts() {
   try {

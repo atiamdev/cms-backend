@@ -1,0 +1,27 @@
+{
+  "name": "biotime-sync-service",
+  "version": "1.0.0",
+  "description": "BioTime attendance sync service for ATI AM CMS",
+  "main": "bioTime-sync.js",
+  "scripts": {
+    "start": "node bioTime-sync.js",
+    "test": "node ../test-biotime-connection.bat",
+    "dev": "node bioTime-sync.js"
+  },
+  "keywords": [
+    "biotime",
+    "attendance",
+    "sync",
+    "cms",
+    "ati-am"
+  ],
+  "author": "ATI AM",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.11.0",
+    "dotenv": "^16.6.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

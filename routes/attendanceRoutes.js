@@ -15,6 +15,9 @@ const {
   syncFromBranch,
   getLastSyncStatus,
   getMyAttendance,
+  syncFromBioTime,
+  createAttendanceRecord,
+  updateStudentAccess,
 } = require("../controllers/attendanceController");
 
 const {
@@ -22,6 +25,12 @@ const {
   getDetailedAttendanceReport,
   exportAttendanceReport,
   getAttendanceTrends,
+  generateStudentReport,
+  generateClassReport,
+  sendWeeklyAttendanceReports,
+  sendStudentAttendanceReport,
+  getAttendanceTrendsAnalysis,
+  testAttendanceReport,
 } = require("../controllers/attendanceReportController");
 
 /**
@@ -173,7 +182,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "teacher"]),
-  getAttendanceRecords
+  getAttendanceRecords,
 );
 
 /**
@@ -219,7 +228,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "teacher"]),
-  getAttendanceSummary
+  getAttendanceSummary,
 );
 
 /**
@@ -261,6 +270,8 @@ router.get(
  *       403:
  *         description: Insufficient permissions
  */
+router.post("/", protect, createAttendanceRecord);
+
 router.post(
   "/mark",
   protect,
@@ -287,7 +298,7 @@ router.post(
       .isLength({ max: 500 })
       .withMessage("Notes cannot exceed 500 characters"),
   ],
-  markAttendance
+  markAttendance,
 );
 
 router.put(
@@ -305,7 +316,7 @@ router.put(
       .isLength({ max: 500 })
       .withMessage("Notes cannot exceed 500 characters"),
   ],
-  clockOut
+  clockOut,
 );
 
 router.put(
@@ -335,7 +346,7 @@ router.put(
       .isIn(["pending", "approved", "rejected"])
       .withMessage("Invalid approval status"),
   ],
-  updateAttendance
+  updateAttendance,
 );
 
 router.delete(
@@ -343,7 +354,7 @@ router.delete(
   protect,
   branchAuth,
   authorize(["admin"]),
-  deleteAttendance
+  deleteAttendance,
 );
 
 // ZKTeco Integration
@@ -359,7 +370,30 @@ router.post(
       .isInt({ min: 1, max: 65535 })
       .withMessage("Valid port number required"),
   ],
-  syncFromZKTeco
+  syncFromZKTeco,
+);
+
+// BioTime Integration
+router.post(
+  "/sync-biotime",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary"]),
+  syncFromBioTime,
+);
+
+router.post(
+  "/update-access",
+  protect,
+  branchAuth,
+  authorize(["admin", "secretary"]),
+  [
+    body("studentId").notEmpty().withMessage("Student ID is required"),
+    body("feeStatus")
+      .isIn(["paid", "pending", "partial"])
+      .withMessage("Valid fee status is required"),
+  ],
+  updateStudentAccess,
 );
 
 // Reporting Routes
@@ -368,7 +402,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "teacher"]),
-  getAttendanceDashboard
+  getAttendanceDashboard,
 );
 
 router.get(
@@ -376,7 +410,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "teacher"]),
-  getDetailedAttendanceReport
+  getDetailedAttendanceReport,
 );
 
 router.get(
@@ -384,7 +418,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  exportAttendanceReport
+  exportAttendanceReport,
 );
 
 router.get(
@@ -392,7 +426,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "teacher"]),
-  getAttendanceTrends
+  getAttendanceTrends,
 );
 
 // ZKTeco Database Sync Routes
@@ -402,7 +436,7 @@ router.get(
   "/last-sync/:branchId?",
   protect,
   authorize(["admin", "secretary"]),
-  getLastSyncStatus
+  getLastSyncStatus,
 );
 
 /**
@@ -456,5 +490,244 @@ router.get(
  */
 
 router.get("/my-attendance", protect, authorize(["student"]), getMyAttendance);
+
+// Attendance Reports with WhatsApp Integration
+
+/**
+ * @swagger
+ * /attendance/reports/student/{studentId}:
+ *   get:
+ *     summary: Generate attendance report for a specific student
+ *     tags: [Attendance Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: studentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Student ID
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: "Start date (default: 30 days ago)"
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: "End date (default: today)"
+ *     responses:
+ *       200:
+ *         description: Student attendance report
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Student not found
+ */
+router.get(
+  "/reports/student/:studentId",
+  protect,
+  authorize(["admin", "secretary", "teacher"]),
+  generateStudentReport,
+);
+
+/**
+ * @swagger
+ * /attendance/reports/class/{classId}:
+ *   get:
+ *     summary: Generate attendance report for a class
+ *     tags: [Attendance Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: classId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Class ID
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: "Start date (default: 30 days ago)"
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: "End date (default: today)"
+ *     responses:
+ *       200:
+ *         description: Class attendance report
+ */
+router.get(
+  "/reports/class/:classId",
+  protect,
+  authorize(["admin", "secretary", "teacher"]),
+  generateClassReport,
+);
+
+/**
+ * @swagger
+ * /attendance/reports/whatsapp/weekly:
+ *   post:
+ *     summary: Send weekly attendance reports via WhatsApp
+ *     tags: [Attendance Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               classId:
+ *                 type: string
+ *                 description: Optional class ID to send to specific class only
+ *               weekStart:
+ *                 type: string
+ *                 format: date
+ *                 description: "Start of the week (default: last week)"
+ *               weekEnd:
+ *                 type: string
+ *                 format: date
+ *                 description: "End of the week (default: last week)"
+ *     responses:
+ *       200:
+ *         description: Bulk WhatsApp notifications sent
+ *       403:
+ *         description: Access denied (admin/secretary only)
+ */
+router.post(
+  "/reports/whatsapp/weekly",
+  protect,
+  authorize(["admin", "secretary"]),
+  sendWeeklyAttendanceReports,
+);
+
+/**
+ * @swagger
+ * /attendance/reports/whatsapp/student/{studentId}:
+ *   post:
+ *     summary: Send attendance report to specific student via WhatsApp
+ *     tags: [Attendance Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: studentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Student ID
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               startDate:
+ *                 type: string
+ *                 format: date
+ *                 description: "Start date (default: 7 days ago)"
+ *               endDate:
+ *                 type: string
+ *                 format: date
+ *                 description: "End date (default: today)"
+ *               customMessage:
+ *                 type: string
+ *                 description: Optional custom message to include
+ *     responses:
+ *       200:
+ *         description: WhatsApp message sent to student
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Student not found
+ */
+router.post(
+  "/reports/whatsapp/student/:studentId",
+  protect,
+  authorize(["admin", "secretary", "teacher"]),
+  sendStudentAttendanceReport,
+);
+
+/**
+ * @swagger
+ * /attendance/reports/trends/{studentId}:
+ *   get:
+ *     summary: Get attendance trends analysis for a student
+ *     tags: [Attendance Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: studentId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Student ID
+ *       - in: query
+ *         name: weeks
+ *         schema:
+ *           type: integer
+ *           default: 4
+ *         description: Number of weeks to analyze
+ *     responses:
+ *       200:
+ *         description: Attendance trends analysis
+ *       403:
+ *         description: Access denied
+ *       404:
+ *         description: Student not found
+ */
+router.get(
+  "/reports/trends/:studentId",
+  protect,
+  authorize(["admin", "secretary", "teacher"]),
+  getAttendanceTrendsAnalysis,
+);
+
+/**
+ * @swagger
+ * /attendance/reports/test:
+ *   post:
+ *     summary: Test attendance report generation (Admin only)
+ *     tags: [Attendance Reports]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: false
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               studentId:
+ *                 type: string
+ *                 description: Student ID for testing
+ *               classId:
+ *                 type: string
+ *                 description: Class ID for testing
+ *     responses:
+ *       200:
+ *         description: Test results
+ *       403:
+ *         description: Access denied (admin only)
+ */
+router.post(
+  "/reports/test",
+  protect,
+  authorize(["admin"]),
+  testAttendanceReport,
+);
 
 module.exports = router;

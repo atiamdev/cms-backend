@@ -1,4 +1,4 @@
-const { fillCertificateTemplate } = require("./utils/certificateUtils");
+const { fillCertificateTemplate } = require("../utils/certificateUtils");
 const fs = require("fs");
 const path = require("path");
 

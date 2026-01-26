@@ -1,11 +1,13 @@
-const Attendance = require("../models/Attendance");
-const User = require("../models/User");
+const AttendanceReportService = require("../services/attendanceReportService");
+const WhatsAppIntegrationService = require("../services/whatsappIntegrationService");
 const Student = require("../models/Student");
-const Teacher = require("../models/Teacher");
-const Class = require("../models/Class");
-const { isSuperAdmin } = require("../utils/accessControl");
-const mongoose = require("mongoose");
-const ExcelJS = require("exceljs");
+const { validationResult } = require("express-validator");
+const {
+  isSuperAdmin,
+  canAccessBranchResource,
+} = require("../utils/accessControl");
+
+const attendanceReportService = new AttendanceReportService();
 
 // Helper function to get branch filter based on user role
 const getBranchFilter = (user) => {
@@ -35,7 +37,7 @@ const getAttendanceDashboard = async (req, res) => {
         startDate = new Date(
           startOfWeek.getFullYear(),
           startOfWeek.getMonth(),
-          startOfWeek.getDate()
+          startOfWeek.getDate(),
         );
         endDate = new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000);
         break;
@@ -249,7 +251,7 @@ const getAttendanceDashboard = async (req, res) => {
       .sort({ date: -1 })
       .limit(20)
       .select(
-        "userId classId date status isLate isEarlyDeparture lateMinutes earlyDepartureMinutes"
+        "userId classId date status isLate isEarlyDeparture lateMinutes earlyDepartureMinutes",
       );
 
     res.json({
@@ -323,7 +325,7 @@ const getDetailedAttendanceReport = async (req, res) => {
     if (userType) usersQuery.roles = { $in: [userType] };
 
     const allUsers = await User.find(usersQuery).select(
-      "_id firstName lastName email roles"
+      "_id firstName lastName email roles",
     );
 
     // Get attendance records
@@ -368,7 +370,7 @@ const getDetailedAttendanceReport = async (req, res) => {
         const attendance = attendanceRecords.find(
           (record) =>
             record.userId._id.toString() === user._id.toString() &&
-            record.date.toISOString().split("T")[0] === dateKey
+            record.date.toISOString().split("T")[0] === dateKey,
         );
 
         if (attendance) {
@@ -413,7 +415,7 @@ const getDetailedAttendanceReport = async (req, res) => {
 
       // Calculate attendance rate
       userReport.summary.attendanceRate = Math.round(
-        (userReport.summary.presentDays / userReport.summary.totalDays) * 100
+        (userReport.summary.presentDays / userReport.summary.totalDays) * 100,
       );
 
       // Include user in report based on filters
@@ -539,18 +541,18 @@ const exportAttendanceReport = async (req, res) => {
         column.width =
           Math.max(
             column.header?.length || 0,
-            ...column.values.map((val) => val?.toString().length || 0)
+            ...column.values.map((val) => val?.toString().length || 0),
           ) + 2;
       });
 
       // Set response headers for Excel download
       res.setHeader(
         "Content-Type",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       );
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename=attendance-report-${startDate}-to-${endDate}.xlsx`
+        `attachment; filename=attendance-report-${startDate}-to-${endDate}.xlsx`,
       );
 
       await workbook.xlsx.write(res);
@@ -672,9 +674,357 @@ const getAttendanceTrends = async (req, res) => {
   }
 };
 
+// @desc    Generate student attendance report
+// @route   GET /api/attendance/reports/student/:studentId
+// @access  Private (Admin, Secretary, Teacher)
+const generateStudentReport = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    // Validate student access
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    if (!canAccessBranchResource(req.user, student.branchId)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    // Parse dates
+    const start = startDate
+      ? new Date(startDate)
+      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    const report = await attendanceReportService.generateStudentReport(
+      studentId,
+      start,
+      end,
+    );
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  } catch (error) {
+    console.error("Error generating student report:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate student report",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Generate class attendance report
+// @route   GET /api/attendance/reports/class/:classId
+// @access  Private (Admin, Secretary, Teacher)
+const generateClassReport = async (req, res) => {
+  try {
+    const { classId } = req.params;
+    const { startDate, endDate } = req.query;
+
+    // Parse dates
+    const start = startDate
+      ? new Date(startDate)
+      : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    const report = await attendanceReportService.generateClassReport(
+      classId,
+      start,
+      end,
+    );
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  } catch (error) {
+    console.error("Error generating class report:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate class report",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Send weekly attendance report via WhatsApp
+// @route   POST /api/attendance/reports/whatsapp/weekly
+// @access  Private (Admin, Secretary)
+const sendWeeklyAttendanceReports = async (req, res) => {
+  try {
+    const { classId, weekStart, weekEnd } = req.body;
+
+    // Only admins and secretaries can send bulk notifications
+    if (!isSuperAdmin(req.user) && req.user.role !== "secretary") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. Only administrators and secretaries can send bulk notifications.",
+      });
+    }
+
+    console.log(`📤 Sending weekly attendance reports via WhatsApp...`);
+
+    const whatsappService = new WhatsAppIntegrationService();
+    const result = await whatsappService.sendWeeklyAttendanceReports(
+      classId,
+      weekStart,
+      weekEnd,
+    );
+
+    res.json({
+      success: true,
+      message: `Weekly attendance reports sent successfully`,
+      data: {
+        total: result.total,
+        successful: result.successful,
+        failed: result.failed,
+        results: result.results,
+      },
+    });
+  } catch (error) {
+    console.error("Error sending weekly attendance reports:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send weekly attendance reports",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Send attendance report to specific student via WhatsApp
+// @route   POST /api/attendance/reports/whatsapp/student/:studentId
+// @access  Private (Admin, Secretary, Teacher)
+const sendStudentAttendanceReport = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { startDate, endDate, customMessage } = req.body;
+
+    // Validate student access
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    if (!canAccessBranchResource(req.user, student.branchId)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    // Generate report data
+    const start = startDate
+      ? new Date(startDate)
+      : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    const reportData =
+      await attendanceReportService.generateWeeklyReportForWhatsApp(
+        studentId,
+        start,
+        end,
+      );
+
+    // Send via WhatsApp
+    const whatsappService = new WhatsAppIntegrationService();
+
+    // Add custom message if provided
+    if (customMessage) {
+      reportData.customMessage = customMessage;
+    }
+
+    const result =
+      await whatsappService.notificationService.sendWeeklyAttendanceReport(
+        reportData,
+        student.userId.phone,
+      );
+
+    res.json({
+      success: true,
+      message: "Attendance report sent successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Error sending student attendance report:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to send attendance report",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get attendance trends for a student
+// @route   GET /api/attendance/reports/trends/:studentId
+// @access  Private (Admin, Secretary, Teacher)
+const getAttendanceTrendsAnalysis = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { weeks = 4 } = req.query;
+
+    // Validate student access
+    const student = await Student.findById(studentId);
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    if (!canAccessBranchResource(req.user, student.branchId)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied",
+      });
+    }
+
+    const trends = await attendanceReportService.getAttendanceTrends(
+      studentId,
+      parseInt(weeks),
+    );
+
+    res.json({
+      success: true,
+      data: trends,
+    });
+  } catch (error) {
+    console.error("Error getting attendance trends:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to get attendance trends",
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Test attendance report generation
+// @route   POST /api/attendance/reports/test
+// @access  Private (Admin)
+const testAttendanceReport = async (req, res) => {
+  try {
+    // Only super admins can run tests
+    if (!isSuperAdmin(req.user)) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. Only administrators can run tests.",
+      });
+    }
+
+    const { studentId, classId } = req.body;
+
+    console.log("🧪 Testing attendance report generation...");
+
+    let testResults = {
+      studentReport: null,
+      classReport: null,
+      whatsappFormat: null,
+      bulkReports: null,
+    };
+
+    // Test student report
+    if (studentId) {
+      try {
+        const studentReport =
+          await attendanceReportService.generateStudentReport(
+            studentId,
+            new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            new Date(),
+          );
+        testResults.studentReport = { success: true, data: studentReport };
+        console.log("✅ Student report generated");
+      } catch (error) {
+        testResults.studentReport = { success: false, error: error.message };
+        console.log("❌ Student report failed:", error.message);
+      }
+    }
+
+    // Test class report
+    if (classId) {
+      try {
+        const classReport = await attendanceReportService.generateClassReport(
+          classId,
+          new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+          new Date(),
+        );
+        testResults.classReport = { success: true, data: classReport };
+        console.log("✅ Class report generated");
+      } catch (error) {
+        testResults.classReport = { success: false, error: error.message };
+        console.log("❌ Class report failed:", error.message);
+      }
+    }
+
+    // Test WhatsApp format
+    if (studentId) {
+      try {
+        const whatsappFormat =
+          await attendanceReportService.generateWeeklyReportForWhatsApp(
+            studentId,
+            new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+            new Date(),
+          );
+        testResults.whatsappFormat = { success: true, data: whatsappFormat };
+        console.log("✅ WhatsApp format generated");
+      } catch (error) {
+        testResults.whatsappFormat = { success: false, error: error.message };
+        console.log("❌ WhatsApp format failed:", error.message);
+      }
+    }
+
+    // Test bulk reports
+    try {
+      const bulkReports =
+        await attendanceReportService.generateBulkWeeklyReports(
+          classId,
+          new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+          new Date(),
+        );
+      testResults.bulkReports = { success: true, count: bulkReports.length };
+      console.log(`✅ Bulk reports generated: ${bulkReports.length} reports`);
+    } catch (error) {
+      testResults.bulkReports = { success: false, error: error.message };
+      console.log("❌ Bulk reports failed:", error.message);
+    }
+
+    res.json({
+      success: true,
+      message: "Attendance report tests completed",
+      data: testResults,
+    });
+  } catch (error) {
+    console.error("Error testing attendance reports:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to test attendance reports",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getAttendanceDashboard,
   getDetailedAttendanceReport,
   exportAttendanceReport,
   getAttendanceTrends,
+  generateStudentReport,
+  generateClassReport,
+  sendWeeklyAttendanceReports,
+  sendStudentAttendanceReport,
+  getAttendanceTrendsAnalysis,
+  testAttendanceReport,
 };

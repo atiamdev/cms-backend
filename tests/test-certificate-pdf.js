@@ -1,4 +1,4 @@
-const certificateService = require("./services/certificateService");
+const certificateService = require("../services/certificateService");
 const fs = require("fs");
 const path = require("path");
 
@@ -38,19 +38,19 @@ async function testCertificateGeneration() {
 
     console.log("\n🔍 PDF Content Verification:");
     console.log(
-      `   - Certificate Number in PDF: ${hasCertNumber ? "✅" : "❌"}`
+      `   - Certificate Number in PDF: ${hasCertNumber ? "✅" : "❌"}`,
     );
     console.log(
-      `   - Verification Code in PDF: ${hasVerificationCode ? "✅" : "❌"}`
+      `   - Verification Code in PDF: ${hasVerificationCode ? "✅" : "❌"}`,
     );
 
     if (hasCertNumber && hasVerificationCode) {
       console.log(
-        "\n🎉 Test PASSED: Certificate PDF contains all required information!"
+        "\n🎉 Test PASSED: Certificate PDF contains all required information!",
       );
     } else {
       console.log(
-        "\n❌ Test FAILED: Certificate PDF is missing required information!"
+        "\n❌ Test FAILED: Certificate PDF is missing required information!",
       );
     }
   } catch (error) {

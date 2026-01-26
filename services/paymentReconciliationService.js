@@ -5,7 +5,7 @@ const mongoose = require("mongoose");
 
 /**
  * Payment Reconciliation Service
- * 
+ *
  * Handles payment application logic:
  * 1. If student has outstanding invoices (debt), apply payment to oldest invoices first
  * 2. If no debt or payment exceeds total debt, carry forward as credit to future invoices
@@ -13,7 +13,7 @@ const mongoose = require("mongoose");
 
 /**
  * Apply payment to student's invoices with smart reconciliation
- * 
+ *
  * @param {Object} params - Payment parameters
  * @param {String} params.studentId - Student ID
  * @param {Number} params.amount - Payment amount
@@ -41,16 +41,19 @@ async function reconcilePayment({
   let useTransaction = false;
 
   // Check if we're running on a replica set by checking the connection
-  const isReplicaSet = mongoose.connection.db?.admin && 
-                       mongoose.connection.db?.topology?.constructor?.name === 'ReplSet';
-  
+  const isReplicaSet =
+    mongoose.connection.db?.admin &&
+    mongoose.connection.db?.topology?.constructor?.name === "ReplSet";
+
   if (isReplicaSet) {
     try {
       session = await mongoose.startSession();
       await session.startTransaction();
       useTransaction = true;
     } catch (error) {
-      console.log("⚠️  MongoDB transactions failed to start. Proceeding without transaction.");
+      console.log(
+        "⚠️  MongoDB transactions failed to start. Proceeding without transaction.",
+      );
       if (session) {
         session.endSession();
         session = null;
@@ -58,29 +61,31 @@ async function reconcilePayment({
       useTransaction = false;
     }
   } else {
-    console.log("⚠️  MongoDB standalone detected. Proceeding without transactions.");
+    console.log(
+      "⚠️  MongoDB standalone detected. Proceeding without transactions.",
+    );
     useTransaction = false;
   }
 
   try {
     // Validate student exists
-    const student = useTransaction 
+    const student = useTransaction
       ? await Student.findById(studentId).session(session)
       : await Student.findById(studentId);
-    
+
     if (!student) {
       throw new Error("Student not found");
     }
 
-    // Get all unpaid/partially paid invoices for this student, ordered by date (oldest first)
+    // Get all unpaid/partially paid/overdue invoices for this student, ordered by date (oldest first)
     const query = Fee.find({
       studentId: studentId,
       branchId: branchId,
       invoiceType: "monthly",
-      status: { $in: ["unpaid", "partially_paid"] },
+      status: { $in: ["unpaid", "partially_paid", "overdue"] },
     }).sort({ periodYear: 1, periodMonth: 1 }); // Oldest first
-    
-    const outstandingInvoices = useTransaction 
+
+    const outstandingInvoices = useTransaction
       ? await query.session(session)
       : await query;
 
@@ -99,20 +104,21 @@ async function reconcilePayment({
       if (remainingAmount <= 0) break;
 
       const invoiceBalance = invoice.totalAmountDue - invoice.amountPaid;
-      
+
       if (invoiceBalance <= 0) continue; // Skip fully paid invoices
 
       const amountToApply = Math.min(remainingAmount, invoiceBalance);
 
       console.log(
-        `\nApplying ${amountToApply} to invoice ${invoice._id} (${invoice.periodYear}-${invoice.periodMonth})`
+        `\nApplying ${amountToApply} to invoice ${invoice._id} (${invoice.periodYear}-${invoice.periodMonth})`,
       );
       console.log(`  Invoice balance before: ${invoiceBalance}`);
 
       // Create unique receipt number for each payment record to avoid duplicates
-      const uniqueReceiptNumber = appliedPayments.length === 0 
-        ? receiptNumber  // First payment gets the original receipt number
-        : `${receiptNumber}-${appliedPayments.length + 1}`; // Subsequent payments get suffixed
+      const uniqueReceiptNumber =
+        appliedPayments.length === 0
+          ? receiptNumber // First payment gets the original receipt number
+          : `${receiptNumber}-${appliedPayments.length + 1}`; // Subsequent payments get suffixed
 
       // Create payment record for this invoice
       const payment = new Payment({
@@ -145,7 +151,7 @@ async function reconcilePayment({
 
       // Update invoice
       invoice.amountPaid += amountToApply;
-      
+
       // Update invoice status
       if (invoice.amountPaid >= invoice.totalAmountDue) {
         invoice.status = "paid";
@@ -183,12 +189,15 @@ async function reconcilePayment({
     // If there's still money left, it's a credit for future invoices
     if (remainingAmount > 0) {
       creditAmount = remainingAmount;
-      console.log(`\n💰 Credit Amount: ${creditAmount} (carried forward to future invoices)`);
+      console.log(
+        `\n💰 Credit Amount: ${creditAmount} (carried forward to future invoices)`,
+      );
 
       // Create unique receipt number for credit (if there were applied payments)
-      const creditReceiptNumber = appliedPayments.length === 0 
-        ? receiptNumber  // If no invoices were paid, credit gets the original receipt number
-        : `${receiptNumber}-CREDIT`; // If invoices were paid, credit gets suffixed
+      const creditReceiptNumber =
+        appliedPayments.length === 0
+          ? receiptNumber // If no invoices were paid, credit gets the original receipt number
+          : `${receiptNumber}-CREDIT`; // If invoices were paid, credit gets suffixed
 
       // Create a payment record without a specific feeId (general credit)
       const creditPayment = new Payment({
@@ -266,7 +275,7 @@ async function reconcilePayment({
 
 /**
  * Get student's credit balance (payments without assigned invoices)
- * 
+ *
  * @param {String} studentId - Student ID
  * @returns {Number} - Total credit amount
  */
@@ -278,7 +287,10 @@ async function getStudentCreditBalance(studentId) {
     status: "completed",
   });
 
-  const totalCredit = creditPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const totalCredit = creditPayments.reduce(
+    (sum, payment) => sum + payment.amount,
+    0,
+  );
 
   return totalCredit;
 }
@@ -286,7 +298,7 @@ async function getStudentCreditBalance(studentId) {
 /**
  * Apply existing credit to new invoices
  * Called when new invoices are generated
- * 
+ *
  * @param {String} studentId - Student ID
  * @param {String} newInvoiceId - Newly created invoice ID
  */
@@ -296,16 +308,19 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
   let useTransaction = false;
 
   // Check if we're running on a replica set
-  const isReplicaSet = mongoose.connection.db?.admin && 
-                       mongoose.connection.db?.topology?.constructor?.name === 'ReplSet';
-  
+  const isReplicaSet =
+    mongoose.connection.db?.admin &&
+    mongoose.connection.db?.topology?.constructor?.name === "ReplSet";
+
   if (isReplicaSet) {
     try {
       session = await mongoose.startSession();
       await session.startTransaction();
       useTransaction = true;
     } catch (error) {
-      console.log("⚠️  MongoDB transactions failed to start. Proceeding without transaction.");
+      console.log(
+        "⚠️  MongoDB transactions failed to start. Proceeding without transaction.",
+      );
       if (session) {
         session.endSession();
         session = null;
@@ -313,7 +328,9 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
       useTransaction = false;
     }
   } else {
-    console.log("⚠️  MongoDB standalone detected. Proceeding without transactions.");
+    console.log(
+      "⚠️  MongoDB standalone detected. Proceeding without transactions.",
+    );
     useTransaction = false;
   }
 
@@ -333,7 +350,7 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
     const invoice = useTransaction
       ? await Fee.findById(newInvoiceId).session(session)
       : await Fee.findById(newInvoiceId);
-    
+
     if (!invoice) {
       throw new Error("Invoice not found");
     }
@@ -356,7 +373,7 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
       feeId: null,
       status: "completed",
     }).sort({ createdAt: 1 }); // Oldest first
-    
+
     const creditPayments = useTransaction
       ? await query.session(session)
       : await query;
@@ -367,17 +384,20 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
     for (const creditPayment of creditPayments) {
       if (remainingToApply <= 0) break;
 
-      const amountFromThisPayment = Math.min(creditPayment.amount, remainingToApply);
+      const amountFromThisPayment = Math.min(
+        creditPayment.amount,
+        remainingToApply,
+      );
 
       // Update payment to link to this invoice
       creditPayment.feeId = invoice._id;
-      
+
       // If only using part of the payment, we need to split it
       if (amountFromThisPayment < creditPayment.amount) {
         // Keep the remaining as credit
         const remainingCredit = creditPayment.amount - amountFromThisPayment;
         creditPayment.amount = amountFromThisPayment;
-        
+
         // Create new payment record for remaining credit
         const remainingPayment = new Payment({
           branchId: creditPayment.branchId,
@@ -391,7 +411,7 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
           verificationStatus: "verified",
           recordedBy: creditPayment.recordedBy,
         });
-        
+
         if (useTransaction) {
           await remainingPayment.save({ session });
         } else {
@@ -404,7 +424,7 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
       } else {
         await creditPayment.save();
       }
-      
+
       remainingToApply -= amountFromThisPayment;
     }
 
@@ -415,7 +435,7 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
     } else if (invoice.amountPaid > 0) {
       invoice.status = "partially_paid";
     }
-    
+
     if (useTransaction) {
       await invoice.save({ session });
     } else {
@@ -447,7 +467,7 @@ async function applyCreditToNewInvoice(studentId, newInvoiceId) {
 
 /**
  * Get student's payment summary
- * 
+ *
  * @param {String} studentId - Student ID
  * @returns {Object} - Payment summary
  */
@@ -459,12 +479,19 @@ async function getStudentPaymentSummary(studentId) {
 
   const creditBalance = await getStudentCreditBalance(studentId);
 
-  const totalExpected = invoices.reduce((sum, inv) => sum + inv.totalAmountDue, 0);
+  const totalExpected = invoices.reduce(
+    (sum, inv) => sum + inv.totalAmountDue,
+    0,
+  );
   const totalPaid = invoices.reduce((sum, inv) => sum + inv.amountPaid, 0);
   const totalBalance = totalExpected - totalPaid;
 
-  const unpaidInvoices = invoices.filter((inv) => inv.status === "unpaid").length;
-  const partiallyPaidInvoices = invoices.filter((inv) => inv.status === "partially_paid").length;
+  const unpaidInvoices = invoices.filter(
+    (inv) => inv.status === "unpaid",
+  ).length;
+  const partiallyPaidInvoices = invoices.filter(
+    (inv) => inv.status === "partially_paid",
+  ).length;
   const paidInvoices = invoices.filter((inv) => inv.status === "paid").length;
 
   return {
