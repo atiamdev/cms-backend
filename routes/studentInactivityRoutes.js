@@ -12,6 +12,7 @@ const {
   getStudentsAtRisk,
   reactivateStudent,
   getLastAttendanceDate,
+  countSchoolDaysBetween,
   sendAtRiskNotifications,
   sendAtRiskNotificationsAllBranches,
   CONFIG,
@@ -27,7 +28,7 @@ const Attendance = require("../models/Attendance");
 router.post("/inactivity/check", protect, requireAdmin, async (req, res) => {
   try {
     console.log(
-      `📋 Manual inactivity check triggered by user: ${req.user.email}`
+      `📋 Manual inactivity check triggered by user: ${req.user.email}`,
     );
 
     const result = await checkAndMarkInactiveStudents();
@@ -85,7 +86,7 @@ router.get(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 /**
@@ -131,7 +132,7 @@ router.post(
       const result = await reactivateStudent(
         studentId,
         req.user._id,
-        reason || "Manually reactivated by admin"
+        reason || "Manually reactivated by admin",
       );
 
       if (result.alreadyActive) {
@@ -155,7 +156,7 @@ router.post(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 /**
@@ -184,24 +185,15 @@ router.get(
 
       const lastAttendance = await getLastAttendanceDate(
         student._id,
-        student.userId
+        student.userId,
       );
 
-      // Count school days since last attendance
+      // Count school days since last attendance using the new method
       let daysAbsent = 0;
       if (lastAttendance) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const checkDate = new Date(lastAttendance);
-        checkDate.setHours(0, 0, 0, 0);
-
-        while (checkDate < today) {
-          checkDate.setDate(checkDate.getDate() + 1);
-          const dayOfWeek = checkDate.getDay();
-          if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-            daysAbsent++;
-          }
-        }
+        daysAbsent = countSchoolDaysBetween(lastAttendance, today);
       } else {
         daysAbsent = CONFIG.ABSENCE_THRESHOLD_DAYS; // Max if no record
       }
@@ -243,7 +235,7 @@ router.get(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 /**
@@ -310,7 +302,7 @@ router.get(
             markedInactiveAt: s.statusHistory.find(
               (h) =>
                 h.newStatus === "inactive" &&
-                h.reason?.includes("automatically")
+                h.reason?.includes("automatically"),
             )?.changedAt,
           })),
           atRiskStudents: atRiskStudents.slice(0, 10), // Top 10 at risk
@@ -324,7 +316,7 @@ router.get(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 /**
@@ -340,7 +332,7 @@ router.post(
     try {
       const branchId = req.user.branchId;
       console.log(
-        `📧 At-risk notifications triggered by user: ${req.user.email}`
+        `📧 At-risk notifications triggered by user: ${req.user.email}`,
       );
 
       const result = await sendAtRiskNotifications(branchId);
@@ -366,7 +358,7 @@ router.post(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 /**
@@ -389,7 +381,7 @@ router.post(
       }
 
       console.log(
-        `📧 All-branch at-risk notifications triggered by superadmin: ${req.user.email}`
+        `📧 All-branch at-risk notifications triggered by superadmin: ${req.user.email}`,
       );
 
       const result = await sendAtRiskNotificationsAllBranches();
@@ -415,7 +407,7 @@ router.post(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 module.exports = router;

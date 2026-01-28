@@ -109,28 +109,30 @@ class BioTimeSync {
   }
 
   /**
-   * Get students from CMS API
+   * Get students from CMS API using dedicated sync endpoint
    */
   async getStudentsFromCMS() {
     try {
       const params = {
         branchId: this.config.branchId,
         limit: this.config.batchSize,
-        // Removed academicStatus filter to get all students
       };
 
-      console.log("Fetching students with params:", params);
+      console.log("Fetching students from sync endpoint with params:", params);
 
-      const response = await this.cmsClient.get("/api/students", { params });
+      // Use dedicated /api/students/sync endpoint for better performance
+      const response = await this.cmsClient.get("/api/students/sync", {
+        params,
+      });
 
       console.log(
-        "CMS /api/students response:",
+        "CMS /api/students/sync response:",
         JSON.stringify(response.data, null, 2),
       );
 
       if (response.data && response.data.students) {
         console.log(
-          `Fetched ${response.data.students.length} students from CMS`,
+          `✓ Fetched ${response.data.students.length} students from CMS (${response.data.total} total)`,
         );
         return response.data.students;
       }
@@ -142,6 +144,10 @@ class BioTimeSync {
       return [];
     } catch (error) {
       console.error("Error fetching students from CMS:", error.message);
+      if (error.response) {
+        console.error("Response status:", error.response.status);
+        console.error("Response data:", error.response.data);
+      }
       throw error;
     }
   }
