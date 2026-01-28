@@ -36,6 +36,9 @@ const noticeRoutes = require("./routes/noticeRoutes");
 const academicTermRoutes = require("./routes/academicTermRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 
+// Equity Bank Biller API Integration
+const equityBankRoutes = require("./routes/equityBankRoutes");
+
 // Landing page content routes
 const newsRoutes = require("./routes/newsRoutes");
 const eventRoutes = require("./routes/eventRoutes");
@@ -78,12 +81,14 @@ const corsOptions = {
       process.env.CMS_FRONTEND_URL || "https://localhost:3000",
       process.env.ELEARNING_FRONTEND_URL || "http://localhost:3001",
       process.env.LANDING_PAGE_URL || "http://localhost:5173", // Landing page URL
+      process.env.CMS_TESTRUN_URL || "https://testrun.atiamcollege.com",
       "https://localhost:3000",
       "http://localhost:3001",
       "http://localhost:5173", // Vite dev server default
       "https://portal.atiamcollege.com",
       "https://www.atiamcollege.com",
       "https://atiamcollege.com", // Landing page domain
+      "https://testrun.atiamcollege.com",
     ];
 
     // Check if the origin is in the allowed list
@@ -169,6 +174,9 @@ app.use("/api/audit", require("./routes/auditRoutes"));
 app.use("/api/branch-admins", require("./routes/branchAdminRoutes"));
 app.use("/api/departments", departmentRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
+
+// Equity Bank Biller API Integration
+app.use("/api/equity", equityBankRoutes);
 
 // Landing page content routes
 app.use("/api/landing/news", newsRoutes);

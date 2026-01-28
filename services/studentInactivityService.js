@@ -158,13 +158,11 @@ const processStudentsForBranch = async (branchId, systemUser) => {
     students: [],
   };
 
-  // Get the cutoff date (2 weeks of school days ago)
-  const cutoffDate = getDateNSchoolDaysAgo(CONFIG.ABSENCE_THRESHOLD_DAYS);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   console.log(
-    `📅 Cutoff date: ${cutoffDate.toLocaleDateString()} (${
-      CONFIG.ABSENCE_THRESHOLD_DAYS
-    } school days ago)`
+    `📅 Checking students with ${CONFIG.ABSENCE_THRESHOLD_DAYS}+ school days absence since last present date`,
   );
 
   // Find all active students in this branch
@@ -172,7 +170,7 @@ const processStudentsForBranch = async (branchId, systemUser) => {
     branchId: branchId,
     academicStatus: { $in: CONFIG.ACTIVE_STATUSES },
   }).select(
-    "_id userId studentId admissionNumber academicStatus statusHistory"
+    "_id userId studentId admissionNumber academicStatus statusHistory",
   );
 
   results.totalChecked = activeStudents.length;
@@ -180,25 +178,34 @@ const processStudentsForBranch = async (branchId, systemUser) => {
 
   for (const student of activeStudents) {
     try {
-      // Check if student has any attendance since cutoff date
-      const hasRecentAttendance = await hasAttendanceSince(
+      // Get the last date the student was present
+      const lastAttendanceDate = await getLastAttendanceDate(
         student._id,
         student.userId,
-        cutoffDate
       );
 
-      if (!hasRecentAttendance) {
-        // Get last attendance date for logging
-        const lastAttendanceDate = await getLastAttendanceDate(
-          student._id,
-          student.userId
+      // If no attendance record, check if student is newly enrolled
+      if (!lastAttendanceDate) {
+        // Could mark as inactive if they've never attended
+        // For now, we'll skip students with no attendance history
+        console.log(
+          `ℹ️  Skipping ${student.studentId} - No attendance history`,
         );
+        continue;
+      }
 
-        // Mark as inactive
+      // Count school days (Mon-Fri) from last attendance to today
+      const schoolDaysSinceLastAttendance = countSchoolDaysBetween(
+        lastAttendanceDate,
+        today,
+      );
+
+      // If absent for 10+ school days, mark inactive
+      if (schoolDaysSinceLastAttendance >= CONFIG.ABSENCE_THRESHOLD_DAYS) {
         const result = await markStudentInactive(
           student,
           systemUser,
-          lastAttendanceDate
+          lastAttendanceDate,
         );
         results.students.push(result);
         results.markedInactive++;
@@ -206,17 +213,13 @@ const processStudentsForBranch = async (branchId, systemUser) => {
         console.log(
           `⚠️  Marked inactive: ${student.studentId} (${
             student.admissionNumber
-          }) - Last attendance: ${
-            lastAttendanceDate
-              ? lastAttendanceDate.toLocaleDateString()
-              : "Never"
-          }`
+          }) - Last attendance: ${lastAttendanceDate.toLocaleDateString()} (${schoolDaysSinceLastAttendance} school days ago)`,
         );
       }
     } catch (error) {
       console.error(
         `❌ Error processing student ${student.studentId}:`,
-        error.message
+        error.message,
       );
     }
   }
@@ -261,13 +264,13 @@ const checkAndMarkInactiveStudents = async () => {
       // Process students for this branch
       const branchResults = await processStudentsForBranch(
         branch._id,
-        systemUser
+        systemUser,
       );
       branchResults.branchName = branch.name;
       allResults.push(branchResults);
 
       console.log(
-        `✅ Checked: ${branchResults.totalChecked}, Marked inactive: ${branchResults.markedInactive}`
+        `✅ Checked: ${branchResults.totalChecked}, Marked inactive: ${branchResults.markedInactive}`,
       );
     }
 
@@ -275,7 +278,7 @@ const checkAndMarkInactiveStudents = async () => {
     const totalChecked = allResults.reduce((sum, r) => sum + r.totalChecked, 0);
     const totalMarkedInactive = allResults.reduce(
       (sum, r) => sum + r.markedInactive,
-      0
+      0,
     );
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -303,7 +306,7 @@ const checkAndMarkInactiveStudents = async () => {
     const totalChecked = allResults.reduce((sum, r) => sum + r.totalChecked, 0);
     const totalMarkedInactive = allResults.reduce(
       (sum, r) => sum + r.markedInactive,
-      0
+      0,
     );
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
 
@@ -322,12 +325,12 @@ const checkAndMarkInactiveStudents = async () => {
 
 /**
  * Get students who are at risk of becoming inactive
- * (absent for more than half the threshold but not yet at threshold)
+ * (absent for 5-9 school days from their last present date)
  */
 const getStudentsAtRisk = async (branchId) => {
-  const halfThreshold = Math.floor(CONFIG.ABSENCE_THRESHOLD_DAYS / 2);
-  const cutoffDate = getDateNSchoolDaysAgo(halfThreshold);
-  const fullCutoffDate = getDateNSchoolDaysAgo(CONFIG.ABSENCE_THRESHOLD_DAYS);
+  const halfThreshold = Math.floor(CONFIG.ABSENCE_THRESHOLD_DAYS / 2); // 5 days
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   const activeStudents = await Student.find({
     branchId: branchId,
@@ -340,30 +343,25 @@ const getStudentsAtRisk = async (branchId) => {
   const atRiskStudents = [];
 
   for (const student of activeStudents) {
-    // Check if no attendance since half-threshold
-    const hasRecentAttendance = await hasAttendanceSince(
+    // Get the last date the student was present
+    const lastAttendance = await getLastAttendanceDate(
       student._id,
       student.userId,
-      cutoffDate
     );
 
-    if (!hasRecentAttendance) {
-      // But check if they have attendance since full threshold (not yet inactive)
-      const hasAttendanceInWindow = await hasAttendanceSince(
-        student._id,
-        student.userId,
-        fullCutoffDate
-      );
+    if (lastAttendance) {
+      // Count school days since last attendance
+      const daysAbsent = countSchoolDaysBetween(lastAttendance, today);
 
-      if (hasAttendanceInWindow) {
-        const lastAttendance = await getLastAttendanceDate(
-          student._id,
-          student.userId
-        );
+      // At risk if absent for 5-9 school days
+      if (
+        daysAbsent >= halfThreshold &&
+        daysAbsent < CONFIG.ABSENCE_THRESHOLD_DAYS
+      ) {
         atRiskStudents.push({
           ...student,
           lastAttendance,
-          daysAbsent: await countSchoolDaysSince(lastAttendance),
+          daysAbsent,
         });
       }
     }
@@ -373,7 +371,43 @@ const getStudentsAtRisk = async (branchId) => {
 };
 
 /**
- * Count school days since a given date
+ * Count school days between two dates (excluding weekends)
+ * @param {Date} fromDate - Start date
+ * @param {Date} toDate - End date
+ * @returns {number} Number of school days (Mon-Fri) between dates
+ */
+const countSchoolDaysBetween = (fromDate, toDate) => {
+  if (!fromDate || !toDate) return 0;
+
+  const start = new Date(fromDate);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(toDate);
+  end.setHours(0, 0, 0, 0);
+
+  // If dates are the same, return 0
+  if (start >= end) return 0;
+
+  let schoolDays = 0;
+  const checkDate = new Date(start);
+
+  // Count school days from the day AFTER last attendance
+  checkDate.setDate(checkDate.getDate() + 1);
+
+  while (checkDate <= end) {
+    const dayOfWeek = checkDate.getDay();
+    // Monday = 1, Friday = 5 (school days)
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      schoolDays++;
+    }
+    checkDate.setDate(checkDate.getDate() + 1);
+  }
+
+  return schoolDays;
+};
+
+/**
+ * Count school days since a given date (legacy function - kept for backward compatibility)
  */
 const countSchoolDaysSince = async (date) => {
   if (!date) return CONFIG.ABSENCE_THRESHOLD_DAYS;
@@ -381,19 +415,7 @@ const countSchoolDaysSince = async (date) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  let schoolDays = 0;
-  const checkDate = new Date(date);
-  checkDate.setHours(0, 0, 0, 0);
-
-  while (checkDate < today) {
-    checkDate.setDate(checkDate.getDate() + 1);
-    const dayOfWeek = checkDate.getDay();
-    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-      schoolDays++;
-    }
-  }
-
-  return schoolDays;
+  return countSchoolDaysBetween(date, today);
 };
 
 /**
@@ -403,7 +425,7 @@ const countSchoolDaysSince = async (date) => {
 const reactivateStudent = async (
   studentId,
   userId,
-  reason = "Student returned to school"
+  reason = "Student returned to school",
 ) => {
   const student = await Student.findById(studentId);
 
@@ -431,7 +453,7 @@ const reactivateStudent = async (
   console.log(
     `✅ Auto-reactivated student: ${
       student.studentId || student.admissionNumber
-    } (was: ${oldStatus})`
+    } (was: ${oldStatus})`,
   );
 
   return {
@@ -473,7 +495,7 @@ const checkAndAutoReactivate = async (studentObjectId, clerkUserId = null) => {
     const result = await reactivateStudent(
       studentObjectId,
       changedBy,
-      "Automatically reactivated - student attended school (biometric check-in)"
+      "Automatically reactivated - student attended school (biometric check-in)",
     );
 
     return {
@@ -497,7 +519,7 @@ const checkAndAutoReactivate = async (studentObjectId, clerkUserId = null) => {
 const sendAtRiskNotificationToStudent = async (
   student,
   daysAbsent,
-  branchId
+  branchId,
 ) => {
   try {
     if (!student.userId || !student.userId._id) {
@@ -532,13 +554,13 @@ const sendAtRiskNotificationToStudent = async (
     });
 
     console.log(
-      `📧 Sent at-risk notification to: ${studentName} (${daysAbsent} days absent)`
+      `📧 Sent at-risk notification to: ${studentName} (${daysAbsent} days absent)`,
     );
     return { success: true, notice, studentName };
   } catch (error) {
     console.error(
       `Failed to send notification to student ${student._id}:`,
-      error.message
+      error.message,
     );
     return { success: false, error: error.message };
   }
@@ -580,7 +602,7 @@ const sendAtRiskNotifications = async (branchId) => {
       const notificationResult = await sendAtRiskNotificationToStudent(
         student,
         student.daysAbsent,
-        branchId
+        branchId,
       );
 
       if (notificationResult.success) {
@@ -660,12 +682,12 @@ const sendAtRiskNotificationsAllBranches = async () => {
 
     console.log("\n" + "=".repeat(60));
     console.log("📊 FINAL SUMMARY (ALL BRANCHES)");
-    console.log("=".repeat(60));
+    (countSchoolDaysBetween, console.log("=".repeat(60)));
     console.log(
-      `Total notifications sent: ${allResults.totalNotificationsSent}`
+      `Total notifications sent: ${allResults.totalNotificationsSent}`,
     );
     console.log(
-      `Total notifications failed: ${allResults.totalNotificationsFailed}`
+      `Total notifications failed: ${allResults.totalNotificationsFailed}`,
     );
     console.log("=".repeat(60) + "\n");
 

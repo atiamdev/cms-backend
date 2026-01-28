@@ -570,6 +570,118 @@ Please contact the school immediately if you need to discuss this matter.
   }
 
   /**
+   * Send 5-day fee reminder (early warning)
+   * @param {Object} reminderData - Reminder details
+   * @param {string} recipientPhone - Recipient's phone number
+   * @param {Object} options - Additional options
+   */
+  async sendFiveDayFeeReminder(reminderData, recipientPhone, options = {}) {
+    try {
+      const {
+        studentName,
+        regNumber,
+        dueDate,
+        recipientType = "student", // 'student' or 'emergency_contact'
+      } = reminderData;
+
+      const formattedDueDate = new Date(dueDate).toLocaleDateString("en-GB");
+
+      // English message
+      const englishMessage = `Dear ${studentName}, your school fee is due in 5 days. Please pay before ${formattedDueDate} to ensure uninterrupted access to the school.
+
+M-Pesa Paybill: 720303
+Account: ${regNumber}
+
+Thank you, Management.`;
+
+      // Somali translation
+      const somaliMessage = `Ardayga Sharafta leh ${studentName}, waxaan ku xasuusinaynaa in bixinta fiiska iskuulka ay ka dhiman tahay 5 maalmood. Fadlan bixi ka hor ${formattedDueDate} si aadan carqalad ugalakulmin gelitaanka iskuulka.
+
+M-Pesa Paybill: 720303
+Account: ${regNumber}
+
+Mahadsanid, Maamulka.`;
+
+      // Combined bilingual message
+      const message = `${englishMessage}\n\n---\n\n${somaliMessage}`;
+
+      const result = await this.whatsappService.sendMessage(
+        recipientPhone,
+        message,
+        {
+          type: "fee_reminder_5day",
+          recipientType,
+          regNumber,
+          ...options,
+        },
+      );
+
+      console.log(
+        `📤 5-day fee reminder sent to ${recipientType} for ${studentName} (${regNumber})`,
+      );
+      return result;
+    } catch (error) {
+      console.error("❌ Failed to send 5-day fee reminder:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Send 1-day fee reminder (final notice)
+   * @param {Object} reminderData - Reminder details
+   * @param {string} recipientPhone - Recipient's phone number
+   * @param {Object} options - Additional options
+   */
+  async sendOneDayFeeReminder(reminderData, recipientPhone, options = {}) {
+    try {
+      const {
+        studentName,
+        regNumber,
+        dueDate,
+        recipientType = "student", // 'student' or 'emergency_contact'
+      } = reminderData;
+
+      const formattedDueDate = new Date(dueDate).toLocaleDateString("en-GB");
+
+      // English message
+      const englishMessage = `FINAL NOTICE: ${studentName}, your fee is due tomorrow, ${formattedDueDate}. Unpaid accounts will be locked out of the biometric gate system by 8:00 AM tomorrow.
+
+M-Pesa Paybill: 720303
+Account: ${regNumber}
+
+Pay now to avoid inconvenience.`;
+
+      // Somali translation
+      const somaliMessage = `OGAYSIIS kama dambays ah: ${studentName}, fiiskaaga waxaa kuugu dambaysa berri oo taariikhdu tahay ${formattedDueDate}. Ardayga aan bixin fiiska waxaa si toos ah looga xiri doonaa qalabka faraha, iyo galitaanka iskuulka.
+
+M-Pesa Paybill: 720303
+Account: ${regNumber}`;
+
+      // Combined bilingual message
+      const message = `${englishMessage}\n\n---\n\n${somaliMessage}`;
+
+      const result = await this.whatsappService.sendMessage(
+        recipientPhone,
+        message,
+        {
+          type: "fee_reminder_1day",
+          recipientType,
+          regNumber,
+          ...options,
+        },
+      );
+
+      console.log(
+        `📤 1-day FINAL fee reminder sent to ${recipientType} for ${studentName} (${regNumber})`,
+      );
+      return result;
+    } catch (error) {
+      console.error("❌ Failed to send 1-day fee reminder:", error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
    * Get service status
    */
   getStatus() {

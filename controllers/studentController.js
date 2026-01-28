@@ -3001,6 +3001,169 @@ const suspendStudent = async (req, res) => {
   }
 };
 
+// @desc    Get students for sync (BioTime/external systems)
+// @route   GET /api/students/sync
+// @access  Private (Admin, SuperAdmin only)
+const getStudentsForSync = async (req, res) => {
+  try {
+    const { branchId, limit = 1000, page = 1 } = req.query;
+
+    // Build query - only filter by branchId if provided
+    const query = {};
+    if (branchId) {
+      query.branchId = new mongoose.Types.ObjectId(branchId);
+    }
+
+    // Exclude e-course students by default
+    query.studentType = { $ne: "ecourse" };
+
+    // Simple aggregation without complex fee calculations for sync
+    const pipeline = [
+      { $match: query },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "userInfo",
+        },
+      },
+      { $unwind: "$userInfo" },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "departmentId",
+          foreignField: "_id",
+          as: "departmentInfo",
+        },
+      },
+      {
+        $lookup: {
+          from: "fees",
+          localField: "_id",
+          foreignField: "studentId",
+          as: "invoices",
+        },
+      },
+      {
+        $addFields: {
+          departmentInfo: { $arrayElemAt: ["$departmentInfo", 0] },
+          // Simple fee status calculation
+          feeStatus: {
+            $cond: {
+              if: {
+                $eq: [
+                  {
+                    $subtract: [
+                      {
+                        $subtract: [
+                          {
+                            $subtract: [
+                              {
+                                $sum: {
+                                  $map: {
+                                    input: "$invoices",
+                                    as: "invoice",
+                                    in: {
+                                      $ifNull: ["$$invoice.totalAmountDue", 0],
+                                    },
+                                  },
+                                },
+                              },
+                              {
+                                $sum: {
+                                  $map: {
+                                    input: "$invoices",
+                                    as: "invoice",
+                                    in: {
+                                      $ifNull: ["$$invoice.discountAmount", 0],
+                                    },
+                                  },
+                                },
+                              },
+                            ],
+                          },
+                          {
+                            $sum: {
+                              $map: {
+                                input: "$invoices",
+                                as: "invoice",
+                                in: {
+                                  $ifNull: ["$$invoice.scholarshipAmount", 0],
+                                },
+                              },
+                            },
+                          },
+                        ],
+                      },
+                      {
+                        $sum: {
+                          $map: {
+                            input: "$invoices",
+                            as: "invoice",
+                            in: { $ifNull: ["$$invoice.amountPaid", 0] },
+                          },
+                        },
+                      },
+                    ],
+                  },
+                  0,
+                ],
+              },
+              then: "paid",
+              else: "pending",
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          studentId: 1,
+          admissionNumber: 1,
+          academicStatus: 1,
+          branchId: 1,
+          departmentId: "$departmentInfo._id",
+          firstName: "$userInfo.firstName",
+          lastName: "$userInfo.lastName",
+          email: "$userInfo.email",
+          mobile: "$userInfo.phone",
+          fees: {
+            feeStatus: "$feeStatus",
+          },
+          createdAt: 1,
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: (parseInt(page) - 1) * parseInt(limit) },
+      { $limit: parseInt(limit) },
+    ];
+
+    const students = await Student.aggregate(pipeline);
+
+    // Get total count
+    const total = await Student.countDocuments(query);
+
+    console.log(
+      `Sync endpoint: Returning ${students.length} students out of ${total} total`,
+    );
+
+    res.json({
+      success: true,
+      count: students.length,
+      total,
+      students,
+    });
+  } catch (error) {
+    console.error("Get students for sync error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error while fetching students for sync",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createStudent,
   getStudents,
@@ -3024,6 +3187,7 @@ module.exports = {
   getStudentWhatsappGroups,
   suspendStudent,
   getStudentsFeeStatusChanges,
+  getStudentsForSync,
   // Exported for tests and external usage
   generateInitialInvoicesForStudent,
 };

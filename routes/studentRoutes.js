@@ -23,6 +23,7 @@ const {
   getStudentCourseMaterials,
   getStudentWhatsappGroups,
   getStudentsFeeStatusChanges,
+  getStudentsForSync,
 } = require("../controllers/studentController");
 const {
   protect,

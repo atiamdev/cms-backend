@@ -150,6 +150,73 @@ const paymentSchema = new mongoose.Schema(
       },
     },
 
+    // Equity Bank Biller API specific fields
+    equityBillerDetails: {
+      bankReference: {
+        type: String,
+        trim: true,
+        unique: true,
+        sparse: true, // Allows null values but enforces uniqueness when present
+      },
+      billNumber: {
+        type: String,
+        trim: true,
+      },
+      transactionDate: {
+        type: Date,
+      },
+      confirmedAmount: {
+        type: Number,
+      },
+      validationResponse: {
+        type: mongoose.Schema.Types.Mixed,
+      },
+      notificationReceived: {
+        type: Boolean,
+        default: false,
+      },
+      notificationData: {
+        type: mongoose.Schema.Types.Mixed,
+      },
+    },
+
+    // Payment reconciliation information
+    reconciliationInfo: {
+      reconciledAt: {
+        type: Date,
+      },
+      feesUpdated: {
+        type: Number,
+        default: 0,
+      },
+      amountApplied: {
+        type: Number,
+        default: 0,
+      },
+      remainingAmount: {
+        type: Number,
+        default: 0,
+      },
+      updatedFees: [
+        {
+          feeId: mongoose.Schema.Types.ObjectId,
+          amountApplied: Number,
+          newBalance: Number,
+          newStatus: String,
+        },
+      ],
+      paymentFeeLinks: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "PaymentFee",
+        },
+      ],
+      creditCreated: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "StudentCredit",
+      },
+    },
+
     // Manual payment fields
     manualPaymentDetails: {
       referenceNumber: {
@@ -275,7 +342,7 @@ const paymentSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Compound indexes for efficient queries
@@ -320,7 +387,7 @@ paymentSchema.pre("save", async function (next) {
       }
 
       this.receiptNumber = `${branchCode}-${year}-${month}-${String(
-        sequence
+        sequence,
       ).padStart(4, "0")}`;
     } catch (error) {
       // Fallback receipt number generation
