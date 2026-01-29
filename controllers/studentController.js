@@ -3011,15 +3011,29 @@ const getStudentsForSync = async (req, res) => {
     // Build query - only filter by branchId if provided
     const query = {};
     if (branchId) {
-      query.branchId = new mongoose.Types.ObjectId(branchId);
+      // Validate branchId is a valid ObjectId
+      if (!mongoose.Types.ObjectId.isValid(branchId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid branchId format",
+        });
+      }
+      // Let Mongoose handle the ObjectId casting
+      query.branchId = branchId;
     }
 
     // Exclude e-course students by default
     query.studentType = { $ne: "ecourse" };
 
+    // Convert branchId to ObjectId for aggregation pipeline if it exists
+    const aggregationQuery = { ...query };
+    if (aggregationQuery.branchId) {
+      aggregationQuery.branchId = new mongoose.Types.ObjectId(branchId);
+    }
+
     // Simple aggregation without complex fee calculations for sync
     const pipeline = [
-      { $match: query },
+      { $match: aggregationQuery },
       {
         $lookup: {
           from: "users",
