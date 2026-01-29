@@ -3006,7 +3006,19 @@ const suspendStudent = async (req, res) => {
 // @access  Private (Admin, SuperAdmin only)
 const getStudentsForSync = async (req, res) => {
   try {
-    const { branchId, limit = 1000, page = 1 } = req.query;
+    const {
+      branchId,
+      limit = 1000,
+      page = 1,
+      includeEcourse = "true",
+    } = req.query;
+
+    console.log(`[Sync Endpoint] Request params:`, {
+      branchId,
+      limit,
+      page,
+      includeEcourse,
+    });
 
     // Build query - only filter by branchId if provided
     const query = {};
@@ -3022,8 +3034,12 @@ const getStudentsForSync = async (req, res) => {
       query.branchId = branchId;
     }
 
-    // Exclude e-course students by default
-    query.studentType = { $ne: "ecourse" };
+    // Only exclude e-course students if explicitly requested
+    if (includeEcourse === "false") {
+      query.studentType = { $ne: "ecourse" };
+    }
+
+    console.log(`[Sync Endpoint] Query filter:`, JSON.stringify(query));
 
     // Convert branchId to ObjectId for aggregation pipeline if it exists
     const aggregationQuery = { ...query };
@@ -3159,8 +3175,24 @@ const getStudentsForSync = async (req, res) => {
     const total = await Student.countDocuments(query);
 
     console.log(
-      `Sync endpoint: Returning ${students.length} students out of ${total} total`,
+      `[Sync Endpoint] Aggregation returned ${students.length} students, countDocuments returned ${total} total`,
     );
+
+    // Debug: check if students exist without filters
+    if (total === 0 && branchId) {
+      const allStudentsInBranch = await Student.countDocuments({ branchId });
+      const allStudents = await Student.countDocuments({});
+      console.log(
+        `[Sync Endpoint] Debug: Total students in branch=${allStudentsInBranch}, Total in DB=${allStudents}`,
+      );
+
+      // Check studentType distribution
+      const byType = await Student.aggregate([
+        { $match: { branchId } },
+        { $group: { _id: "$studentType", count: { $sum: 1 } } },
+      ]);
+      console.log(`[Sync Endpoint] Student type distribution:`, byType);
+    }
 
     res.json({
       success: true,
