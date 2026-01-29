@@ -612,6 +612,41 @@ router.get(
  *       404:
  *         description: Student profile not found
  */
+
+/**
+ * @swagger
+ * /students/sync:
+ *   get:
+ *     summary: Get students for external sync (BioTime, etc.)
+ *     tags: [Student Management]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: branchId
+ *         schema:
+ *           type: string
+ *         description: Filter by branch ID
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 1000
+ *         description: Number of students to return
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           default: 1
+ *         description: Page number
+ *     responses:
+ *       200:
+ *         description: Students for sync
+ *       401:
+ *         description: Not authenticated
+ */
+router.get("/sync", protect, requireAdmin, getStudentsForSync);
+
 router.get("/me", protect, getCurrentStudent);
 
 router.get("/:id", canAccessStudents, getStudent);
