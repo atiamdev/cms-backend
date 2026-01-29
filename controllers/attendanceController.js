@@ -1515,19 +1515,40 @@ const createAttendanceRecord = async (req, res) => {
     } = req.body;
 
     // Find student
+    console.log(
+      `[Attendance] Looking for student with studentId=${studentId}, branchId=${branchId}`,
+    );
+
     const student = await Student.findOne({
       studentId: studentId,
       branchId: new mongoose.Types.ObjectId(branchId),
     });
 
     console.log(
-      `Student lookup: studentId=${studentId}, branchId=${branchId}, found=${!!student}`,
+      `[Attendance] Student lookup result: studentId=${studentId}, branchId=${branchId}, found=${!!student}`,
     );
 
     if (!student) {
+      // Try without ObjectId conversion for debugging
+      const studentAny = await Student.findOne({ studentId: studentId });
+      console.log(
+        `[Attendance] Searched all branches for studentId=${studentId}, found=${!!studentAny}`,
+      );
+      if (studentAny) {
+        console.log(
+          `[Attendance] Student exists but in different branch: ${studentAny.branchId}`,
+        );
+      }
+
       return res.status(404).json({
         success: false,
-        message: "Student not found",
+        message: "Student not found in specified branch",
+        debug: {
+          searchedStudentId: studentId,
+          searchedBranchId: branchId,
+          studentExistsInOtherBranch: !!studentAny,
+          actualBranch: studentAny?.branchId?.toString(),
+        },
       });
     }
 
