@@ -14,6 +14,10 @@ class BioTimeSync {
       syncInterval: parseInt(process.env.BIOTIME_SYNC_INTERVAL) || 3600000, // 1 hour default
       batchSize: parseInt(process.env.BIOTIME_BATCH_SIZE) || 100,
       lastSyncFile: path.join(__dirname, "biotime-last-sync.json"),
+      lastStudentSyncFile: path.join(
+        __dirname,
+        "biotime-last-student-sync.json",
+      ),
     };
 
     this.bioTimeService = new BioTimeService();
@@ -29,6 +33,7 @@ class BioTimeSync {
     });
 
     this.lastSyncTime = this.loadLastSyncTime();
+    this.lastStudentSyncTime = this.loadLastStudentSyncTime();
     this.isRunning = false;
 
     this.validateConfig();
@@ -109,6 +114,49 @@ class BioTimeSync {
   }
 
   /**
+   * Load last student sync time from file
+   */
+  loadLastStudentSyncTime() {
+    try {
+      if (fs.existsSync(this.config.lastStudentSyncFile)) {
+        const data = JSON.parse(
+          fs.readFileSync(this.config.lastStudentSyncFile, "utf8"),
+        );
+        return new Date(data.lastStudentSyncTime);
+      }
+    } catch (error) {
+      console.warn("Could not load last student sync time:", error.message);
+    }
+    // Default to yesterday if no last sync time
+    return new Date(Date.now() - 24 * 60 * 60 * 1000);
+  }
+
+  /**
+   * Save last student sync time to file
+   */
+  saveLastStudentSyncTime(syncTime) {
+    try {
+      const data = { lastStudentSyncTime: syncTime.toISOString() };
+      fs.writeFileSync(
+        this.config.lastStudentSyncFile,
+        JSON.stringify(data, null, 2),
+      );
+    } catch (error) {
+      console.error("Could not save last student sync time:", error.message);
+    }
+  }
+
+  /**
+   * Check if student sync should run (once per day)
+   */
+  shouldRunStudentSync() {
+    const now = new Date();
+    const timeSinceLastSync = now - this.lastStudentSyncTime;
+    const oneDayInMs = 24 * 60 * 60 * 1000;
+    return timeSinceLastSync >= oneDayInMs;
+  }
+
+  /**
    * Get students from CMS API using dedicated sync endpoint
    */
   async getStudentsFromCMS() {
@@ -116,6 +164,7 @@ class BioTimeSync {
       const params = {
         branchId: this.config.branchId,
         limit: this.config.batchSize,
+        includePastDueOnly: "true", // Only fetch students with past due invoices
       };
 
       console.log("Fetching students from sync endpoint with params:", params);
@@ -345,17 +394,32 @@ class BioTimeSync {
     try {
       console.log(`\n[${new Date().toISOString()}] Starting BioTime sync...`);
 
-      // Step 1: Sync students from CMS to BioTime
-      console.log("Step 1: Syncing students...");
-      await this.syncStudents();
-      console.log("Step 1 completed");
+      // Step 1 & 2: Sync students and update access controls (ONCE PER DAY)
+      if (this.shouldRunStudentSync()) {
+        console.log("Step 1: Syncing students (daily run)...");
+        await this.syncStudents();
+        console.log("Step 1 completed");
 
-      // Step 2: Update access controls based on fee status
-      console.log("Step 2: Updating access controls...");
-      await this.updateAccessControls();
-      console.log("Step 2 completed");
+        console.log("Step 2: Updating access controls (daily run)...");
+        await this.updateAccessControls();
+        console.log("Step 2 completed");
 
-      // Step 3: Sync attendance records from BioTime to CMS
+        // Save the student sync time
+        this.lastStudentSyncTime = new Date();
+        this.saveLastStudentSyncTime(this.lastStudentSyncTime);
+        console.log(
+          `✓ Next student/access sync: ${new Date(Date.now() + 24 * 60 * 60 * 1000).toLocaleString()}`,
+        );
+      } else {
+        const nextSync = new Date(
+          this.lastStudentSyncTime.getTime() + 24 * 60 * 60 * 1000,
+        );
+        console.log(
+          `ℹ️  Student sync skipped (already ran today). Next run: ${nextSync.toLocaleString()}`,
+        );
+      }
+
+      // Step 3: Sync attendance records from BioTime to CMS (EVERY RUN)
       console.log("Step 3: Syncing attendance...");
       await this.syncAttendance();
       console.log("Step 3 completed");

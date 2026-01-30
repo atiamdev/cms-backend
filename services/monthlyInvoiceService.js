@@ -85,7 +85,7 @@ async function generateMonthlyInvoices({
     }).select("studentId");
 
     const studentsWithInvoices = new Set(
-      existingInvoices.map((e) => String(e.studentId))
+      existingInvoices.map((e) => String(e.studentId)),
     );
 
     for (const course of courses) {
@@ -104,7 +104,9 @@ async function generateMonthlyInvoices({
         studentQuery._id = studentId;
       }
 
-      const students = await Student.find(studentQuery).select("_id branchId");
+      const students = await Student.find(studentQuery).select(
+        "_id branchId enrollmentDate",
+      );
 
       if (!students || students.length === 0) continue;
 
@@ -130,10 +132,11 @@ async function generateMonthlyInvoices({
 
         // Add to consolidated invoice
         if (!studentInvoiceMap.has(studentKey)) {
+          // Calculate due date based on student's enrollment date
           let dueDate = null;
-          if (fs.dueDate) {
-            const day = new Date(fs.dueDate).getDate();
-            dueDate = new Date(periodYear, periodMonth - 1, day);
+          if (stu.enrollmentDate) {
+            const enrollmentDay = new Date(stu.enrollmentDate).getDate();
+            dueDate = new Date(periodYear, periodMonth - 1, enrollmentDay);
           } else {
             dueDate = new Date(periodYear, periodMonth - 1, 10);
           }
@@ -154,7 +157,7 @@ async function generateMonthlyInvoices({
         const invoiceData = studentInvoiceMap.get(studentKey);
         invoiceData.courses.push(course._id);
         invoiceData.feeComponents.push(
-          ...(fs.components || fs.feeComponents || [])
+          ...(fs.components || fs.feeComponents || []),
         );
         invoiceData.totalAmountDue += amount;
       }
@@ -198,7 +201,7 @@ async function generateMonthlyInvoices({
     }
 
     console.log(
-      `Preparing to create ${invoicesToCreate.length} consolidated invoices`
+      `Preparing to create ${invoicesToCreate.length} consolidated invoices`,
     );
 
     if (invoicesToCreate.length > 0) {
@@ -215,7 +218,7 @@ async function generateMonthlyInvoices({
           } catch (creditErr) {
             console.error(
               `Error applying credit to invoice ${fee._id}:`,
-              creditErr.message
+              creditErr.message,
             );
             // Continue processing other invoices even if credit application fails
           }
@@ -224,7 +227,7 @@ async function generateMonthlyInvoices({
         // Prepare notifications
         const monthName = new Date(
           periodYear,
-          periodMonth - 1
+          periodMonth - 1,
         ).toLocaleDateString("en-US", { month: "long", year: "numeric" });
         for (const fee of result) {
           notifications.push({
@@ -241,7 +244,7 @@ async function generateMonthlyInvoices({
         console.error("Error details:", err);
         if (err && err.insertedDocs) {
           console.log(
-            `Partial success: ${err.insertedDocs.length} invoices created despite error`
+            `Partial success: ${err.insertedDocs.length} invoices created despite error`,
           );
           createdFees.push(...err.insertedDocs);
 
@@ -252,7 +255,7 @@ async function generateMonthlyInvoices({
             } catch (creditErr) {
               console.error(
                 `Error applying credit to invoice ${fee._id}:`,
-                creditErr.message
+                creditErr.message,
               );
             }
           }
@@ -260,7 +263,7 @@ async function generateMonthlyInvoices({
           // Add notifications for successful inserts
           const monthName = new Date(
             periodYear,
-            periodMonth - 1
+            periodMonth - 1,
           ).toLocaleDateString("en-US", { month: "long", year: "numeric" });
           for (const fee of err.insertedDocs) {
             notifications.push({
@@ -294,7 +297,7 @@ async function generateMonthlyInvoices({
       }
 
       const students = await Student.find(studentQuery).select(
-        "_id branchId scholarshipPercentage"
+        "_id branchId scholarshipPercentage enrollmentDate",
       );
 
       if (!students || students.length === 0) continue;
@@ -307,7 +310,7 @@ async function generateMonthlyInvoices({
       }).select("studentId");
 
       const existingSet = new Set(
-        existingInvoices.map((e) => String(e.studentId))
+        existingInvoices.map((e) => String(e.studentId)),
       );
 
       // Build invoices for students who don't have one yet
@@ -325,11 +328,11 @@ async function generateMonthlyInvoices({
               fs.totalAmount ||
               0;
 
-        // Determine dueDate
+        // Calculate due date based on student's enrollment date
         let dueDate = null;
-        if (fs.dueDate) {
-          const day = new Date(fs.dueDate).getDate();
-          dueDate = new Date(periodYear, periodMonth - 1, day);
+        if (stu.enrollmentDate) {
+          const enrollmentDay = new Date(stu.enrollmentDate).getDate();
+          dueDate = new Date(periodYear, periodMonth - 1, enrollmentDay);
         } else {
           dueDate = new Date(periodYear, periodMonth - 1, 10);
         }
@@ -372,7 +375,7 @@ async function generateMonthlyInvoices({
           // Prepare notifications
           const monthName = new Date(
             periodYear,
-            periodMonth - 1
+            periodMonth - 1,
           ).toLocaleDateString("en-US", { month: "long", year: "numeric" });
           for (const fee of result) {
             notifications.push({
@@ -391,7 +394,7 @@ async function generateMonthlyInvoices({
             // Add notifications for successful inserts
             const monthName = new Date(
               periodYear,
-              periodMonth - 1
+              periodMonth - 1,
             ).toLocaleDateString("en-US", { month: "long", year: "numeric" });
             for (const fee of err.insertedDocs) {
               notifications.push({
@@ -407,7 +410,7 @@ async function generateMonthlyInvoices({
           console.error(
             "Error inserting invoices for course",
             course._id,
-            err.message
+            err.message,
           );
         }
       }
@@ -421,7 +424,7 @@ async function generateMonthlyInvoices({
       const result = await notifyStudentsOfInvoices(notifications);
       notificationsSent = result.successful;
       console.log(
-        `Notifications sent: ${result.successful}/${result.total} successful`
+        `Notifications sent: ${result.successful}/${result.total} successful`,
       );
     } catch (err) {
       console.error("Error sending invoice notifications:", err);
@@ -483,7 +486,7 @@ async function generateInvoicesForFrequency({
     // Note: generateInvoicesForFrequency doesn't support studentId filtering yet
 
     const students = await Student.find(studentQuery).select(
-      "_id branchId scholarshipPercentage"
+      "_id branchId scholarshipPercentage",
     );
 
     if (!students || students.length === 0) continue;
@@ -494,7 +497,7 @@ async function generateInvoicesForFrequency({
       periodStart,
     }).select("studentId");
     const existingSet = new Set(
-      existingInvoices.map((e) => String(e.studentId))
+      existingInvoices.map((e) => String(e.studentId)),
     );
 
     const invoicesToCreate = [];
@@ -519,7 +522,7 @@ async function generateInvoicesForFrequency({
         dueDate = new Date(
           periodStart.getFullYear(),
           periodStart.getMonth(),
-          day
+          day,
         );
       } else {
         dueDate = new Date(periodStart);
@@ -596,7 +599,7 @@ async function generateInvoicesForFrequency({
         console.error(
           "Error inserting invoices for course",
           course._id,
-          err.message
+          err.message,
         );
       }
     }
@@ -609,7 +612,7 @@ async function generateInvoicesForFrequency({
       const result = await notifyStudentsOfInvoices(notifications);
       notificationsSent = result.successful;
       console.log(
-        `${frequency} invoice notifications: ${result.successful}/${result.total} successful`
+        `${frequency} invoice notifications: ${result.successful}/${result.total} successful`,
       );
     } catch (err) {
       console.error("Error sending invoice notifications:", err);
@@ -642,11 +645,12 @@ async function createInvoiceForEnrollment({
   if (!fs.createInvoiceOnEnrollment)
     return { created: 0, reason: "not_configured" };
 
-  // Get student scholarship info
+  // Get student scholarship info and enrollment date
   const student = await Student.findById(studentId).select(
-    "scholarshipPercentage"
+    "scholarshipPercentage enrollmentDate",
   );
   const scholarshipPercentage = student?.scholarshipPercentage || 0;
+  const enrollmentDate = student?.enrollmentDate;
 
   const frequency = fs.billingFrequency;
   const periodStart = getPeriodStart(frequency, date);
@@ -659,14 +663,18 @@ async function createInvoiceForEnrollment({
         fs.totalAmount ||
         0;
 
-  // Compute dueDate
+  // Compute dueDate based on student's enrollment date
   let dueDate = null;
-  if (fs.dueDate) {
-    // Use day of month if applicable
-    const day = new Date(fs.dueDate).getDate();
-    dueDate = new Date(periodStart.getFullYear(), periodStart.getMonth(), day);
+  if (enrollmentDate) {
+    // Use day of month from student's enrollment date
+    const enrollmentDay = new Date(enrollmentDate).getDate();
+    dueDate = new Date(
+      periodStart.getFullYear(),
+      periodStart.getMonth(),
+      enrollmentDay,
+    );
   } else {
-    // Default rules per frequency
+    // Fallback to default rules per frequency if no enrollment date
     switch (frequency) {
       case "weekly":
         dueDate = new Date(periodStart);
@@ -737,7 +745,7 @@ async function createInvoiceForEnrollment({
       branchId: course.branchId,
     },
   ]).catch((err) =>
-    console.error("Error sending enrollment invoice notification:", err)
+    console.error("Error sending enrollment invoice notification:", err),
   );
 
   return { created: 1, feeId: feeDoc._id };
