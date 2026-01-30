@@ -6,8 +6,8 @@
 
 require("dotenv").config();
 const mongoose = require("mongoose");
-const invoiceNotificationService = require("./services/invoiceNotificationService");
-const whatsAppService = require("./services/whatsappService");
+const invoiceNotificationService = require("../services/invoiceNotificationService");
+const whatsAppService = require("../services/whatsappService");
 
 // Connect to database
 async function connectDB() {

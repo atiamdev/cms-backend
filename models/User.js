@@ -203,6 +203,7 @@ const userSchema = new mongoose.Schema(
         enabled: { type: Boolean, default: true },
         invoiceNotifications: { type: Boolean, default: true },
         attendanceReports: { type: Boolean, default: true },
+        noticeAlerts: { type: Boolean, default: true }, // Announcement/notice alerts
       },
 
       // Teacher-specific fields

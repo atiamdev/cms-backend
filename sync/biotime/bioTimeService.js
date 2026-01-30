@@ -283,20 +283,19 @@ class BioTimeService {
    */
   async syncStudent(studentData) {
     try {
-      console.log(
-        `Checking if student ${studentData.studentId} exists in BioTime...`,
-      );
+      const empCode = studentData.emp_code;
+      console.log(`Checking if student ${empCode} exists in BioTime...`);
 
       // Check if student exists
       const existingStudents = await this.getEmployees({
-        emp_code: studentData.studentId,
+        emp_code: empCode,
       });
 
       if (existingStudents.data && existingStudents.data.length > 0) {
         // Update existing student
         const bioTimeEmployee = existingStudents.data[0];
         console.log(
-          `Student ${studentData.studentId} exists (ID: ${bioTimeEmployee.id}), updating...`,
+          `Student ${empCode} exists (ID: ${bioTimeEmployee.id}), updating...`,
         );
 
         await this.updateEmployee(bioTimeEmployee.id, studentData);
@@ -308,14 +307,12 @@ class BioTimeService {
         // Resync to device
         await this.resyncEmployeeToDevice([bioTimeEmployee.id]);
         console.log(
-          `Updated student ${studentData.studentId} in BioTime with areas ${studentData.area_ids.join(",")}`,
+          `Updated student ${empCode} in BioTime with areas ${studentData.area_ids.join(",")}`,
         );
         return bioTimeEmployee.id;
       } else {
         // Create new student
-        console.log(
-          `Student ${studentData.studentId} does not exist, creating...`,
-        );
+        console.log(`Student ${empCode} does not exist, creating...`);
 
         const result = await this.createEmployee(studentData);
         // Adjust area
@@ -323,13 +320,13 @@ class BioTimeService {
         // Resync to device
         await this.resyncEmployeeToDevice([result.id]);
         console.log(
-          `Created student ${studentData.studentId} in BioTime (ID: ${result.id}) with areas ${studentData.area_ids.join(",")}`,
+          `Created student ${empCode} in BioTime (ID: ${result.id}) with areas ${studentData.area_ids.join(",")}`,
         );
         return result.id;
       }
     } catch (error) {
       console.error(
-        `Failed to sync student ${studentData.studentId}:`,
+        `Failed to sync student ${studentData.emp_code || "unknown"}:`,
         error.message,
       );
       throw error;

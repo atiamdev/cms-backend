@@ -252,7 +252,7 @@ const courseSchema = new mongoose.Schema(
       },
       createInvoiceOnEnrollment: {
         type: Boolean,
-        default: false,
+        default: true,
       },
       academicTerm: {
         type: String,
@@ -347,7 +347,7 @@ const courseSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for performance
@@ -402,7 +402,7 @@ courseSchema.pre("save", function (next) {
     if (this.fees.otherFees && Array.isArray(this.fees.otherFees)) {
       total += this.fees.otherFees.reduce(
         (sum, fee) => sum + (fee.amount || 0),
-        0
+        0,
       );
     }
 
@@ -418,7 +418,7 @@ courseSchema.pre("save", function (next) {
     // Calculate total from fee components
     const totalFromComponents = this.feeStructure.components.reduce(
       (sum, component) => sum + (component.amount || 0),
-      0
+      0,
     );
 
     // Update legacy fees structure for backward compatibility

@@ -4,12 +4,22 @@ const pushController = require("./pushController");
 const User = require("../models/User");
 const Teacher = require("../models/Teacher");
 
+// Import WhatsApp notification service (optional - graceful degradation)
+let noticeWhatsAppService = null;
+try {
+  noticeWhatsAppService = require("../services/noticeWhatsAppService");
+} catch (err) {
+  console.warn(
+    "Notice WhatsApp service not available - WhatsApp notifications will be skipped",
+  );
+}
+
 // Helper function to send push notifications for a notice
 const sendPushNotificationsForNotice = async (notice, branchId) => {
   try {
     console.log(
       "[Push] Preparing to send notifications for notice:",
-      notice._id
+      notice._id,
     );
 
     // Don't send push for fee reminders (they're automated)
@@ -26,7 +36,7 @@ const sendPushNotificationsForNotice = async (notice, branchId) => {
       targetUserIds = notice.specificRecipients;
       console.log(
         "[Push] Targeting specific recipients:",
-        targetUserIds.length
+        targetUserIds.length,
       );
     } else {
       // Send to all users matching target audience and branch
@@ -57,7 +67,7 @@ const sendPushNotificationsForNotice = async (notice, branchId) => {
         "[Push] Targeting audience:",
         notice.targetAudience,
         "Users:",
-        targetUserIds.length
+        targetUserIds.length,
       );
     }
 
@@ -103,7 +113,7 @@ const sendPushNotificationsForNotice = async (notice, branchId) => {
     // Send push notifications
     const result = await pushController.sendNotification(
       targetUserIds,
-      payload
+      payload,
     );
     console.log("[Push] Notifications sent:", result);
   } catch (error) {
@@ -475,7 +485,7 @@ const createNotice = async (req, res) => {
       req.user?.firstName,
       req.user?.lastName,
       "Role:",
-      req.user?.roles
+      req.user?.roles,
     );
     console.log("Request body:", req.body);
     console.log("Branch ID:", req.user?.branchId);
@@ -526,7 +536,7 @@ const createNotice = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `You don't have permission to target '${targetAudience}'. Allowed audiences: ${allowedAudiences.join(
-          ", "
+          ", ",
         )}`,
       });
     }
@@ -554,7 +564,7 @@ const createNotice = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `You don't have permission to create '${type}' notices. Allowed types: ${allowedTypes.join(
-          ", "
+          ", ",
         )}`,
       });
     }
@@ -576,8 +586,8 @@ const createNotice = async (req, res) => {
       // Check if the teacher teaches this course
       const teachesCourse = teacher.classes.some((classAssignment) =>
         classAssignment.courses.some(
-          (course) => course._id.toString() === courseId
-        )
+          (course) => course._id.toString() === courseId,
+        ),
       );
 
       if (!teachesCourse) {
@@ -625,8 +635,31 @@ const createNotice = async (req, res) => {
       (error) => {
         console.error("[Push] Error sending notifications:", error);
         // Don't fail the notice creation if push notifications fail
-      }
+      },
     );
+
+    // Send WhatsApp notifications to targeted users (non-blocking)
+    if (noticeWhatsAppService) {
+      console.log("[WhatsApp] Sending notice notifications...");
+      noticeWhatsAppService
+        .sendNoticeNotifications(savedNotice)
+        .then((result) => {
+          if (result.success) {
+            console.log(
+              `[WhatsApp] Notice notifications sent: ${result.results?.sent || 0}/${result.results?.total || 0}`,
+            );
+          } else {
+            console.error(
+              "[WhatsApp] Error sending notifications:",
+              result.error,
+            );
+          }
+        })
+        .catch((error) => {
+          console.error("[WhatsApp] Error sending notifications:", error);
+          // Don't fail the notice creation if WhatsApp notifications fail
+        });
+    }
 
     res.status(201).json({
       success: true,
@@ -676,7 +709,7 @@ const updateNotice = async (req, res) => {
     const notice = await Notice.findOneAndUpdate(
       { _id: noticeId, branchId: req.user.branchId },
       updates,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     res.json({

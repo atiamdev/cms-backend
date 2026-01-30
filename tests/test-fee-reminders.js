@@ -2,7 +2,7 @@
  * Test script for new simplified fee reminder messages
  */
 
-const WhatsAppNotificationService = require("./services/whatsappNotificationService");
+const WhatsAppNotificationService = require("../services/whatsappNotificationService");
 
 async function testFeeReminders() {
   const whatsappService = new WhatsAppNotificationService();

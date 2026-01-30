@@ -99,10 +99,13 @@ async function generateInitialInvoicesForStudent(
           break;
       }
 
-      // Check if invoice already exists for this student, course, and period
+      // Check if invoice already exists for this student and period
+      // Note: The unique index is on feeStructureId+studentId+periodYear+periodMonth
+      // Since feeStructureId is null for course-based invoices, we can only have ONE invoice
+      // per student per period (regardless of how many courses they're enrolled in)
       const existingInvoice = await Fee.findOne({
         studentId: studentId,
-        courseId: course._id,
+        feeStructureId: null, // Match the null value in the unique index
         periodYear: currentYear,
         periodMonth: currentMonth,
         branchId: branchId,
@@ -110,7 +113,10 @@ async function generateInitialInvoicesForStudent(
 
       if (existingInvoice) {
         console.log(
-          `Invoice already exists for student ${studentId}, course ${course.name}`,
+          `Invoice already exists for student ${studentId} for period ${currentYear}-${currentMonth} (existing invoice covers course: ${existingInvoice.courseId})`,
+        );
+        console.log(
+          `Skipping invoice generation for course ${course.name}. Consider using consolidated monthly invoices instead.`,
         );
         continue;
       }
@@ -119,13 +125,14 @@ async function generateInitialInvoicesForStudent(
       const academicYear =
         fs.academicYear || `${currentYear}/${currentYear + 1}`;
 
-      // Calculate scholarship amount (prefer student.scholarshipPercentage if present)
+      // Calculate scholarship amount and get enrollment date (prefer student.scholarshipPercentage if present)
       let scholarshipAmount = 0;
       let appliedPct = 0;
+      let studentEnrollmentDate = null;
       try {
         const Student = require("../models/Student");
         const studentDoc = await Student.findById(studentId).select(
-          "scholarshipPercentage",
+          "scholarshipPercentage enrollmentDate",
         );
         appliedPct =
           studentDoc && studentDoc.scholarshipPercentage > 0
@@ -135,6 +142,7 @@ async function generateInitialInvoicesForStudent(
               : 0;
         scholarshipAmount =
           appliedPct > 0 ? Math.round((totalAmount * appliedPct) / 100) : 0;
+        studentEnrollmentDate = studentDoc?.enrollmentDate;
       } catch (err) {
         console.error("Error fetching student scholarship percentage:", err);
         appliedPct =
@@ -146,6 +154,15 @@ async function generateInitialInvoicesForStudent(
       }
 
       const amountAfterScholarship = totalAmount - scholarshipAmount;
+
+      // Calculate due date based on student's enrollment date
+      let dueDate;
+      if (studentEnrollmentDate) {
+        const enrollmentDay = new Date(studentEnrollmentDate).getDate();
+        dueDate = new Date(currentYear, currentMonth - 1, enrollmentDay);
+      } else {
+        dueDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days from now as fallback
+      }
 
       // Create invoice (scholarships reflected in scholarshipAmount; discountAmount reserved for manual invoice-level discounts)
       const invoice = new Fee({
@@ -163,8 +180,7 @@ async function generateInitialInvoicesForStudent(
         amountPaid: 0,
         balance: amountAfterScholarship,
         status: "unpaid",
-        dueDate:
-          fs.dueDate || new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), // 30 days from now
+        dueDate: dueDate,
         academicYear: academicYear,
         academicTermId: null, // Can be set if you have academic term logic
         invoiceNumber: `INV${currentYear}${currentMonth
@@ -3011,6 +3027,7 @@ const getStudentsForSync = async (req, res) => {
       limit = 1000,
       page = 1,
       includeEcourse = "true",
+      includePastDueOnly = "true",
     } = req.query;
 
     console.log(`[Sync Endpoint] Request params:`, {
@@ -3018,6 +3035,7 @@ const getStudentsForSync = async (req, res) => {
       limit,
       page,
       includeEcourse,
+      includePastDueOnly,
     });
 
     // Build query - only filter by branchId if provided
@@ -3047,26 +3065,29 @@ const getStudentsForSync = async (req, res) => {
       aggregationQuery.branchId = new mongoose.Types.ObjectId(branchId);
     }
 
+    // Get today's date for comparison (as a Date object that can be used in aggregation)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    console.log(`[Sync Endpoint] Today's date for comparison:`, today);
+
+    // Debug: Check if there are any invoices in the database
+    const Fee = require("../models/Fee");
+    const totalInvoices = await Fee.countDocuments({
+      branchId: query.branchId,
+    });
+    const pastDueInvoices = await Fee.countDocuments({
+      branchId: query.branchId,
+      dueDate: { $lt: today },
+      balance: { $gt: 0 },
+    });
+    console.log(
+      `[Sync Endpoint] Total invoices in branch: ${totalInvoices}, Past due with balance: ${pastDueInvoices}`,
+    );
+
     // Simple aggregation without complex fee calculations for sync
     const pipeline = [
       { $match: aggregationQuery },
-      {
-        $lookup: {
-          from: "users",
-          localField: "userId",
-          foreignField: "_id",
-          as: "userInfo",
-        },
-      },
-      { $unwind: "$userInfo" },
-      {
-        $lookup: {
-          from: "departments",
-          localField: "departmentId",
-          foreignField: "_id",
-          as: "departmentInfo",
-        },
-      },
       {
         $lookup: {
           from: "fees",
@@ -3077,65 +3098,81 @@ const getStudentsForSync = async (req, res) => {
       },
       {
         $addFields: {
+          // Check if student has any past due invoices (using balance field, not balanceDue)
+          hasPastDueInvoices: {
+            $gt: [
+              {
+                $size: {
+                  $filter: {
+                    input: "$invoices",
+                    as: "invoice",
+                    cond: {
+                      $and: [
+                        { $lt: ["$$invoice.dueDate", today] },
+                        { $gt: ["$$invoice.balance", 0] },
+                      ],
+                    },
+                  },
+                },
+              },
+              0,
+            ],
+          },
+          totalInvoices: { $size: "$invoices" },
+        },
+      },
+      // Filter for students with past due invoices if requested
+      ...(includePastDueOnly === "true"
+        ? [
+            {
+              $match: {
+                hasPastDueInvoices: true,
+              },
+            },
+          ]
+        : []),
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "userInfo",
+        },
+      },
+      { $unwind: { path: "$userInfo", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "departmentId",
+          foreignField: "_id",
+          as: "departmentInfo",
+        },
+      },
+      {
+        $addFields: {
           departmentInfo: { $arrayElemAt: ["$departmentInfo", 0] },
-          // Simple fee status calculation
+          // Simple fee status - calculate total balance across all invoices
+          totalBalance: {
+            $sum: {
+              $map: {
+                input: "$invoices",
+                as: "invoice",
+                in: { $ifNull: ["$$invoice.balance", 0] },
+              },
+            },
+          },
           feeStatus: {
             $cond: {
               if: {
                 $eq: [
                   {
-                    $subtract: [
-                      {
-                        $subtract: [
-                          {
-                            $subtract: [
-                              {
-                                $sum: {
-                                  $map: {
-                                    input: "$invoices",
-                                    as: "invoice",
-                                    in: {
-                                      $ifNull: ["$$invoice.totalAmountDue", 0],
-                                    },
-                                  },
-                                },
-                              },
-                              {
-                                $sum: {
-                                  $map: {
-                                    input: "$invoices",
-                                    as: "invoice",
-                                    in: {
-                                      $ifNull: ["$$invoice.discountAmount", 0],
-                                    },
-                                  },
-                                },
-                              },
-                            ],
-                          },
-                          {
-                            $sum: {
-                              $map: {
-                                input: "$invoices",
-                                as: "invoice",
-                                in: {
-                                  $ifNull: ["$$invoice.scholarshipAmount", 0],
-                                },
-                              },
-                            },
-                          },
-                        ],
+                    $sum: {
+                      $map: {
+                        input: "$invoices",
+                        as: "invoice",
+                        in: { $ifNull: ["$$invoice.balance", 0] },
                       },
-                      {
-                        $sum: {
-                          $map: {
-                            input: "$invoices",
-                            as: "invoice",
-                            in: { $ifNull: ["$$invoice.amountPaid", 0] },
-                          },
-                        },
-                      },
-                    ],
+                    },
                   },
                   0,
                 ],
@@ -3177,6 +3214,53 @@ const getStudentsForSync = async (req, res) => {
     console.log(
       `[Sync Endpoint] Aggregation returned ${students.length} students, countDocuments returned ${total} total`,
     );
+
+    // Debug: If past due only is enabled and we got 0 results, check the data
+    if (includePastDueOnly === "true" && students.length === 0) {
+      console.log(
+        "[Sync Endpoint] No students with past due invoices found. Running diagnostics...",
+      );
+
+      // Check students with any invoices
+      const studentsWithInvoices = await Student.aggregate([
+        { $match: aggregationQuery },
+        {
+          $lookup: {
+            from: "fees",
+            localField: "_id",
+            foreignField: "studentId",
+            as: "invoices",
+          },
+        },
+        {
+          $match: {
+            invoices: { $ne: [] },
+          },
+        },
+        { $limit: 5 },
+        {
+          $project: {
+            studentId: 1,
+            invoiceCount: { $size: "$invoices" },
+            invoices: {
+              $map: {
+                input: { $slice: ["$invoices", 3] },
+                as: "inv",
+                in: {
+                  dueDate: "$$inv.dueDate",
+                  balance: "$$inv.balance",
+                  status: "$$inv.status",
+                },
+              },
+            },
+          },
+        },
+      ]);
+      console.log(
+        "[Sync Endpoint] Sample students with invoices:",
+        JSON.stringify(studentsWithInvoices, null, 2),
+      );
+    }
 
     // Debug: check if students exist without filters
     if (total === 0 && branchId) {
