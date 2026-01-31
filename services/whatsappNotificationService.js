@@ -201,7 +201,7 @@ Please ensure payment is made on time. For any queries, contact: admin@atiamcoll
       // Customize message based on recipient type
       const recipientPrefix =
         recipientType === "emergency_contact"
-          ? `📊 *${branchName} - Student Attendance Report*\n\n👨‍👩‍👧‍👦 *Regarding:* ${studentName} (${studentId})`
+          ? `*${branchName} - Student Attendance Report*\n\n *Regarding:* ${studentName} (${studentId})`
           : `${statusEmoji} *${branchName} - Weekly Attendance Report*`;
 
       const contactInfo =
@@ -219,12 +219,12 @@ Please ensure payment is made on time. For any queries, contact: admin@atiamcoll
 
       const message = `${recipientPrefix}${contactInfo}
 
-📚 *Class:* ${className}
+*Class:* ${className}
 
-📅 *Report Period:*
+*Report Period:*
 ${new Date(weekStart).toLocaleDateString()} - ${new Date(weekEnd).toLocaleDateString()}
 
-📈 *Attendance Summary:*
+*Attendance Summary:*
 • Total School Days: ${totalDays}
 • Days Present: ${presentDays} ✅${"✅".repeat(Math.max(0, presentDays - 1))}
 • Days Absent: ${absentDays} ❌${"❌".repeat(Math.max(0, absentDays - 1))}
@@ -293,17 +293,17 @@ ${recipientType === "student" ? "Keep up the good work! 🎓" : "Thank you for y
 
       const message = `✅ *${branchName} - Payment Receipt*
 
-👤 *Student:* ${studentName}
-🆔 *Student ID:* ${studentId}
-🧾 *Receipt No:* ${receiptNumber}
+*Student:* ${studentName}
+*Student ID:* ${studentId}
+*Receipt No:* ${receiptNumber}
 
-💰 *Payment Details:*
+*Payment Details:*
 • Amount Paid: KES ${amountPaid?.toLocaleString() || "N/A"}
 • Payment Method: ${paymentMethod || "N/A"}
 • Transaction Ref: ${transactionRef || "N/A"}
 • Payment Date: ${paymentDate ? new Date(paymentDate).toLocaleString() : "N/A"}
 
-📊 *Account Status:*
+*Account Status:*
 • Outstanding Balance: KES ${balance?.toLocaleString() || "0"}
 
 ✅ *Payment Confirmed!*
@@ -312,7 +312,7 @@ Thank you for your payment. Your account has been updated.
 🔗 *Download Receipt:* https://portal.atiamcollege.com/student/receipts/${receiptNumber}
 
 For any discrepancies, contact: admin@atiamcollege.com
-📅 Generated: ${new Date().toLocaleString()}`;
+Generated: ${new Date().toLocaleString()}`;
 
       const result = await this.whatsappService.sendMessage(
         studentPhone,
@@ -368,16 +368,16 @@ For any discrepancies, contact: admin@atiamcollege.com
         statusText = "Critical";
       }
 
-      const message = `📊 *${branchName} - Weekly Attendance Report*
+      const message = `*${branchName} - Weekly Attendance Report*
 
-👤 *Student:* ${studentName}
-🆔 *Student ID:* ${studentId}
-📚 *Class:* ${className}
+*Student:* ${studentName}
+*Student ID:* ${studentId}
+*Class:* ${className}
 
-📅 *Report Period:*
+*Report Period:*
 ${new Date(weekStart).toLocaleDateString()} - ${new Date(weekEnd).toLocaleDateString()}
 
-📈 *Attendance Summary:*
+*Attendance Summary:*
 • Total School Days: ${totalDays}
 • Days Present: ${presentDays} ${"✅".repeat(Math.min(presentDays, 5))}
 • Days Absent: ${absentDays} ${absentDays > 0 ? "❌".repeat(Math.min(absentDays, 3)) : ""}
@@ -385,19 +385,15 @@ ${new Date(weekStart).toLocaleDateString()} - ${new Date(weekEnd).toLocaleDateSt
 
 ${statusEmoji} *Status:* ${statusText}
 
-💡 *Tips for Better Attendance:*
-• Arrive on time for all classes
-• Notify teachers in advance for planned absences
-• Make up missed work promptly
 
 📞 *Contact Teachers:*
 For attendance concerns, reach out to your class teacher or:
-📧 Email: admin@atiamcollege.com
+*Email:* admin@atiamcollege.com
 
 🔗 *View Full Report:* https://portal.atiamcollege.com/student/attendance
 
 Keep up the good work! 🎓
-📅 Generated: ${new Date().toLocaleString()}`;
+Generated: ${new Date().toLocaleString()}`;
 
       const result = await this.whatsappService.sendMessage(
         studentPhone,
@@ -444,19 +440,19 @@ Keep up the good work! 🎓
 
       const fullMessage = `${urgencyEmoji} *${branchName} - Emergency Notification*
 
-👤 *Student:* ${studentName}
-🆔 *Student ID:* ${studentId}
-📞 *Contact:* ${contactPerson}
+*Student:* ${studentName}
+*Student ID:* ${studentId}
+*Contact:* ${contactPerson}
 
-🚨 *${emergencyType}*
+*${emergencyType}*
 
 ${message}
 
-📅 *Time:* ${new Date().toLocaleString()}
+*Time:* ${new Date().toLocaleString()}
 
 Please contact the school immediately if you need to discuss this matter.
 
-📞 *School Contacts:*
+*School Contacts:*
 • Main Office: +254 793 746 046
 • Email: admin@atiamcollege.com
 

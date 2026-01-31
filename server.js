@@ -10,6 +10,10 @@ const socketIo = require("socket.io");
 
 require("dotenv").config();
 
+// Initialize Sentry FIRST (before other imports)
+const { initializeSentry, Sentry } = require("./config/sentry");
+const isSentryEnabled = initializeSentry();
+
 // Import routes
 const authRoutes = require("./routes/authRoutes");
 const branchRoutes = require("./routes/branchRoutes");
@@ -54,6 +58,13 @@ const errorHandler = require("./middlewares/errorHandler");
 const securityMiddleware = require("./middlewares/security");
 
 const app = express();
+
+// Sentry request handler must be the first middleware (if enabled)
+if (isSentryEnabled && Sentry && Sentry.Handlers) {
+  app.use(Sentry.Handlers.requestHandler());
+  // Sentry tracing middleware for performance monitoring
+  app.use(Sentry.Handlers.tracingHandler());
+}
 
 // Security middleware - comprehensive security headers
 securityMiddleware(app);
@@ -195,6 +206,11 @@ app.use("*", (req, res) => {
   });
 });
 
+// Sentry error handler must be before other error handlers (if enabled)
+if (isSentryEnabled && Sentry && Sentry.Handlers) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
 // Global error handler
 app.use(errorHandler);
 
@@ -329,13 +345,31 @@ const startServer = async () => {
 // Handle unhandled promise rejections
 process.on("unhandledRejection", (err, promise) => {
   console.log("Unhandled Rejection at:", promise, "reason:", err);
-  process.exit(1);
+
+  // Capture in Sentry before exiting
+  if (Sentry) {
+    Sentry.captureException(err);
+    Sentry.close(2000).then(() => {
+      process.exit(1);
+    });
+  } else {
+    process.exit(1);
+  }
 });
 
 // Handle uncaught exceptions
 process.on("uncaughtException", (err) => {
   console.log("Uncaught Exception:", err);
-  process.exit(1);
+
+  // Capture in Sentry before exiting
+  if (Sentry) {
+    Sentry.captureException(err);
+    Sentry.close(2000).then(() => {
+      process.exit(1);
+    });
+  } else {
+    process.exit(1);
+  }
 });
 
 startServer();

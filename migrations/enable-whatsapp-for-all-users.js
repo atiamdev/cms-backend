@@ -13,8 +13,7 @@
  *   node migrations/enable-whatsapp-for-all-users.js
  */
 
-const path = require("path");
-require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+require("dotenv").config();
 const mongoose = require("mongoose");
 const User = require("../models/User");
 const connectDB = require("../config/db");
@@ -39,13 +38,6 @@ async function runMigration() {
     log("\n" + "=".repeat(70), "bright");
     log("🔄 MIGRATION: Enable WhatsApp Notifications for All Users", "bright");
     log("=".repeat(70) + "\n", "bright");
-
-    // Verify environment variable
-    if (!process.env.MONGODB_URI) {
-      throw new Error(
-        "MONGODB_URI environment variable is not set. Please check your .env file.",
-      );
-    }
 
     // Connect to database
     log("📡 Connecting to database...", "cyan");

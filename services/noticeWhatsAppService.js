@@ -5,24 +5,67 @@
  * - Students
  * - Emergency contacts/guardians
  * Based on target audience and user preferences.
+ *
+ * Uses WhatsApp Queue Service for systematic rate-limited sending.
  */
 
-const WhatsAppService = require("./whatsappService");
+const WhatsAppQueueService = require("./whatsappQueueService");
 const Student = require("../models/Student");
 const User = require("../models/User");
 
 class NoticeWhatsAppService {
   constructor() {
-    this.whatsappService = WhatsAppService; // Use the singleton instance
+    this.queueService = WhatsAppQueueService; // Use the queue service
   }
 
   /**
-   * Send notice notification to a single recipient
+   * Build notice message based on recipient type
    * @param {Object} noticeData - Notice details
-   * @param {string} phoneNumber - Recipient's phone number
    * @param {string} recipientName - Recipient's name
-   * @param {string} recipientType - 'student' or 'guardian'
-   * @returns {Promise<Object>} Result object
+   * @param {string} recipientType - 'student', 'user', or 'guardian'
+   * @returns {string} Formatted message
+   */
+  buildNoticeMessage(noticeData, recipientName, recipientType = "student") {
+    const {
+      title,
+      content,
+      branchName = "ATIAM COLLEGE",
+      authorName = "Administration",
+    } = noticeData;
+
+    // Truncate content if too long (WhatsApp has ~4096 char limit)
+    const maxContentLength = 500;
+    const truncatedContent =
+      content.length > maxContentLength
+        ? content.substring(0, maxContentLength) + "..."
+        : content;
+
+    // Build message based on recipient type
+    if (recipientType === "guardian") {
+      return `*${branchName} - Important Notice*
+
+ *${title}*
+
+*Dear Parent/Guardian,*
+
+${truncatedContent}
+
+`;
+    } else {
+      // Student/user message
+      return `*${branchName} - New Notice*
+
+*${title}*
+
+${truncatedContent}
+
+`;
+    }
+  }
+
+  /**
+   * Send notice notification to a single recipient (DEPRECATED - use queue instead)
+   * @deprecated Use queueService.addToQueue() directly instead
    */
   async sendNoticeToRecipient(
     noticeData,
@@ -30,107 +73,36 @@ class NoticeWhatsAppService {
     recipientName,
     recipientType = "student",
   ) {
+    console.warn(
+      "⚠️ sendNoticeToRecipient is deprecated. Messages are now queued automatically.",
+    );
+
     try {
-      const {
-        title,
-        content,
-        type,
-        priority,
-        publishDate,
-        expiryDate,
-        branchName = "ATIAM COLLEGE",
-        authorName = "Administration",
-      } = noticeData;
-
-      // Priority emoji mapping
-      const priorityEmojis = {
-        high: "🔴",
-        medium: "🟡",
-        low: "🟢",
-      };
-
-      // Type emoji mapping
-      const typeEmojis = {
-        urgent: "⚠️",
-        important: "📌",
-        academic: "📚",
-        info: "ℹ️",
-        general: "📢",
-      };
-
-      const priorityEmoji = priorityEmojis[priority] || "📢";
-      const typeEmoji = typeEmojis[type] || "📢";
-
-      // Truncate content if too long (WhatsApp has ~4096 char limit)
-      const maxContentLength = 500;
-      const truncatedContent =
-        content.length > maxContentLength
-          ? content.substring(0, maxContentLength) + "..."
-          : content;
-
-      // Build message based on recipient type
-      let message;
-      if (recipientType === "guardian") {
-        message = `${typeEmoji} *${branchName} - Important Notice*
-
-${priorityEmoji} *${title}*
-
-👨‍👩‍👧‍👦 *Dear Parent/Guardian,*
-
-${truncatedContent}
-
-📋 *Notice Details:*
-• Type: ${type.toUpperCase()}
-• Priority: ${priority.toUpperCase()}
-• Published: ${new Date(publishDate).toLocaleDateString()}${expiryDate ? `\n• Valid Until: ${new Date(expiryDate).toLocaleDateString()}` : ""}
-
-✍️ *Issued by:* ${authorName}
-
-
-
-For any queries, please contact the school administration.
-📞 Contact: admin@atiamcollege.com`;
-      } else {
-        // Student message
-        message = `${typeEmoji} *${branchName} - New Notice*
-
-${priorityEmoji} *${title}*
-
-${truncatedContent}
-
-📋 *Details:*
-• Type: ${type.toUpperCase()}
-• Priority: ${priority.toUpperCase()}
-• Published: ${new Date(publishDate).toLocaleDateString()}${expiryDate ? `\n• Valid Until: ${new Date(expiryDate).toLocaleDateString()}` : ""}
-
-✍️ *From:* ${authorName}
-
-🔗 *View Full Notice:* https://portal.atiamcollege.com/student/notices
-
-Stay informed and check the portal regularly!`;
-      }
-
-      const result = await this.whatsappService.sendMessage(
-        phoneNumber,
-        message,
-        {
-          type: "notice",
-          noticeType: type,
-          priority,
-        },
+      const message = this.buildNoticeMessage(
+        noticeData,
+        recipientName,
+        recipientType,
       );
 
-      if (result.success) {
-        console.log(
-          `📤 Notice notification sent to ${recipientName} (${recipientType})`,
-        );
-      } else {
-        console.log(
-          `❌ Failed to send notice to ${recipientName}: ${result.reason || result.error}`,
-        );
-      }
+      const queueId = await this.queueService.addToQueue({
+        phoneNumber,
+        message,
+        metadata: {
+          type: "notice",
+          noticeType: noticeData.type,
+          priority: noticeData.priority,
+          recipientName,
+          recipientType,
+        },
+        priority:
+          noticeData.priority === "high"
+            ? 1
+            : noticeData.priority === "medium"
+              ? 2
+              : 3,
+      });
 
-      return result;
+      return { success: true, queueId };
     } catch (error) {
       console.error(
         `❌ Error sending notice notification to ${recipientName}:`,
@@ -152,7 +124,7 @@ Stay informed and check the portal regularly!`;
       );
 
       // Check if WhatsApp service is enabled
-      if (!this.whatsappService.isEnabled) {
+      if (!this.queueService.whatsappService.isEnabled) {
         console.log("⚠️ WhatsApp service is disabled, skipping notifications");
         return { success: true, skipped: true, reason: "service_disabled" };
       }
@@ -171,11 +143,14 @@ Stay informed and check the portal regularly!`;
 
       const results = {
         total: 0,
-        sent: 0,
-        failed: 0,
+        queued: 0,
         skipped: 0,
+        queueIds: [],
         details: [],
       };
+
+      // Collect all messages to queue in bulk
+      const messagesToQueue = [];
 
       // Determine target users based on audience
       let targetUsers = [];
@@ -223,40 +198,58 @@ Stay informed and check the portal regularly!`;
       for (const user of targetUsers) {
         results.total++;
 
+        const userName = `${user.firstName} ${user.lastName}`.trim();
+        // Phone number can be in user.phoneNumber OR user.profileDetails.phone
+        const userPhone = user.phoneNumber || user.profileDetails?.phone;
+
         // Check if user has WhatsApp notifications enabled
+        // Default to true if preferences don't exist (for backward compatibility)
         const whatsappPrefs = user.profileDetails?.whatsappNotifications;
-        if (!whatsappPrefs?.enabled || whatsappPrefs?.noticeAlerts === false) {
-          console.log(
-            `⏭️ Skipping ${user.firstName} ${user.lastName} - WhatsApp notices disabled`,
-          );
+        const isEnabled = whatsappPrefs?.enabled !== false; // Default true if undefined
+        const noticeAlertsEnabled = whatsappPrefs?.noticeAlerts !== false; // Default true if undefined
+
+        if (!isEnabled || !noticeAlertsEnabled) {
           results.skipped++;
           continue;
         }
 
-        const userName = `${user.firstName} ${user.lastName}`.trim();
-        const userPhone = user.phoneNumber;
+        if (!userPhone) {
+          results.skipped++;
+          continue;
+        }
 
-        // Send to user
+        // Prepare message for user
         if (userPhone) {
-          const result = await this.sendNoticeToRecipient(
+          const message = this.buildNoticeMessage(
             noticeData,
-            userPhone,
             userName,
             user.roles?.includes("student") ? "student" : "user",
           );
 
-          if (result.success) {
-            results.sent++;
-          } else {
-            results.failed++;
-          }
+          messagesToQueue.push({
+            phoneNumber: userPhone,
+            message,
+            metadata: {
+              type: "notice",
+              noticeType: noticeData.type,
+              priority: noticeData.priority,
+              recipientName: userName,
+              recipientType: "user",
+              userId: user._id,
+            },
+            priority:
+              noticeData.priority === "high"
+                ? 1
+                : noticeData.priority === "medium"
+                  ? 2
+                  : 3,
+          });
 
           results.details.push({
             recipient: userName,
             phone: userPhone,
             type: "user",
-            status: result.success ? "sent" : "failed",
-            reason: result.reason || result.error,
+            status: "queued",
           });
         }
 
@@ -298,18 +291,31 @@ Stay informed and check the portal regularly!`;
               if (contactInfo) {
                 results.total++;
 
-                const guardianResult = await this.sendNoticeToRecipient(
+                const guardianMessage = this.buildNoticeMessage(
                   noticeData,
-                  contactInfo.phone,
                   contactInfo.name,
                   "guardian",
                 );
 
-                if (guardianResult.success) {
-                  results.sent++;
-                } else {
-                  results.failed++;
-                }
+                messagesToQueue.push({
+                  phoneNumber: contactInfo.phone,
+                  message: guardianMessage,
+                  metadata: {
+                    type: "notice",
+                    noticeType: noticeData.type,
+                    priority: noticeData.priority,
+                    recipientName: contactInfo.name,
+                    recipientType: "guardian",
+                    studentName: userName,
+                    relationship: contactInfo.relationship,
+                  },
+                  priority:
+                    noticeData.priority === "high"
+                      ? 1
+                      : noticeData.priority === "medium"
+                        ? 2
+                        : 3,
+                });
 
                 results.details.push({
                   recipient: contactInfo.name,
@@ -317,8 +323,7 @@ Stay informed and check the portal regularly!`;
                   type: "guardian",
                   relationship: contactInfo.relationship,
                   studentName: userName,
-                  status: guardianResult.success ? "sent" : "failed",
-                  reason: guardianResult.reason || guardianResult.error,
+                  status: "queued",
                 });
               }
             }
@@ -329,13 +334,19 @@ Stay informed and check the portal regularly!`;
             );
           }
         }
+      }
 
-        // Rate limiting delay (already handled by WhatsAppService but adding small delay between users)
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      // Queue all messages at once for systematic processing
+      if (messagesToQueue.length > 0) {
+        console.log(`📦 Queuing ${messagesToQueue.length} notice messages...`);
+        const queueIds =
+          await this.queueService.addBulkToQueue(messagesToQueue);
+        results.queueIds = queueIds;
+        results.queued = messagesToQueue.length;
       }
 
       console.log(
-        `✅ Notice WhatsApp notifications completed: ${results.sent}/${results.total} sent, ${results.failed} failed, ${results.skipped} skipped`,
+        `✅ Notice WhatsApp notifications queued: ${results.queued}/${results.total} queued, ${results.skipped} skipped`,
       );
 
       return {
