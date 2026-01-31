@@ -21,10 +21,12 @@
   "author": "ATIAM",
   "license": "ISC",
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.884.0",
+    "@aws-sdk/client-s3": "^3.893.0",
     "@aws-sdk/s3-request-presigner": "^3.884.0",
     "@google/generative-ai": "^0.24.1",
     "@onesignal/node-onesignal": "^5.3.1-beta1",
+    "@sentry/node": "^8.42.0",
+    "@sentry/profiling-node": "^8.42.0",
     "axios": "^1.11.0",
     "bcryptjs": "^2.4.3",
     "cloudflare": "^5.0.0",
