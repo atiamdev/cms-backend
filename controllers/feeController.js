@@ -463,6 +463,131 @@ const generateMonthlyInvoicesRoute = async (req, res) => {
   }
 };
 
+// @desc    Manual invoice generation for super admin (enhanced with multiple options)
+// @route   POST /api/fees/admin/generate-invoices
+// @access  Private (SuperAdmin only)
+const manualInvoiceGeneration = async (req, res) => {
+  try {
+    const {
+      year,
+      month,
+      branchId,
+      frequency = "monthly",
+      consolidate = true,
+      studentId,
+    } = req.body;
+
+    // Validate frequency
+    const validFrequencies = ["weekly", "monthly", "quarterly", "annual"];
+    if (!validFrequencies.includes(frequency)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid frequency. Must be one of: ${validFrequencies.join(", ")}`,
+      });
+    }
+
+    const now = new Date();
+    const periodYear = year ? parseInt(year) : now.getFullYear();
+    const periodMonth = month ? parseInt(month) : now.getMonth() + 1;
+
+    console.log("=".repeat(70));
+    console.log("MANUAL INVOICE GENERATION");
+    console.log("=".repeat(70));
+    console.log(
+      `Initiated by: ${req.user.firstName} ${req.user.lastName} (${req.user.roles.join(", ")})`,
+    );
+    console.log(
+      `Period: ${periodYear}-${String(periodMonth).padStart(2, "0")}`,
+    );
+    console.log(`Frequency: ${frequency}`);
+    console.log(`Consolidation: ${consolidate ? "ENABLED" : "DISABLED"}`);
+    console.log(`Branch: ${branchId || "All branches"}`);
+    console.log(`Student filter: ${studentId || "All students"}`);
+    console.log("=".repeat(70));
+
+    // Use the appropriate invoice generation service
+    let result;
+
+    if (frequency === "monthly") {
+      result = await generateMonthlyInvoices({
+        periodYear,
+        periodMonth,
+        branchId: branchId || req.user.branchId,
+        studentId,
+        initiatedBy: req.user._id,
+        consolidate,
+      });
+    } else {
+      // For other frequencies, use generateInvoicesForFrequency
+      const {
+        generateInvoicesForFrequency,
+      } = require("../services/monthlyInvoiceService");
+      const date = new Date(periodYear, periodMonth - 1, 1);
+
+      result = await generateInvoicesForFrequency({
+        frequency,
+        date,
+        branchId: branchId || req.user.branchId,
+        initiatedBy: req.user._id,
+      });
+    }
+
+    // Format response with detailed information
+    const monthName = new Date(periodYear, periodMonth - 1).toLocaleDateString(
+      "en-US",
+      {
+        month: "long",
+        year: "numeric",
+      },
+    );
+
+    console.log("\n" + "=".repeat(70));
+    console.log("GENERATION COMPLETE");
+    console.log("=".repeat(70));
+    console.log(`Created: ${result.created || 0} invoice(s)`);
+    console.log(`Skipped: ${result.skipped || 0} invoice(s)`);
+    console.log(`Notifications pending: ${result.notificationsPending || 0}`);
+    console.log("=".repeat(70) + "\n");
+
+    res.json({
+      success: true,
+      message: `Successfully generated ${result.created || 0} invoice(s) for ${monthName}`,
+      data: {
+        period: {
+          year: periodYear,
+          month: periodMonth,
+          monthName: monthName,
+          frequency,
+        },
+        statistics: {
+          invoicesCreated: result.created || 0,
+          invoicesSkipped: result.skipped || 0,
+          notificationsPending: result.notificationsPending || 0,
+          totalProcessed: (result.created || 0) + (result.skipped || 0),
+        },
+        configuration: {
+          consolidation: consolidate,
+          branchFilter: branchId || "All branches",
+          studentFilter: studentId || "All students",
+        },
+        initiatedBy: {
+          userId: req.user._id,
+          name: `${req.user.firstName} ${req.user.lastName}`,
+          role: req.user.roles[0],
+        },
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error("Manual invoice generation error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate invoices",
+      error: error.message,
+    });
+  }
+};
+
 // @desc    Get student fees
 // @route   GET /api/fees/student/:studentId
 // @access  Private (Admin, Secretary, Teacher, Student - own fees only)
@@ -1075,4 +1200,5 @@ module.exports = {
   getBranchStudentFeeSummaries,
   sendFeeReminders,
   generateMonthlyInvoicesRoute,
+  manualInvoiceGeneration,
 };

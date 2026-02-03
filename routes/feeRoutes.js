@@ -1,6 +1,10 @@
 const express = require("express");
 const { body } = require("express-validator");
-const { protect, authorize } = require("../middlewares/auth");
+const {
+  protect,
+  authorize,
+  requireSuperAdmin,
+} = require("../middlewares/auth");
 const { branchAuth } = require("../middlewares/branchAuth");
 const {
   getFeeStructures,
@@ -13,9 +17,12 @@ const {
   getBranchStudentFeeSummaries,
   sendFeeReminders,
   generateMonthlyInvoicesRoute,
+  manualInvoiceGeneration,
 } = require("../controllers/feeController");
 
-const { getStudentFeeSummaries } = require("../controllers/studentFeeSummaryController");
+const {
+  getStudentFeeSummaries,
+} = require("../controllers/studentFeeSummaryController");
 
 const {
   initiateEquityPayment,
@@ -260,7 +267,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getStudentFeeSummaries
+  getStudentFeeSummaries,
 );
 
 router.get(
@@ -268,7 +275,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getFees
+  getFees,
 );
 
 // Fee Structure Routes
@@ -321,7 +328,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getFeeStructures
+  getFeeStructures,
 );
 
 router.post(
@@ -342,11 +349,20 @@ router.post(
       .isFloat({ min: 0 })
       .withMessage("Fee component amount must be a positive number"),
 
-    body("billingFrequency").optional().isIn(["term","weekly","monthly","quarterly","annual"]).withMessage("Invalid billing frequency"),
-    body("createInvoiceOnEnrollment").optional().isBoolean().withMessage("Invalid createInvoiceOnEnrollment value"),
-    body("perPeriodAmount").optional().isFloat({ min: 0 }).withMessage("Per period amount must be a positive number"),
+    body("billingFrequency")
+      .optional()
+      .isIn(["term", "weekly", "monthly", "quarterly", "annual"])
+      .withMessage("Invalid billing frequency"),
+    body("createInvoiceOnEnrollment")
+      .optional()
+      .isBoolean()
+      .withMessage("Invalid createInvoiceOnEnrollment value"),
+    body("perPeriodAmount")
+      .optional()
+      .isFloat({ min: 0 })
+      .withMessage("Per period amount must be a positive number"),
   ],
-  createFeeStructure
+  createFeeStructure,
 );
 
 // Fee Assignment Routes
@@ -367,7 +383,7 @@ router.post(
       .isFloat({ min: 0 })
       .withMessage("Discount amount must be positive"),
   ],
-  assignFeesToStudents
+  assignFeesToStudents,
 );
 
 // Manual trigger for monthly invoice generation (admin)
@@ -378,11 +394,43 @@ router.post(
   authorize(["admin", "secretary"]),
   [
     body("year").optional().isInt({ min: 2000 }).withMessage("Invalid year"),
-    body("month").optional().isInt({ min: 1, max: 12 }).withMessage("Invalid month"),
+    body("month")
+      .optional()
+      .isInt({ min: 1, max: 12 })
+      .withMessage("Invalid month"),
   ],
-  generateMonthlyInvoicesRoute
+  generateMonthlyInvoicesRoute,
 );
 
+// Enhanced manual invoice generation for super admin (with multiple frequency options)
+router.post(
+  "/admin/generate-invoices",
+  protect,
+  requireSuperAdmin,
+  [
+    body("year")
+      .optional()
+      .isInt({ min: 2000, max: 2100 })
+      .withMessage("Invalid year"),
+    body("month")
+      .optional()
+      .isInt({ min: 1, max: 12 })
+      .withMessage("Invalid month (must be 1-12)"),
+    body("frequency")
+      .optional()
+      .isIn(["weekly", "monthly", "quarterly", "annual"])
+      .withMessage(
+        "Invalid frequency. Must be weekly, monthly, quarterly, or annual",
+      ),
+    body("branchId").optional().isMongoId().withMessage("Invalid branch ID"),
+    body("studentId").optional().isMongoId().withMessage("Invalid student ID"),
+    body("consolidate")
+      .optional()
+      .isBoolean()
+      .withMessage("Consolidate must be a boolean"),
+  ],
+  manualInvoiceGeneration,
+);
 
 // Fee Management Routes
 router.get("/student/:studentId", protect, branchAuth, getStudentFees);
@@ -393,7 +441,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "branchadmin", "secretary"]),
-  getBranchStudentFeeSummaries
+  getBranchStudentFeeSummaries,
 );
 
 // Legacy route (kept for backwards compatibility)
@@ -402,7 +450,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "branchadmin", "secretary"]),
-  getBranchStudentFeeSummaries
+  getBranchStudentFeeSummaries,
 );
 
 router.get(
@@ -410,7 +458,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getOutstandingFeesReport
+  getOutstandingFeesReport,
 );
 
 router.post(
@@ -418,7 +466,7 @@ router.post(
   protect,
   branchAuth,
   authorize(["admin", "branchadmin", "secretary"]),
-  sendFeeReminders
+  sendFeeReminders,
 );
 
 router.put(
@@ -436,7 +484,7 @@ router.put(
       .isFloat({ min: 0 })
       .withMessage("Late fee must be positive"),
   ],
-  updateFee
+  updateFee,
 );
 
 // Equity Bank Payment Routes
@@ -462,7 +510,7 @@ router.post(
       .matches(/^(\+?254|0)?[17]\d{8}$/)
       .withMessage("Valid Kenyan phone number is required"),
   ],
-  initiateEquityPayment
+  initiateEquityPayment,
 );
 
 // Student Equity Payment Route (no feeId required)
@@ -495,7 +543,7 @@ router.post(
       .isMongoId()
       .withMessage("Valid student ID is required"),
   ],
-  initiateStudentEquityPayment
+  initiateStudentEquityPayment,
 );
 
 router.post(
@@ -516,7 +564,7 @@ router.post(
       .isISO8601()
       .withMessage("Valid payment date is required"),
   ],
-  recordManualPayment
+  recordManualPayment,
 );
 
 router.put(
@@ -524,14 +572,14 @@ router.put(
   protect,
   branchAuth,
   authorize(["admin"]),
-  verifyPayment
+  verifyPayment,
 );
 
 router.get(
   "/payments/:paymentId/status",
   protect,
   branchAuth,
-  getPaymentStatus
+  getPaymentStatus,
 );
 
 router.get("/payments/fee/:feeId", protect, branchAuth, getFeePaymentHistory);
@@ -544,7 +592,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "student"]),
-  getStudentCredit
+  getStudentCredit,
 );
 
 router.get(
@@ -552,7 +600,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary", "student"]),
-  getStudentPaymentSummaryEndpoint
+  getStudentPaymentSummaryEndpoint,
 );
 
 // Secretary Routes
@@ -561,14 +609,14 @@ router.get(
   protect,
   authorize("secretary", "admin", "superadmin"),
   branchAuth,
-  getUnpaidStudents
+  getUnpaidStudents,
 );
 router.post(
   "/secretary/send-reminders",
   protect,
   authorize("secretary", "admin", "superadmin"),
   branchAuth,
-  sendPaymentReminders
+  sendPaymentReminders,
 );
 
 // Receipt Routes
@@ -588,14 +636,14 @@ router.post(
       .isEmail()
       .withMessage("Invalid email format"),
   ],
-  emailReceipt
+  emailReceipt,
 );
 
 router.get(
   "/receipts/:paymentId/download",
   protect,
   branchAuth,
-  getReceiptDownloadUrl
+  getReceiptDownloadUrl,
 );
 
 // Reporting Routes
@@ -604,7 +652,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["superadmin", "admin", "secretary"]),
-  getFeeDashboard
+  getFeeDashboard,
 );
 
 router.get(
@@ -612,7 +660,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getFeeReportByClass
+  getFeeReportByClass,
 );
 
 router.get(
@@ -620,7 +668,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getPaymentMethodAnalysis
+  getPaymentMethodAnalysis,
 );
 
 router.get(
@@ -628,7 +676,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  getDefaultersReport
+  getDefaultersReport,
 );
 
 router.get(
@@ -636,7 +684,7 @@ router.get(
   protect,
   branchAuth,
   authorize(["admin", "secretary"]),
-  exportFeeReport
+  exportFeeReport,
 );
 
 module.exports = router;

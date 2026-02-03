@@ -68,7 +68,8 @@ async function notifyStudentOfInvoice({
       return { success: false, reason: "model_unavailable" };
     }
 
-    const student = await Student.findOne({ studentId }).lean();
+    // studentId parameter is the MongoDB _id, not the admission number
+    const student = await Student.findById(studentId).lean();
 
     if (!student) {
       console.error(`Cannot notify student ${studentId}: Student not found`);
