@@ -78,14 +78,28 @@ async function generateMonthlyInvoices({
     const studentInvoiceMap = new Map(); // studentId -> invoice data
 
     // First, check for students who already have invoices for this period (any course)
-    const existingInvoices = await Fee.find({
+    const existingInvoiceQuery = {
       periodYear: periodYear,
       periodMonth: periodMonth,
-      branchId: branchId || { $exists: true },
-    }).select("studentId");
+    };
+
+    // Only filter by branchId if explicitly provided
+    if (branchId) {
+      existingInvoiceQuery.branchId = branchId;
+    }
+
+    const existingInvoices =
+      await Fee.find(existingInvoiceQuery).select("studentId");
 
     const studentsWithInvoices = new Set(
       existingInvoices.map((e) => String(e.studentId)),
+    );
+
+    console.log(
+      `Found ${existingInvoices.length} existing invoices for ${periodYear}-${String(periodMonth).padStart(2, "0")}`,
+    );
+    console.log(
+      `${studentsWithInvoices.size} students already have invoices for this period`,
     );
 
     for (const course of courses) {
@@ -105,7 +119,7 @@ async function generateMonthlyInvoices({
       }
 
       const students = await Student.find(studentQuery).select(
-        "_id branchId enrollmentDate",
+        "_id branchId enrollmentDate scholarshipPercentage",
       );
 
       if (!students || students.length === 0) continue;
@@ -144,7 +158,7 @@ async function generateMonthlyInvoices({
           studentInvoiceMap.set(studentKey, {
             branchId: stu.branchId,
             studentId: stu._id,
-            scholarshipPercentage: stu.scholarshipPercentage || 0,
+            scholarshipPercentage: Number(stu.scholarshipPercentage) || 0,
             courses: [],
             feeComponents: [],
             totalAmountDue: 0,
@@ -348,9 +362,10 @@ async function generateMonthlyInvoices({
         }
 
         // Calculate scholarship amount if student has active scholarship
+        const scholarshipPercentage = Number(stu.scholarshipPercentage) || 0;
         const scholarshipAmount =
-          stu.scholarshipPercentage > 0
-            ? Math.round((amount * stu.scholarshipPercentage) / 100)
+          scholarshipPercentage > 0
+            ? Math.round((amount * scholarshipPercentage) / 100)
             : 0;
 
         invoicesToCreate.push({
