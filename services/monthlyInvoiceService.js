@@ -77,10 +77,13 @@ async function generateMonthlyInvoices({
     // Consolidation mode: Group by student and create one invoice per student
     const studentInvoiceMap = new Map(); // studentId -> invoice data
 
-    // First, check for students who already have invoices for this period (any course)
+    // Check for students who already have invoices for this period
+    // For consolidated invoices: feeStructureId is null, so we need to query specifically for that
+    const periodStartDate = new Date(periodYear, periodMonth - 1, 1);
+
     const existingInvoiceQuery = {
-      periodYear: periodYear,
-      periodMonth: periodMonth,
+      periodStart: periodStartDate,
+      feeStructureId: null, // Consolidated invoices have null feeStructureId
     };
 
     // Only filter by branchId if explicitly provided
