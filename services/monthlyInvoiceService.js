@@ -240,11 +240,12 @@ async function generateMonthlyInvoices({
           });
         }
       } catch (err) {
-        console.error("Error inserting consolidated invoices:", err.message);
-        console.error("Error details:", err);
-        if (err && err.insertedDocs) {
+        // Handle duplicate key errors gracefully
+        if (err.code === 11000 && err.insertedDocs) {
+          const duplicateCount =
+            invoicesToCreate.length - err.insertedDocs.length;
           console.log(
-            `Partial success: ${err.insertedDocs.length} invoices created despite error`,
+            `⚠️  Duplicate invoices detected: ${duplicateCount} already exist, ${err.insertedDocs.length} created successfully`,
           );
           createdFees.push(...err.insertedDocs);
 
@@ -274,6 +275,15 @@ async function generateMonthlyInvoices({
               period: monthName,
               branchId: fee.branchId,
             });
+          }
+        } else {
+          // Non-duplicate error - log and partially process if possible
+          console.error("Error inserting consolidated invoices:", err.message);
+          if (err.insertedDocs) {
+            console.log(
+              `Partial success: ${err.insertedDocs.length} invoices created despite error`,
+            );
+            createdFees.push(...err.insertedDocs);
           }
         }
       }
@@ -388,7 +398,13 @@ async function generateMonthlyInvoices({
             });
           }
         } catch (err) {
-          if (err && err.insertedDocs) {
+          // Handle duplicate key errors gracefully
+          if (err.code === 11000 && err.insertedDocs) {
+            const duplicateCount =
+              invoicesToCreate.length - err.insertedDocs.length;
+            console.log(
+              `⚠️  Course ${course._id}: ${duplicateCount} duplicate(s) skipped, ${err.insertedDocs.length} created`,
+            );
             createdFees.push(...err.insertedDocs);
 
             // Add notifications for successful inserts
@@ -406,12 +422,17 @@ async function generateMonthlyInvoices({
                 branchId: fee.branchId,
               });
             }
+          } else {
+            // Non-duplicate error
+            console.error(
+              "Error inserting invoices for course",
+              course._id,
+              err.message,
+            );
+            if (err.insertedDocs) {
+              createdFees.push(...err.insertedDocs);
+            }
           }
-          console.error(
-            "Error inserting invoices for course",
-            course._id,
-            err.message,
-          );
         }
       }
     }
@@ -578,7 +599,13 @@ async function generateInvoicesForFrequency({
           });
         }
       } catch (err) {
-        if (err && err.insertedDocs) {
+        // Handle duplicate key errors gracefully
+        if (err.code === 11000 && err.insertedDocs) {
+          const duplicateCount =
+            invoicesToCreate.length - err.insertedDocs.length;
+          console.log(
+            `⚠️  ${frequency} invoices: ${duplicateCount} duplicate(s) skipped, ${err.insertedDocs.length} created`,
+          );
           createdFees.push(...err.insertedDocs);
 
           const periodName = periodStart.toLocaleDateString("en-US", {
@@ -595,12 +622,17 @@ async function generateInvoicesForFrequency({
               branchId: fee.branchId,
             });
           }
+        } else {
+          // Non-duplicate error
+          console.error(
+            "Error inserting invoices for course",
+            course._id,
+            err.message,
+          );
+          if (err.insertedDocs) {
+            createdFees.push(...err.insertedDocs);
+          }
         }
-        console.error(
-          "Error inserting invoices for course",
-          course._id,
-          err.message,
-        );
       }
     }
   }
