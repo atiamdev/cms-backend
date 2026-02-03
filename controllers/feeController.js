@@ -508,11 +508,16 @@ const manualInvoiceGeneration = async (req, res) => {
     // Use the appropriate invoice generation service
     let result;
 
+    // For superadmin, allow generating for all branches if branchId not specified
+    const effectiveBranchId =
+      branchId ||
+      (req.user.roles.includes("superadmin") ? null : req.user.branchId);
+
     if (frequency === "monthly") {
       result = await generateMonthlyInvoices({
         periodYear,
         periodMonth,
-        branchId: branchId || req.user.branchId,
+        branchId: effectiveBranchId,
         studentId,
         initiatedBy: req.user._id,
         consolidate,
@@ -527,7 +532,7 @@ const manualInvoiceGeneration = async (req, res) => {
       result = await generateInvoicesForFrequency({
         frequency,
         date,
-        branchId: branchId || req.user.branchId,
+        branchId: effectiveBranchId,
         initiatedBy: req.user._id,
       });
     }
