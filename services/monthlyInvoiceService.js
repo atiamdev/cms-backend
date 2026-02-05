@@ -111,7 +111,8 @@ async function generateMonthlyInvoices({
 
       // Find eligible students enrolled in this course
       const studentQuery = {
-        courses: course._id,
+        "courseEnrollments.courseId": course._id,
+        "courseEnrollments.status": "active",
         branchId: course.branchId,
         academicStatus: { $in: ["active", "inactive"] },
       };
@@ -313,7 +314,8 @@ async function generateMonthlyInvoices({
 
       // Find eligible students enrolled in this course
       const studentQuery = {
-        courses: course._id,
+        "courseEnrollments.courseId": course._id,
+        "courseEnrollments.status": "active",
         branchId: course.branchId,
         academicStatus: { $in: ["active", "inactive"] },
       };
@@ -517,7 +519,8 @@ async function generateInvoicesForFrequency({
 
     // Find eligible students enrolled in this course
     const studentQuery = {
-      courses: course._id,
+      "courseEnrollments.courseId": course._id,
+      "courseEnrollments.status": "active",
       branchId: course.branchId,
       academicStatus: { $in: ["active", "inactive"] },
     };

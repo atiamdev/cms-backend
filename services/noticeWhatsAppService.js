@@ -33,12 +33,8 @@ class NoticeWhatsAppService {
       authorName = "Administration",
     } = noticeData;
 
-    // Truncate content if too long (WhatsApp has ~4096 char limit)
-    const maxContentLength = 500;
-    const truncatedContent =
-      content.length > maxContentLength
-        ? content.substring(0, maxContentLength) + "..."
-        : content;
+    // Note: WhatsApp has ~4096 character limit, but content is sent as-is
+    const messageContent = content;
 
     // Build message based on recipient type
     if (recipientType === "guardian") {
@@ -48,7 +44,7 @@ class NoticeWhatsAppService {
 
 *Dear Parent/Guardian,*
 
-${truncatedContent}
+${messageContent}
 
 `;
     } else {
@@ -57,7 +53,7 @@ ${truncatedContent}
 
 *${title}*
 
-${truncatedContent}
+${messageContent}
 
 `;
     }
