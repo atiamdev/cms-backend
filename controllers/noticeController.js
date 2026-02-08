@@ -42,23 +42,48 @@ const sendPushNotificationsForNotice = async (notice, branchId) => {
       // Send to all users matching target audience and branch
       const query = { branchId: branchId };
 
-      switch (notice.targetAudience) {
-        case "students":
-          query.roles = "student";
-          break;
-        case "teachers":
-          query.roles = "teacher";
-          break;
-        case "staff":
-          query.roles = { $in: ["secretary", "branchadmin", "admin"] };
-          break;
-        case "parents":
-          query.roles = "parent";
-          break;
-        case "all":
-        default:
-          // Don't filter by role - send to all users in branch
-          break;
+      // targetAudience is now an array, check if it contains specific roles
+      if (
+        notice.targetAudience.includes("students") &&
+        !notice.targetAudience.includes("all")
+      ) {
+        query.roles = "student";
+      } else if (
+        notice.targetAudience.includes("teachers") &&
+        !notice.targetAudience.includes("all")
+      ) {
+        query.roles = "teacher";
+      } else if (
+        notice.targetAudience.includes("staff") &&
+        !notice.targetAudience.includes("all")
+      ) {
+        query.roles = { $in: ["secretary", "branchadmin", "admin"] };
+      } else if (
+        notice.targetAudience.includes("parents") &&
+        !notice.targetAudience.includes("all")
+      ) {
+        query.roles = "parent";
+      } else if (notice.targetAudience.includes("all")) {
+        // Don't filter by role - send to all users in branch
+      } else {
+        // Multiple specific audiences selected, not including 'all'
+        const roleMapping = {
+          students: "student",
+          teachers: "teacher",
+          parents: "parent",
+        };
+
+        const targetRoles = notice.targetAudience
+          .filter((aud) => aud !== "all" && aud !== "staff")
+          .map((aud) => roleMapping[aud] || aud);
+
+        if (notice.targetAudience.includes("staff")) {
+          targetRoles.push("secretary", "branchadmin", "admin");
+        }
+
+        if (targetRoles.length > 0) {
+          query.roles = { $in: targetRoles };
+        }
       }
 
       const users = await User.find(query).select("_id");
@@ -77,9 +102,14 @@ const sendPushNotificationsForNotice = async (notice, branchId) => {
     }
 
     // Prepare push notification payload
-    // Determine URL based on target audience
+    // Determine URL based on target audience (use the first one if multiple)
     let noticeUrl = "/notices"; // default
-    switch (notice.targetAudience) {
+    const primaryAudience =
+      notice.targetAudience && notice.targetAudience.length > 0
+        ? notice.targetAudience[0]
+        : "all";
+
+    switch (primaryAudience) {
       case "students":
         noticeUrl = "/student/notices";
         break;
@@ -191,6 +221,7 @@ const getStudentNotices = async (req, res) => {
         {
           $or: [
             // General notices for this user's audience (must have NO specific recipients at all)
+            // targetAudience is now an array, so check if it contains any of the allowed audiences
             {
               targetAudience: { $in: allowedAudiences },
               specificRecipients: { $exists: false },
@@ -439,7 +470,10 @@ const getAllNotices = async (req, res) => {
 
     if (type) filter.type = type;
     if (priority) filter.priority = priority;
-    if (targetAudience) filter.targetAudience = targetAudience;
+    // Handle targetAudience filter - now an array field
+    if (targetAudience) {
+      filter.targetAudience = { $in: [targetAudience] };
+    }
 
     const notices = await Notice.find(filter)
       .populate("author.userId", "firstName lastName")
@@ -530,15 +564,30 @@ const createNotice = async (req, res) => {
 
     console.log("User role:", userRole, "Allowed audiences:", allowedAudiences);
 
-    // Validate target audience
-    if (targetAudience && !allowedAudiences.includes(targetAudience)) {
-      console.log("Invalid target audience:", targetAudience);
-      return res.status(400).json({
-        success: false,
-        message: `You don't have permission to target '${targetAudience}'. Allowed audiences: ${allowedAudiences.join(
-          ", ",
-        )}`,
-      });
+    // Validate target audience (can be a single value or array)
+    let targetAudienceArray = [];
+
+    if (targetAudience) {
+      // Convert single value to array for consistent handling
+      targetAudienceArray = Array.isArray(targetAudience)
+        ? targetAudience
+        : [targetAudience];
+
+      // Validate each audience
+      for (const audience of targetAudienceArray) {
+        if (!allowedAudiences.includes(audience)) {
+          console.log("Invalid target audience:", audience);
+          return res.status(400).json({
+            success: false,
+            message: `You don't have permission to target '${audience}'. Allowed audiences: ${allowedAudiences.join(
+              ", ",
+            )}`,
+          });
+        }
+      }
+    } else {
+      // Default to 'all' or 'students' for teachers
+      targetAudienceArray = userRole === "teacher" ? ["students"] : ["all"];
     }
 
     // Role-based type restrictions
@@ -604,8 +653,7 @@ const createNotice = async (req, res) => {
       content,
       type: type || "general",
       priority: priority || "medium",
-      targetAudience:
-        targetAudience || (userRole === "teacher" ? "students" : "all"),
+      targetAudience: targetAudienceArray,
       courseId: courseId || undefined,
       publishDate: publishDate || new Date(),
       expiryDate,

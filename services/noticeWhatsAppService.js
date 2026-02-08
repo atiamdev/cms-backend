@@ -156,29 +156,38 @@ ${messageContent}
         targetUsers = await User.find({
           _id: { $in: notice.specificRecipients },
         })
-          .select("_id firstName lastName phoneNumber profileDetails")
+          .select("_id firstName lastName phoneNumber profileDetails roles")
           .lean();
       } else {
-        // Audience-based targeting
+        // Audience-based targeting - targetAudience is now an array
         const query = { branchId: notice.branchId };
 
-        switch (notice.targetAudience) {
-          case "students":
-            query.roles = "student";
-            break;
-          case "teachers":
-            query.roles = "teacher";
-            break;
-          case "staff":
-            query.roles = { $in: ["secretary", "branchadmin", "admin"] };
-            break;
-          case "parents":
-            query.roles = "parent";
-            break;
-          case "all":
-          default:
-            // All users in the branch
-            break;
+        // Ensure targetAudience is an array
+        const audiences = Array.isArray(notice.targetAudience)
+          ? notice.targetAudience
+          : [notice.targetAudience];
+
+        // If "all" is in the array, don't filter by role
+        if (!audiences.includes("all")) {
+          const roleMapping = [];
+
+          if (audiences.includes("students")) {
+            roleMapping.push("student");
+          }
+          if (audiences.includes("teachers")) {
+            roleMapping.push("teacher");
+          }
+          if (audiences.includes("staff")) {
+            roleMapping.push("secretary", "branchadmin", "admin");
+          }
+          if (audiences.includes("parents")) {
+            roleMapping.push("parent");
+          }
+
+          // Only filter by roles if specific audiences are selected
+          if (roleMapping.length > 0) {
+            query.roles = { $in: roleMapping };
+          }
         }
 
         targetUsers = await User.find(query)
@@ -187,7 +196,7 @@ ${messageContent}
       }
 
       console.log(
-        `📊 Found ${targetUsers.length} users matching target audience: ${notice.targetAudience}`,
+        `📊 Found ${targetUsers.length} users matching target audience: ${Array.isArray(notice.targetAudience) ? notice.targetAudience.join(", ") : notice.targetAudience}`,
       );
 
       // Send to students and their guardians
@@ -214,12 +223,34 @@ ${messageContent}
           continue;
         }
 
-        // Prepare message for user
-        if (userPhone) {
+        // Ensure targetAudience is an array for checking
+        const audiences = Array.isArray(notice.targetAudience)
+          ? notice.targetAudience
+          : [notice.targetAudience];
+
+        // Determine if we should send to this user based on their role and target audience
+        const userRoles = user.roles || [];
+        const isStudent = userRoles.includes("student");
+        const isTeacher = userRoles.includes("teacher");
+        const isStaff = userRoles.some((role) =>
+          ["secretary", "branchadmin", "admin"].includes(role),
+        );
+        const isParent = userRoles.includes("parent");
+
+        // Check if this user's role matches the target audience
+        const shouldSendToUser =
+          audiences.includes("all") ||
+          (isStudent && audiences.includes("students")) ||
+          (isTeacher && audiences.includes("teachers")) ||
+          (isStaff && audiences.includes("staff")) ||
+          (isParent && audiences.includes("parents"));
+
+        // Send to user directly if their role matches target audience
+        if (shouldSendToUser && userPhone) {
           const message = this.buildNoticeMessage(
             noticeData,
             userName,
-            user.roles?.includes("student") ? "student" : "user",
+            isStudent ? "student" : "user",
           );
 
           messagesToQueue.push({
@@ -249,12 +280,10 @@ ${messageContent}
           });
         }
 
-        // If user is a student, also send to emergency contact/guardian
-        // Only send to guardians if target audience is "all" or "students"
+        // Send to emergency contact/guardian ONLY if "parents" is specifically targeted
+        // Do NOT send student notices to parents - only parent-specific notices
         const shouldSendToGuardians =
-          user.roles?.includes("student") &&
-          (notice.targetAudience === "all" ||
-            notice.targetAudience === "students");
+          isStudent && audiences.includes("parents");
 
         if (shouldSendToGuardians) {
           try {
@@ -265,45 +294,29 @@ ${messageContent}
             if (student) {
               const emergencyContact =
                 student.parentGuardianInfo?.emergencyContact;
-              const guardian = student.parentGuardianInfo?.guardian;
 
-              // Try emergency contact first, then guardian
-              const contactInfo =
-                emergencyContact?.phone && emergencyContact?.name
-                  ? {
-                      phone: emergencyContact.phone,
-                      name: emergencyContact.name,
-                      relationship:
-                        emergencyContact.relationship || "Emergency Contact",
-                    }
-                  : guardian?.phone && guardian?.name
-                    ? {
-                        phone: guardian.phone,
-                        name: guardian.name,
-                        relationship: guardian.relationship || "Guardian",
-                      }
-                    : null;
-
-              if (contactInfo) {
+              // Always prioritize emergency contact number for parents
+              if (emergencyContact?.phone && emergencyContact?.name) {
                 results.total++;
 
                 const guardianMessage = this.buildNoticeMessage(
                   noticeData,
-                  contactInfo.name,
+                  emergencyContact.name,
                   "guardian",
                 );
 
                 messagesToQueue.push({
-                  phoneNumber: contactInfo.phone,
+                  phoneNumber: emergencyContact.phone,
                   message: guardianMessage,
                   metadata: {
                     type: "notice",
                     noticeType: noticeData.type,
                     priority: noticeData.priority,
-                    recipientName: contactInfo.name,
+                    recipientName: emergencyContact.name,
                     recipientType: "guardian",
                     studentName: userName,
-                    relationship: contactInfo.relationship,
+                    relationship:
+                      emergencyContact.relationship || "Emergency Contact",
                   },
                   priority:
                     noticeData.priority === "high"
@@ -314,10 +327,11 @@ ${messageContent}
                 });
 
                 results.details.push({
-                  recipient: contactInfo.name,
-                  phone: contactInfo.phone,
+                  recipient: emergencyContact.name,
+                  phone: emergencyContact.phone,
                   type: "guardian",
-                  relationship: contactInfo.relationship,
+                  relationship:
+                    emergencyContact.relationship || "Emergency Contact",
                   studentName: userName,
                   status: "queued",
                 });
