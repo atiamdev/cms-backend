@@ -938,11 +938,29 @@ const getBranchStudentFeeSummaries = async (req, res) => {
 
         if (actualViewType === "monthly" && actualYear && actualMonth) {
           // Monthly view: Get invoices for specific month
+          // Support both periodYear/periodMonth AND periodStart for backward compatibility
+          const year = parseInt(actualYear);
+          const month = parseInt(actualMonth);
+          const monthStart = new Date(year, month - 1, 1);
+          const monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+
           const monthFees = await Fee.find({
             studentId,
             invoiceType: "monthly",
-            periodYear: parseInt(actualYear),
-            periodMonth: parseInt(actualMonth),
+            $or: [
+              // New format: using periodYear and periodMonth
+              {
+                periodYear: year,
+                periodMonth: month,
+              },
+              // Older format: using periodStart
+              {
+                periodStart: {
+                  $gte: monthStart,
+                  $lte: monthEnd,
+                },
+              },
+            ],
           });
 
           // Sum up expected amounts (after discounts/scholarships) and paid amounts

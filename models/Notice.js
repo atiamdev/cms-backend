@@ -36,9 +36,16 @@ const noticeSchema = new mongoose.Schema(
       default: "medium",
     },
     targetAudience: {
-      type: String,
+      type: [String],
       enum: ["all", "students", "teachers", "staff", "parents"],
-      default: "all",
+      default: ["all"],
+      validate: {
+        validator: function (arr) {
+          // Ensure at least one audience is selected
+          return arr && arr.length > 0;
+        },
+        message: "At least one target audience must be selected",
+      },
     },
     courseId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -132,6 +139,19 @@ noticeSchema.index({ expiryDate: 1 });
 // Compound indexes
 noticeSchema.index({ branchId: 1, isActive: 1, publishDate: -1 });
 noticeSchema.index({ branchId: 1, targetAudience: 1, isActive: 1 });
+
+// Pre-save hook to handle backward compatibility
+noticeSchema.pre("save", function (next) {
+  // Convert single string targetAudience to array (for backward compatibility)
+  if (this.targetAudience && typeof this.targetAudience === "string") {
+    this.targetAudience = [this.targetAudience];
+  }
+  // Ensure targetAudience is always an array
+  if (!Array.isArray(this.targetAudience)) {
+    this.targetAudience = ["all"];
+  }
+  next();
+});
 
 // Virtual for checking if notice is expired
 noticeSchema.virtual("isExpired").get(function () {

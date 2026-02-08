@@ -113,13 +113,9 @@ const getDepartments = async (req, res) => {
     const query = {};
 
     // Filter by branch for non-superadmin users
-    // Temporarily disabled for testing
-    // if (!req.user.roles.includes("superadmin")) {
-    //   query.branchId = req.user.branchId;
-    // } else if (branchId) {
-    //   query.branchId = branchId;
-    // }
-    if (branchId) {
+    if (!req.user.roles.includes("superadmin")) {
+      query.branchId = req.user.branchId;
+    } else if (branchId) {
       query.branchId = new mongoose.Types.ObjectId(branchId);
     }
 

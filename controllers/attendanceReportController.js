@@ -1,6 +1,7 @@
 const AttendanceReportService = require("../services/attendanceReportService");
 const WhatsAppIntegrationService = require("../services/whatsappIntegrationService");
 const Student = require("../models/Student");
+const Attendance = require("../models/Attendance");
 const { validationResult } = require("express-validator");
 const {
   isSuperAdmin,
