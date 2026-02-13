@@ -54,9 +54,46 @@ const offerScholarship = async (req, res) => {
     });
 
     if (existingScholarship) {
-      return res.status(400).json({
-        success: false,
-        message: "Student already has an active scholarship",
+      // Update existing scholarship instead of rejecting
+      existingScholarship.percentage = percentage;
+      existingScholarship.reason = reason;
+      existingScholarship.assignedBy = req.user._id;
+      existingScholarship.assignedDate = new Date();
+      await existingScholarship.save();
+
+      // Update student record
+      student.scholarshipPercentage = percentage;
+      student.scholarshipAssignedBy = req.user._id;
+      student.scholarshipAssignedDate = new Date();
+      student.scholarshipReason = reason;
+      await student.save();
+
+      // Update existing unpaid fees for this student
+      const unpaidFees = await Fee.find({
+        studentId: studentId,
+        status: { $in: ["unpaid", "partially_paid", "overdue"] },
+      });
+
+      for (const fee of unpaidFees) {
+        const computedAmount = Math.round(
+          (fee.totalAmountDue * percentage) / 100,
+        );
+        // If invoice has an existing discount amount from legacy registration and no payments were made, migrate it to scholarshipAmount
+        if (fee.discountAmount > 0 && fee.amountPaid === 0) {
+          // Preserve audit trail: move discountAmount into scholarshipAmount and clear discount
+          fee.scholarshipAmount = fee.discountAmount;
+          fee.discountAmount = 0;
+        } else {
+          // Otherwise set scholarship amount based on computed percentage
+          fee.scholarshipAmount = computedAmount;
+        }
+        await fee.save();
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Scholarship updated successfully",
+        data: existingScholarship,
       });
     }
 
@@ -86,7 +123,7 @@ const offerScholarship = async (req, res) => {
 
     for (const fee of unpaidFees) {
       const computedAmount = Math.round(
-        (fee.totalAmountDue * percentage) / 100
+        (fee.totalAmountDue * percentage) / 100,
       );
       // If invoice has an existing discount amount from legacy registration and no payments were made, migrate it to scholarshipAmount
       if (fee.discountAmount > 0 && fee.amountPaid === 0) {
@@ -145,7 +182,7 @@ const revokeScholarship = async (req, res) => {
     const scholarship = await Scholarship.findOneAndUpdate(
       { studentId: studentId, isActive: true },
       { isActive: false },
-      { new: true }
+      { new: true },
     );
 
     if (!scholarship) {

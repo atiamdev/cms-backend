@@ -44,6 +44,7 @@ const paymentSchema = new mongoose.Schema(
         "card",
         "mobile_money",
         "equity",
+        "online",
       ],
       required: [true, "Payment method is required"],
     },

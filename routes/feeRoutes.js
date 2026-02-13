@@ -557,7 +557,15 @@ router.post(
       .isFloat({ min: 1 })
       .withMessage("Amount must be greater than 0"),
     body("paymentMethod")
-      .isIn(["cash", "bank_transfer", "cheque", "card", "mobile_money"])
+      .isIn([
+        "cash",
+        "bank_transfer",
+        "cheque",
+        "card",
+        "mobile_money",
+        "mpesa",
+        "online",
+      ])
       .withMessage("Invalid payment method"),
     body("paymentDate")
       .optional()
