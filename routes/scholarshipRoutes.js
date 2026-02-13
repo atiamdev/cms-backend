@@ -26,16 +26,16 @@ const scholarshipValidation = [
 router.post(
   "/offer",
   protect,
-  authorize("admin", "superadmin"),
+  authorize("admin", "superadmin", "secretary"),
   scholarshipValidation,
-  offerScholarship
+  offerScholarship,
 );
 
 router.put(
   "/revoke/:studentId",
   protect,
-  authorize("admin", "superadmin"),
-  revokeScholarship
+  authorize("admin", "superadmin", "secretary"),
+  revokeScholarship,
 );
 
 router.get("/", protect, authorize("admin", "superadmin"), getScholarships);
@@ -44,7 +44,7 @@ router.get(
   "/student/:studentId",
   protect,
   authorize("admin", "superadmin"),
-  getStudentScholarship
+  getStudentScholarship,
 );
 
 module.exports = router;

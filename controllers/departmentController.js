@@ -160,7 +160,6 @@ const getDepartments = async (req, res) => {
       // Use aggregation for statistics
       const pipeline = [
         { $match: query },
-        { $match: query },
         {
           $lookup: {
             from: "students",
