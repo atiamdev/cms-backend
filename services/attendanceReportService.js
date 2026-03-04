@@ -35,6 +35,12 @@ class AttendanceReportService {
         throw new Error("Student not found");
       }
 
+      if (!student.userId) {
+        throw new Error(
+          `Student ${student.studentId} has no associated user account`,
+        );
+      }
+
       // Get attendance records for the period
       const attendanceRecords = await Attendance.find({
         studentId: studentId,
@@ -96,6 +102,7 @@ class AttendanceReportService {
 
       return {
         student: {
+          _id: student._id, // MongoDB ObjectId for querying
           id: student.studentId,
           name: `${student.userId.firstName} ${student.userId.lastName}`,
           class: student.currentClassId?.name || "N/A",
@@ -154,6 +161,7 @@ class AttendanceReportService {
       return {
         studentName: report.student.name,
         studentId: report.student.id,
+        studentObjectId: report.student._id, // MongoDB ObjectId for queries
         weekStart: startDate,
         weekEnd: endDate,
         totalDays: report.period.totalDays,
@@ -184,7 +192,7 @@ class AttendanceReportService {
       // Get all students in the class
       const students = await Student.find({
         currentClassId: classId,
-        status: "active",
+        academicStatus: "active",
       }).populate("userId", "firstName lastName");
 
       const studentReports = [];
@@ -276,7 +284,7 @@ class AttendanceReportService {
       const endDate = weekEnd || now;
 
       // Build student query
-      const studentQuery = { status: "active" };
+      const studentQuery = { academicStatus: "active" };
       if (classId) {
         studentQuery.currentClassId = classId;
       }
@@ -295,13 +303,15 @@ class AttendanceReportService {
 
       for (const student of students) {
         try {
-          if (!student.userId?.phone) {
+          // Skip students without user accounts
+          if (!student.userId) {
             console.log(
-              `⚠️ Skipping student ${student.studentId}: No phone number`,
+              `⚠️ Skipping student ${student.studentId}: No associated user account`,
             );
             continue;
           }
 
+          // Generate report for all students - emergency contact check happens later
           const report = await this.generateWeeklyReportForWhatsApp(
             student._id,
             startDate,
@@ -311,7 +321,7 @@ class AttendanceReportService {
         } catch (error) {
           console.error(
             `❌ Error generating report for student ${student.studentId}:`,
-            error,
+            error.message,
           );
         }
       }

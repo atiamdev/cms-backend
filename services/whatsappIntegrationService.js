@@ -127,118 +127,8 @@ class WhatsAppIntegrationService {
       return { success: false, error: error.message };
     }
   }
-
   /**
-   * Send weekly attendance report to all students
-   * @param {string} classId - Optional: Send to specific class only
-   * @param {Date} weekStart - Start of the week
-   * @param {Date} weekEnd - End of the week
-   */
-  async sendWeeklyAttendanceReports(
-    classId = null,
-    weekStart = null,
-    weekEnd = null,
-  ) {
-    try {
-      // Default to last week if dates not provided
-      const now = new Date();
-      const startDate =
-        weekStart || new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const endDate = weekEnd || now;
-
-      console.log(
-        `📊 Generating weekly attendance reports for period: ${startDate.toDateString()} - ${endDate.toDateString()}`,
-      );
-
-      // Build student query
-      const studentQuery = { status: "active" };
-      if (classId) {
-        studentQuery.currentClassId = classId;
-      }
-
-      // Get all active students
-      const students = await Student.find(studentQuery)
-        .populate("userId", "firstName lastName phone email")
-        .populate("currentClassId", "name")
-        .populate("branchId", "name");
-
-      console.log(
-        `👥 Found ${students.length} active students for attendance reports`,
-      );
-
-      const notifications = [];
-
-      for (const student of students) {
-        if (!student.userId?.phone) {
-          console.log(
-            `⚠️ Skipping student ${student.studentId}: No phone number`,
-          );
-          continue;
-        }
-
-        try {
-          // Calculate attendance for this student
-          const attendanceRecords = await Attendance.find({
-            studentId: student._id,
-            date: { $gte: startDate, $lte: endDate },
-            status: { $exists: true },
-          });
-
-          const totalDays = attendanceRecords.length;
-          const presentDays = attendanceRecords.filter(
-            (record) => record.status === "present",
-          ).length;
-          const absentDays = totalDays - presentDays;
-          const attendancePercentage =
-            totalDays > 0 ? (presentDays / totalDays) * 100 : 0;
-
-          const attendanceData = {
-            studentName: `${student.userId.firstName} ${student.userId.lastName}`,
-            studentId: student.studentId,
-            weekStart: startDate,
-            weekEnd: endDate,
-            totalDays,
-            presentDays,
-            absentDays,
-            attendancePercentage,
-            className: student.currentClassId?.name || "N/A",
-            branchName: student.branchId?.name || "ATIAM COLLEGE",
-          };
-
-          notifications.push({
-            type: "attendance",
-            phone: student.userId.phone,
-            data: attendanceData,
-            options: { studentId: student.studentId },
-          });
-        } catch (error) {
-          console.error(
-            `❌ Error calculating attendance for student ${student.studentId}:`,
-            error,
-          );
-        }
-      }
-
-      console.log(
-        `📤 Sending ${notifications.length} attendance report notifications`,
-      );
-
-      const result = await this.notificationService.sendBulkNotifications(
-        notifications,
-        {
-          delay: 2000, // 2 second delay between messages for attendance reports
-        },
-      );
-
-      return result;
-    } catch (error) {
-      console.error("❌ Failed to send weekly attendance reports:", error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Send weekly attendance reports to all active students (and emergency contacts)
+   * Send weekly attendance reports to emergency contacts only (NOT to students)
    * @param {string} classId - Optional: Send to specific class only
    * @param {Date} weekStart - Start of the week
    * @param {Date} weekEnd - End of the week
@@ -264,12 +154,16 @@ class WhatsAppIntegrationService {
       );
 
       console.log(`📤 Sending ${reports.length} attendance reports...`);
+      console.log(
+        `🔍 DEBUG: First report studentObjectId:`,
+        reports[0]?.studentObjectId,
+      );
 
       const notifications = [];
 
       for (const report of reports) {
         // Get full student details including emergency contacts
-        const student = await Student.findById(report.studentId)
+        const student = await Student.findById(report.studentObjectId)
           .populate("userId", "firstName lastName phone profileDetails")
           .populate("currentClassId", "name")
           .populate("branchId", "name");

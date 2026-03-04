@@ -1,28 +1,29 @@
 /**
- * WhatsApp Service
+ * WhatsApp Service - Meta Cloud API Implementation
  *
- * Core service for sending WhatsApp messages using WasenderAPI.
+ * Core service for sending WhatsApp messages using Meta's official
+ * WhatsApp Business Cloud API (direct integration, no third-party wrapper).
  * Handles message sending, phone number formatting, rate limiting,
- * and error handling with graceful degradation.
+ * and error handling with retry logic.
  */
 
 require("dotenv").config();
-const { createWasender } = require("wasenderapi");
-
-// Import fetch for Node.js environment (use global fetch if available, fallback to node-fetch)
-let fetchImpl;
-try {
-  fetchImpl = global.fetch || require("node-fetch");
-} catch (error) {
-  fetchImpl = require("node-fetch");
-}
+const axios = require("axios");
+const WhatsAppMessageStatus = require("../models/WhatsAppMessageStatus");
 
 class WhatsAppService {
   constructor() {
     this.isEnabled = process.env.WHATSAPP_ENABLED === "true";
-    this.wasender = null;
+
+    // Meta API credentials
+    this.phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID;
+    this.accessToken = process.env.META_WHATSAPP_ACCESS_TOKEN;
+    this.apiVersion = process.env.META_WHATSAPP_API_VERSION || "v21.0";
+    this.baseUrl = `https://graph.facebook.com/${this.apiVersion}`;
+
+    // Rate limiting (same as before)
     this.rateLimitDelay =
-      parseInt(process.env.WHATSAPP_RATE_LIMIT_DELAY) || 1000;
+      parseInt(process.env.WHATSAPP_RATE_LIMIT_DELAY) || 100;
     this.maxRetries = parseInt(process.env.WHATSAPP_MAX_RETRIES) || 3;
 
     if (this.isEnabled) {
@@ -31,22 +32,19 @@ class WhatsAppService {
   }
 
   /**
-   * Initialize the WasenderAPI SDK
+   * Initialize the WhatsApp service
    */
   initialize() {
     try {
-      this.wasender = createWasender(
-        process.env.WASENDER_API_KEY,
-        process.env.WASENDER_PERSONAL_ACCESS_TOKEN,
-        process.env.WASENDER_BASE_URL || "https://www.wasenderapi.com/api",
-        fetchImpl, // Pass fetch implementation
-        {
-          enabled: true,
-          maxRetries: this.maxRetries,
-        },
-        process.env.WASENDER_WEBHOOK_SECRET,
+      // Validate Meta API credentials
+      if (!this.phoneNumberId || !this.accessToken) {
+        throw new Error(
+          "Meta WhatsApp API credentials missing. Please set META_WHATSAPP_PHONE_NUMBER_ID and META_WHATSAPP_ACCESS_TOKEN",
+        );
+      }
+      console.log(
+        "✅ WhatsApp service initialized successfully (Meta Cloud API)",
       );
-      console.log("✅ WhatsApp service initialized successfully");
     } catch (error) {
       console.error("❌ Failed to initialize WhatsApp service:", error.message);
       this.isEnabled = false;
@@ -61,7 +59,7 @@ class WhatsAppService {
    * @returns {Promise<object>} Result object with success status
    */
   async sendMessage(phoneNumber, message, options = {}) {
-    if (!this.isEnabled || !this.wasender) {
+    if (!this.isEnabled) {
       console.log("WhatsApp service disabled or not initialized");
       return { success: false, reason: "service_disabled" };
     }
@@ -72,26 +70,108 @@ class WhatsAppService {
       return { success: false, reason: "invalid_phone" };
     }
 
-    try {
-      const payload = {
-        messageType: "text",
-        to: formattedNumber,
-        text: message,
-      };
+    // Retry logic
+    let lastError = null;
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        const result = await this.sendWithMetaAPI(
+          formattedNumber,
+          message,
+          options,
+        );
 
-      const result = await this.wasender.send(payload);
+        // Rate limiting delay
+        await this.delay(this.rateLimitDelay);
 
-      // Rate limiting delay
-      await this.delay(this.rateLimitDelay);
+        return result;
+      } catch (error) {
+        lastError = error;
+        console.error(
+          `WhatsApp send error (attempt ${attempt}/${this.maxRetries}):`,
+          error.message,
+        );
 
-      return {
+        // Wait before retry (exponential backoff)
+        if (attempt < this.maxRetries) {
+          const backoffMs = Math.pow(2, attempt) * 1000;
+          await this.delay(backoffMs);
+        }
+      }
+    }
+
+    return {
+      success: false,
+      error: lastError?.message || "Failed after retries",
+      attempts: this.maxRetries,
+    };
+  }
+
+  /**
+   * Send message using Meta Cloud API
+   * @private
+   */
+  async sendWithMetaAPI(phoneNumber, message, options = {}) {
+    const url = `${this.baseUrl}/${this.phoneNumberId}/messages`;
+
+    // Build message payload
+    const payload = {
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: phoneNumber,
+      type: "text",
+      text: {
+        preview_url: false,
+        body: message,
+      },
+    };
+
+    // Send request
+    const response = await axios.post(url, payload, {
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 30000, // 30 second timeout
+    });
+
+    // Parse response
+    if (
+      response.data &&
+      response.data.messages &&
+      response.data.messages.length > 0
+    ) {
+      const result = {
         success: true,
-        messageId: result.response?.message?.id,
-        rateLimit: result.rateLimit,
+        messageId: response.data.messages[0].id,
+        waId: response.data.contacts?.[0]?.wa_id || phoneNumber,
+        provider: "meta",
       };
-    } catch (error) {
-      console.error("WhatsApp send error:", error.message);
-      return { success: false, error: error.message };
+
+      // Save message status to database for tracking
+      try {
+        await WhatsAppMessageStatus.create({
+          messageId: result.messageId,
+          recipient: phoneNumber,
+          status: "sent",
+          messageType: options.messageType || "general",
+          relatedEntity: options.relatedEntity || {},
+          timestamps: {
+            queued: options.queuedAt || new Date(),
+            sent: new Date(),
+          },
+          metadata: options.metadata || {},
+        });
+      } catch (dbError) {
+        // Log but don't fail the message send if DB save fails
+        console.error(
+          "⚠️ Failed to save message status to DB:",
+          dbError.message,
+        );
+      }
+
+      return result;
+    } else {
+      throw new Error("Invalid response from Meta API");
     }
   }
 
@@ -104,8 +184,20 @@ class WhatsAppService {
   formatPhoneNumber(phone) {
     if (!phone) return null;
 
+    // Ensure phone is a string (handle objects, numbers, etc.)
+    let phoneStr = phone;
+    if (typeof phone !== "string") {
+      // If it's an object with phoneNumber property
+      if (phone.phoneNumber) {
+        phoneStr = String(phone.phoneNumber);
+      } else {
+        // Convert to string
+        phoneStr = String(phone);
+      }
+    }
+
     // Remove all non-numeric characters except +
-    let cleaned = phone.replace(/[^\d+]/g, "");
+    let cleaned = phoneStr.replace(/[^\d+]/g, "");
 
     // Handle different formats
     if (cleaned.startsWith("+")) {
@@ -185,10 +277,29 @@ class WhatsAppService {
   getStatus() {
     return {
       enabled: this.isEnabled,
-      initialized: this.wasender !== null,
+      provider: "meta",
+      initialized: !!this.phoneNumberId && !!this.accessToken,
       rateLimitDelay: this.rateLimitDelay,
       maxRetries: this.maxRetries,
+      apiVersion: this.apiVersion,
     };
+  }
+
+  /**
+   * Verify webhook request from Meta
+   * @param {string} mode - Hub mode
+   * @param {string} token - Verify token
+   * @param {string} challenge - Challenge string
+   * @returns {string|null} Challenge if valid, null otherwise
+   */
+  static verifyWebhook(mode, token, challenge) {
+    const VERIFY_TOKEN = process.env.META_WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+
+    if (mode === "subscribe" && token === VERIFY_TOKEN) {
+      return challenge;
+    }
+
+    return null;
   }
 }
 

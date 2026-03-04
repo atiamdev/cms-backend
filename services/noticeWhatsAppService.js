@@ -64,8 +64,8 @@ ${messageContent}
    * @deprecated Use queueService.addToQueue() directly instead
    */
   async sendNoticeToRecipient(
-    noticeData,
-    phoneNumber,
+    noticeDataOrRecipient,
+    phoneNumberOrNotice,
     recipientName,
     recipientType = "student",
   ) {
@@ -74,10 +74,33 @@ ${messageContent}
     );
 
     try {
+      // Handle both old and new parameter formats
+      let noticeData, phoneNumber, finalRecipientName, finalRecipientType;
+
+      // Check if first param is a recipient object (new format from test)
+      if (
+        noticeDataOrRecipient &&
+        typeof noticeDataOrRecipient === "object" &&
+        noticeDataOrRecipient.phoneNumber
+      ) {
+        // New format: (recipient, notice)
+        const recipient = noticeDataOrRecipient;
+        noticeData = phoneNumberOrNotice;
+        phoneNumber = recipient.phoneNumber;
+        finalRecipientName = recipient.name || recipientName || "Recipient";
+        finalRecipientType = recipient.type || recipientType;
+      } else {
+        // Old format: (noticeData, phoneNumber, recipientName, recipientType)
+        noticeData = noticeDataOrRecipient;
+        phoneNumber = phoneNumberOrNotice;
+        finalRecipientName = recipientName || "Recipient";
+        finalRecipientType = recipientType;
+      }
+
       const message = this.buildNoticeMessage(
         noticeData,
-        recipientName,
-        recipientType,
+        finalRecipientName,
+        finalRecipientType,
       );
 
       const queueId = await this.queueService.addToQueue({
@@ -87,8 +110,8 @@ ${messageContent}
           type: "notice",
           noticeType: noticeData.type,
           priority: noticeData.priority,
-          recipientName,
-          recipientType,
+          recipientName: finalRecipientName,
+          recipientType: finalRecipientType,
         },
         priority:
           noticeData.priority === "high"
@@ -100,10 +123,7 @@ ${messageContent}
 
       return { success: true, queueId };
     } catch (error) {
-      console.error(
-        `❌ Error sending notice notification to ${recipientName}:`,
-        error,
-      );
+      console.error(`❌ Error sending notice notification:`, error);
       return { success: false, error: error.message };
     }
   }

@@ -70,8 +70,16 @@ For any queries, contact: admin@atiamcollege.com
         studentPhone,
         message,
         {
-          type: "invoice",
-          studentId,
+          messageType: "invoice",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            studentId,
+            academicYear,
+            academicTerm,
+          },
           ...options,
         },
       );
@@ -149,9 +157,17 @@ Please ensure payment is made on time. For any queries, contact: admin@atiamcoll
         contactPhone,
         message,
         {
-          type: "invoice",
-          studentId,
-          recipientType: "emergency_contact",
+          messageType: "invoice",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            studentId,
+            recipientType: "emergency_contact",
+            contactName,
+            relationship,
+          },
           ...options,
         },
       );
@@ -245,9 +261,18 @@ ${recipientType === "student" ? "Keep up the good work! 🎓" : "Thank you for y
         recipientPhone,
         message,
         {
-          type: "attendance_report",
-          studentId,
-          recipientType,
+          messageType: "attendance",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            studentId,
+            recipientType,
+            attendancePercentage,
+            weekStart: weekStart?.toISOString(),
+            weekEnd: weekEnd?.toISOString(),
+          },
           ...options,
         },
       );
@@ -318,9 +343,17 @@ Generated: ${new Date().toLocaleString()}`;
         studentPhone,
         message,
         {
-          type: "receipt",
-          studentId,
-          receiptNumber,
+          messageType: "payment_confirmation",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            studentId,
+            receiptNumber,
+            amountPaid,
+            paymentDate,
+          },
           ...options,
         },
       );
@@ -399,16 +432,29 @@ Generated: ${new Date().toLocaleString()}`;
         studentPhone,
         message,
         {
-          type: "attendance",
-          studentId,
-          weekStart,
-          weekEnd,
+          messageType: "attendance",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            studentId,
+            weekStart: weekStart?.toISOString(),
+            weekEnd: weekEnd?.toISOString(),
+            attendancePercentage,
+          },
           ...options,
         },
       );
 
+      // Log with recipient type for clarity
+      const recipientType = options.recipientType || "student";
+      const recipientDesc = options.relationship
+        ? `${options.relationship} (${options.isAlternate ? "Alternate" : "Primary"})`
+        : recipientType;
+
       console.log(
-        `📤 Weekly attendance report sent to ${studentName} (${studentId})`,
+        `📤 Weekly attendance report for ${studentName} (${studentId}) sent to ${recipientDesc}: ${studentPhone}`,
       );
       return result;
     } catch (error) {
@@ -462,9 +508,17 @@ Please contact the school immediately if you need to discuss this matter.
         contactPhone,
         fullMessage,
         {
-          type: "emergency",
-          studentId,
-          urgency,
+          messageType: "general",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            studentId,
+            urgency,
+            emergencyType,
+            contactPerson,
+          },
           ...options,
         },
       );
@@ -605,9 +659,17 @@ Mahadsanid, Maamulka.`;
         recipientPhone,
         message,
         {
-          type: "fee_reminder_5day",
-          recipientType,
-          regNumber,
+          messageType: "invoice",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            regNumber,
+            recipientType,
+            reminderType: "5_day",
+            dueDate: dueDate,
+          },
           ...options,
         },
       );
@@ -660,9 +722,17 @@ Account: ${regNumber}`;
         recipientPhone,
         message,
         {
-          type: "fee_reminder_1day",
-          recipientType,
-          regNumber,
+          messageType: "invoice",
+          relatedEntity: {
+            entityType: "Student",
+            entityId: options.studentObjectId,
+          },
+          metadata: {
+            regNumber,
+            recipientType,
+            reminderType: "1_day_final",
+            dueDate: dueDate,
+          },
           ...options,
         },
       );
