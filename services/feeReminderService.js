@@ -1,3 +1,22 @@
+/**
+ * Invoice Payment Reminder Service
+ *
+ * This service manages payment reminders for student invoices.
+ * It checks for invoices with incomplete payment status (paymentStatus != "completed")
+ * and sends reminders via:
+ * - WhatsApp (bilingual: English/Somali) to student and emergency contact
+ * - Push notifications to student's account
+ * - In-app notices
+ *
+ * Reminder Schedule:
+ * - 5 days before due date: Early warning (low urgency)
+ * - 1 day before due date: Final notice (high urgency)
+ *
+ * Scheduling is managed centrally in scheduledJobs.js:
+ * - Morning run: 8:00 AM daily (Africa/Nairobi timezone)
+ * - Afternoon run: 2:00 PM daily (Africa/Nairobi timezone)
+ */
+
 const cron = require("node-cron");
 const Fee = require("../models/Fee");
 const Student = require("../models/Student");
@@ -10,20 +29,22 @@ const WhatsAppNotificationService = require("./whatsappNotificationService");
 const whatsappNotificationService = new WhatsAppNotificationService();
 
 /**
- * Check for fee payments that are due/overdue and send reminders
+ * Check for invoices that need payment reminders
+ *
+ * This function checks for invoices with incomplete payment status and sends reminders
+ * when the due date is exactly 5 days away (early warning) or 1 day away (final notice).
  */
 async function checkFeeReminders() {
   try {
-    console.log("[Fee Reminder] Checking for fee payment reminders...");
+    console.log("[Fee Reminder] Checking for invoice payment reminders...");
 
     const now = moment().tz("Africa/Nairobi");
     const fiveDaysFromNow = moment(now).add(5, "days");
     const oneDayFromNow = moment(now).add(1, "days");
 
-    // Find fees that need reminders
+    // Find invoices that need reminders (payment not completed)
     const fees = await Fee.find({
-      status: { $in: ["unpaid", "partially_paid", "overdue"] },
-      isInstallmentPlan: false,
+      paymentStatus: { $ne: "completed" },
       $or: [
         // Due in 5 days (early warning)
         {
@@ -45,7 +66,9 @@ async function checkFeeReminders() {
       populate: { path: "userId" },
     });
 
-    console.log(`[Fee Reminder] Found ${fees.length} fees requiring reminders`);
+    console.log(
+      `[Fee Reminder] Found ${fees.length} invoices requiring reminders`,
+    );
 
     for (const fee of fees) {
       if (!fee.studentId || !fee.studentId.userId) {
@@ -62,7 +85,9 @@ async function checkFeeReminders() {
 
       const studentData = await Student.findById(fee.studentId._id);
       if (!studentData) {
-        console.log(`[Fee Reminder] Student data not found for fee ${fee._id}`);
+        console.log(
+          `[Fee Reminder] Student data not found for invoice ${fee._id}`,
+        );
         continue;
       }
 
@@ -70,13 +95,15 @@ async function checkFeeReminders() {
         studentName: `${studentData.firstName} ${studentData.lastName}`,
         regNumber: studentData.regNumber || studentData.studentId,
         dueDate: fee.dueDate,
+        amount: fee.balance,
+        invoiceNumber: fee.invoiceNumber || fee._id.toString().slice(-8),
       };
 
       let title, body, urgency;
 
       if (daysUntilDue === 5) {
-        title = "📢 Fee Payment Reminder";
-        body = `Your payment is due in 5 days. Please pay before ${dueDate.format("DD-MM-YYYY")}`;
+        title = "📢 Invoice Payment Reminder";
+        body = `Your invoice of KES ${fee.balance.toLocaleString()} is due in 5 days. Please pay before ${dueDate.format("DD-MM-YYYY")}`;
         urgency = "low";
 
         // Send WhatsApp to student
@@ -88,7 +115,7 @@ async function checkFeeReminders() {
             );
           } catch (error) {
             console.error(
-              `[Fee Reminder] WhatsApp error (student) for fee ${fee._id}:`,
+              `[Fee Reminder] WhatsApp error (student) for invoice ${fee._id}:`,
               error,
             );
           }
@@ -106,14 +133,14 @@ async function checkFeeReminders() {
             );
           } catch (error) {
             console.error(
-              `[Fee Reminder] WhatsApp error (emergency) for fee ${fee._id}:`,
+              `[Fee Reminder] WhatsApp error (emergency) for invoice ${fee._id}:`,
               error,
             );
           }
         }
       } else if (daysUntilDue === 1) {
-        title = "⚠️ FINAL NOTICE: Fee Due Tomorrow";
-        body = `FINAL NOTICE: Your payment is due tomorrow, ${dueDate.format("DD-MM-YYYY")}. Unpaid accounts will be locked out.`;
+        title = "⚠️ FINAL NOTICE: Invoice Due Tomorrow";
+        body = `FINAL NOTICE: Your invoice of KES ${fee.balance.toLocaleString()} is due tomorrow, ${dueDate.format("DD-MM-YYYY")}. Unpaid accounts will be locked out.`;
         urgency = "high";
 
         // Send WhatsApp to student
@@ -125,7 +152,7 @@ async function checkFeeReminders() {
             );
           } catch (error) {
             console.error(
-              `[Fee Reminder] WhatsApp error (student) for fee ${fee._id}:`,
+              `[Fee Reminder] WhatsApp error (student) for invoice ${fee._id}:`,
               error,
             );
           }
@@ -143,7 +170,7 @@ async function checkFeeReminders() {
             );
           } catch (error) {
             console.error(
-              `[Fee Reminder] WhatsApp error (emergency) for fee ${fee._id}:`,
+              `[Fee Reminder] WhatsApp error (emergency) for invoice ${fee._id}:`,
               error,
             );
           }
@@ -155,8 +182,8 @@ async function checkFeeReminders() {
           title: title,
           body: body,
           icon: "/logo.png",
-          tag: `fee-reminder-${fee._id}`,
-          type: "fee-reminder",
+          tag: `invoice-reminder-${fee._id}`,
+          type: "invoice-reminder",
           feeId: fee._id.toString(),
           amount: fee.balance,
           dueDate: dueDate.format("YYYY-MM-DD"),
@@ -181,18 +208,15 @@ async function checkFeeReminders() {
         );
 
         console.log(
-          `[Fee Reminder] Sent ${urgency} reminder to student ${fee.studentId.userId._id} for fee ${fee._id}`,
+          `[Fee Reminder] Sent ${urgency} reminder to student ${fee.studentId.userId._id} for invoice ${fee._id}`,
         );
       } catch (error) {
         console.error(
-          `[Fee Reminder] Error sending reminder for fee ${fee._id}:`,
+          `[Fee Reminder] Error sending reminder for invoice ${fee._id}:`,
           error,
         );
       }
     }
-
-    // Check installment-based fees
-    await checkInstallmentReminders(now, fiveDaysFromNow);
 
     console.log("[Fee Reminder] Check complete");
   } catch (error) {
@@ -201,219 +225,23 @@ async function checkFeeReminders() {
 }
 
 /**
- * Check installment-based fees for reminders
- */
-async function checkInstallmentReminders(now, fiveDaysFromNow) {
-  try {
-    console.log("[Fee Reminder] Checking installment-based fees...");
-
-    const oneDayFromNow = moment(now).add(1, "days");
-
-    const installmentFees = await Fee.find({
-      isInstallmentPlan: true,
-      "installmentSchedule.status": { $in: ["pending", "overdue"] },
-    }).populate({
-      path: "studentId",
-      populate: { path: "userId" },
-    });
-
-    console.log(
-      `[Fee Reminder] Found ${installmentFees.length} installment-based fees`,
-    );
-
-    for (const fee of installmentFees) {
-      if (!fee.studentId || !fee.studentId.userId) {
-        continue;
-      }
-
-      const studentData = await Student.findById(fee.studentId._id);
-      if (!studentData) {
-        console.log(`[Fee Reminder] Student data not found for fee ${fee._id}`);
-        continue;
-      }
-
-      // Check each installment
-      for (const installment of fee.installmentSchedule) {
-        if (installment.status === "paid") {
-          continue;
-        }
-
-        const dueDate = moment(installment.dueDate);
-        const daysUntilDue = dueDate.diff(now, "days");
-        const isDueIn5Days = daysUntilDue === 5;
-        const isDueIn1Day = daysUntilDue === 1;
-
-        // Only send reminders for 5-day and 1-day milestones
-        if (!isDueIn5Days && !isDueIn1Day) {
-          continue;
-        }
-
-        const remainingAmount = installment.amount - installment.paidAmount;
-        const reminderData = {
-          studentName: `${studentData.firstName} ${studentData.lastName}`,
-          regNumber: studentData.regNumber || studentData.studentId,
-          dueDate: installment.dueDate,
-        };
-
-        let title, body, urgency;
-
-        if (isDueIn5Days) {
-          title = "📢 Installment Payment Reminder";
-          body = `Installment #${
-            installment.installmentNumber
-          } of KES ${remainingAmount.toLocaleString()} is due in 5 days`;
-          urgency = "low";
-
-          // Send WhatsApp to student
-          if (studentData.phone) {
-            try {
-              await whatsappNotificationService.sendFiveDayFeeReminder(
-                { ...reminderData, recipientType: "student" },
-                studentData.phone,
-              );
-            } catch (error) {
-              console.error(
-                `[Fee Reminder] WhatsApp error (student) for installment ${installment.installmentNumber}:`,
-                error,
-              );
-            }
-          }
-
-          // Send WhatsApp to emergency contact
-          if (
-            studentData.emergencyContact &&
-            studentData.emergencyContact.phone
-          ) {
-            try {
-              await whatsappNotificationService.sendFiveDayFeeReminder(
-                { ...reminderData, recipientType: "emergency_contact" },
-                studentData.emergencyContact.phone,
-              );
-            } catch (error) {
-              console.error(
-                `[Fee Reminder] WhatsApp error (emergency) for installment ${installment.installmentNumber}:`,
-                error,
-              );
-            }
-          }
-        } else if (isDueIn1Day) {
-          title = "⚠️ FINAL NOTICE: Installment Due Tomorrow";
-          body = `FINAL NOTICE: Installment #${
-            installment.installmentNumber
-          } of KES ${remainingAmount.toLocaleString()} is due tomorrow`;
-          urgency = "high";
-
-          // Send WhatsApp to student
-          if (studentData.phone) {
-            try {
-              await whatsappNotificationService.sendOneDayFeeReminder(
-                { ...reminderData, recipientType: "student" },
-                studentData.phone,
-              );
-            } catch (error) {
-              console.error(
-                `[Fee Reminder] WhatsApp error (student) for installment ${installment.installmentNumber}:`,
-                error,
-              );
-            }
-          }
-
-          // Send WhatsApp to emergency contact
-          if (
-            studentData.emergencyContact &&
-            studentData.emergencyContact.phone
-          ) {
-            try {
-              await whatsappNotificationService.sendOneDayFeeReminder(
-                { ...reminderData, recipientType: "emergency_contact" },
-                studentData.emergencyContact.phone,
-              );
-            } catch (error) {
-              console.error(
-                `[Fee Reminder] WhatsApp error (emergency) for installment ${installment.installmentNumber}:`,
-                error,
-              );
-            }
-          }
-        }
-
-        try {
-          const payload = {
-            title: title,
-            body: body,
-            icon: "/logo.png",
-            tag: `installment-reminder-${fee._id}-${installment.installmentNumber}`,
-            type: "installment-reminder",
-            feeId: fee._id.toString(),
-            installmentNumber: installment.installmentNumber,
-            amount: remainingAmount,
-            dueDate: dueDate.format("YYYY-MM-DD"),
-            urgency: urgency,
-            url: "/student/fees",
-          };
-
-          // Store as notice
-          await storeNotificationAsNotice({
-            userIds: [fee.studentId.userId._id],
-            title: payload.title,
-            content: payload.body,
-            type: "fee_reminder",
-            priority: urgency === "high" ? "high" : "medium",
-            branchId: fee.studentId.branchId,
-            targetAudience: "students",
-          });
-
-          await pushController.sendNotification(
-            [fee.studentId.userId._id],
-            payload,
-          );
-
-          console.log(
-            `[Fee Reminder] Sent ${urgency} installment reminder to student ${fee.studentId.userId._id} for installment #${installment.installmentNumber}`,
-          );
-        } catch (error) {
-          console.error(
-            `[Fee Reminder] Error sending installment reminder for fee ${fee._id}:`,
-            error,
-          );
-        }
-      }
-    }
-  } catch (error) {
-    console.error("[Fee Reminder] Error in checkInstallmentReminders:", error);
-  }
-}
-
-/**
  * Initialize the fee reminder scheduler
- * Runs daily at 8:00 AM to check for fee reminders
+ *
+ * NOTE: This function is now deprecated. Fee reminder scheduling is managed
+ * centrally in scheduledJobs.js for better monitoring and health tracking.
+ * This function is kept for backward compatibility but should not be called.
+ *
+ * Runs daily at 8:00 AM and 2:00 PM to check for invoice reminders
  */
 function initializeFeeReminderScheduler() {
-  console.log("[Fee Reminder] Initializing fee reminder scheduler...");
-
-  // Run daily at 8:00 AM
-  cron.schedule("0 8 * * *", () => {
-    console.log("[Fee Reminder] Running daily fee reminder check at 8:00 AM");
-    checkFeeReminders();
-  });
-
-  // Also run at 2:00 PM for overdue reminders
-  cron.schedule("0 14 * * *", () => {
-    console.log(
-      "[Fee Reminder] Running afternoon fee reminder check at 2:00 PM",
-    );
-    checkFeeReminders();
-  });
-
   console.log(
-    "[Fee Reminder] Scheduler initialized - checking at 8:00 AM and 2:00 PM daily",
+    "[Fee Reminder] WARNING: initializeFeeReminderScheduler is deprecated.",
   );
+  console.log("[Fee Reminder] Scheduling is now managed in scheduledJobs.js");
+  console.log("[Fee Reminder] This function call has no effect.");
 
-  // Run once on startup (after 1 minute)
-  setTimeout(() => {
-    console.log("[Fee Reminder] Running initial fee reminder check...");
-    checkFeeReminders();
-  }, 60000);
+  // Function kept for backward compatibility but does nothing
+  // Actual scheduling happens in scheduledJobs.js
 }
 
 module.exports = {

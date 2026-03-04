@@ -15,6 +15,9 @@ const {
 // WhatsApp Integration Service
 const WhatsAppIntegrationService = require("./services/whatsappIntegrationService");
 
+// Fee Reminder Service
+const { checkFeeReminders } = require("./services/feeReminderService");
+
 // Store active cron jobs for management
 const activeJobs = {};
 
@@ -44,19 +47,19 @@ const jobHistory = {
     failures: 0,
     consecutiveFailures: 0,
   },
-  quarterlyInvoiceGeneration: {
-    lastRun: null,
-    lastSuccess: null,
-    failures: 0,
-    consecutiveFailures: 0,
-  },
-  annualInvoiceGeneration: {
-    lastRun: null,
-    lastSuccess: null,
-    failures: 0,
-    consecutiveFailures: 0,
-  },
   weeklyAttendanceReports: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  feeReminderMorning: {
+    lastRun: null,
+    lastSuccess: null,
+    failures: 0,
+    consecutiveFailures: 0,
+  },
+  feeReminderAfternoon: {
     lastRun: null,
     lastSuccess: null,
     failures: 0,
@@ -343,23 +346,16 @@ const initializeScheduledJobs = () => {
       "📅 Scheduled: Weekly attendance reports (every Friday at 17:00)",
     );
 
-    // Quarterly invoices (1st day of Jan, Apr, Jul, Oct at 03:00)
-    const quarterlyJob = cron.schedule(
-      "0 3 1 1,4,7,10 *",
+    // Fee reminders - Morning check (8:00 AM daily)
+    const feeReminderMorningJob = cron.schedule(
+      "0 8 * * *",
       async () => {
         await executeJobWithRetry(
-          "quarterlyInvoiceGeneration",
+          "feeReminderMorning",
           async () => {
-            const now = new Date();
-            const result =
-              await monthlyInvoiceService.generateInvoicesForFrequency({
-                frequency: "quarterly",
-                date: now,
-              });
-            console.log(
-              `   Created: ${result.created}, Skipped: ${result.skipped}`,
-            );
-            return result;
+            const result = await checkFeeReminders();
+            console.log("   Fee reminders checked (morning run)");
+            return { success: true, result };
           },
           2,
         );
@@ -367,28 +363,19 @@ const initializeScheduledJobs = () => {
       { scheduled: true, timezone: "Africa/Nairobi" },
     );
 
-    activeJobs.quarterlyInvoiceGeneration = quarterlyJob;
-    console.log(
-      "📅 Scheduled: Quarterly invoice generation (1st day of Jan/Apr/Jul/Oct at 03:00)",
-    );
+    activeJobs.feeReminderMorning = feeReminderMorningJob;
+    console.log("📅 Scheduled: Fee reminder check (daily at 08:00)");
 
-    // Annual invoices (Jan 1st at 03:00)
-    const annualJob = cron.schedule(
-      "0 3 1 1 *",
+    // Fee reminders - Afternoon check (2:00 PM daily)
+    const feeReminderAfternoonJob = cron.schedule(
+      "0 14 * * *",
       async () => {
         await executeJobWithRetry(
-          "annualInvoiceGeneration",
+          "feeReminderAfternoon",
           async () => {
-            const now = new Date();
-            const result =
-              await monthlyInvoiceService.generateInvoicesForFrequency({
-                frequency: "annual",
-                date: now,
-              });
-            console.log(
-              `   Created: ${result.created}, Skipped: ${result.skipped}`,
-            );
-            return result;
+            const result = await checkFeeReminders();
+            console.log("   Fee reminders checked (afternoon run)");
+            return { success: true, result };
           },
           2,
         );
@@ -396,13 +383,10 @@ const initializeScheduledJobs = () => {
       { scheduled: true, timezone: "Africa/Nairobi" },
     );
 
-    activeJobs.annualInvoiceGeneration = annualJob;
-    console.log("📅 Scheduled: Annual invoice generation (Jan 1st at 03:00)");
+    activeJobs.feeReminderAfternoon = feeReminderAfternoonJob;
+    console.log("📅 Scheduled: Fee reminder check (daily at 14:00)");
   } catch (error) {
-    console.error(
-      "Error initializing monthly invoice generation job:",
-      error.message,
-    );
+    console.error("Error initializing invoice/reminder jobs:", error.message);
   }
 
   console.log("=".repeat(50) + "\n");
@@ -438,6 +422,15 @@ const runStudentInactivityCheckNow = async () => {
 const runAtRiskNotificationsNow = async () => {
   console.log("🔄 Manually triggering at-risk notifications...");
   return await sendAtRiskNotificationsAllBranches();
+};
+
+/**
+ * Manually trigger fee reminder check
+ * Useful for admin triggering or testing
+ */
+const runFeeReminderCheckNow = async () => {
+  console.log("🔄 Manually triggering fee reminder check...");
+  return await checkFeeReminders();
 };
 
 /**
@@ -519,6 +512,7 @@ module.exports = {
   stopAllJobs,
   runStudentInactivityCheckNow,
   runAtRiskNotificationsNow,
+  runFeeReminderCheckNow,
   getJobsStatus,
   getJobsHealthReport,
   activeJobs,

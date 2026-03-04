@@ -414,7 +414,7 @@ const studentSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for performance
@@ -467,11 +467,11 @@ studentSchema.virtual("overallAttendancePercentage").get(function () {
   if (this.academicRecords && this.academicRecords.length > 0) {
     const totalDays = this.academicRecords.reduce(
       (sum, record) => sum + (record.attendance?.totalDays || 0),
-      0
+      0,
     );
     const presentDays = this.academicRecords.reduce(
       (sum, record) => sum + (record.attendance?.presentDays || 0),
-      0
+      0,
     );
 
     return totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
@@ -528,7 +528,7 @@ studentSchema.pre("save", function (next) {
 // Method to add academic record
 studentSchema.methods.addAcademicRecord = function (academicTermId, classId) {
   const existingRecord = this.academicRecords.find(
-    (record) => record.academicTermId.toString() === academicTermId.toString()
+    (record) => record.academicTermId.toString() === academicTermId.toString(),
   );
 
   if (!existingRecord) {
@@ -552,12 +552,12 @@ studentSchema.methods.addAcademicRecord = function (academicTermId, classId) {
 // Method to add grade
 studentSchema.methods.addGrade = function (academicTermId, subjectName, grade) {
   const academicRecord = this.academicRecords.find(
-    (record) => record.academicTermId.toString() === academicTermId.toString()
+    (record) => record.academicTermId.toString() === academicTermId.toString(),
   );
 
   if (academicRecord) {
     let subject = academicRecord.subjects.find(
-      (sub) => sub.subjectName === subjectName
+      (sub) => sub.subjectName === subjectName,
     );
 
     if (!subject) {
@@ -581,7 +581,7 @@ studentSchema.methods.addGrade = function (academicTermId, subjectName, grade) {
     // Calculate overall score for subject
     const totalScore = subject.grades.reduce(
       (sum, g) => sum + (g.score / g.maxScore) * 100,
-      0
+      0,
     );
     subject.overallScore = Math.round(totalScore / subject.grades.length);
 
@@ -598,10 +598,10 @@ studentSchema.methods.addGrade = function (academicTermId, subjectName, grade) {
 // Method to update attendance
 studentSchema.methods.updateAttendance = function (
   academicTermId,
-  attendanceData
+  attendanceData,
 ) {
   const academicRecord = this.academicRecords.find(
-    (record) => record.academicTermId.toString() === academicTermId.toString()
+    (record) => record.academicTermId.toString() === academicTermId.toString(),
   );
 
   if (academicRecord) {
@@ -615,7 +615,7 @@ studentSchema.methods.updateAttendance = function (
       academicRecord.attendance.attendancePercentage = Math.round(
         (academicRecord.attendance.presentDays /
           academicRecord.attendance.totalDays) *
-          100
+          100,
       );
     }
   }
@@ -626,7 +626,7 @@ studentSchema.methods.updateAttendance = function (
 // Method to assign student to a class
 studentSchema.methods.assignToClass = async function (
   classId,
-  academicTermId = null
+  academicTermId = null,
 ) {
   this.currentClassId = classId;
 
@@ -674,12 +674,59 @@ studentSchema.methods.assignToClass = async function (
 
 // Method to assign courses to student
 studentSchema.methods.assignCourses = async function (courseIds) {
+  // Normalize to array of strings
+  const normalizedIds = Array.isArray(courseIds)
+    ? courseIds.map((id) => id.toString())
+    : courseIds
+      ? [courseIds.toString()]
+      : [];
+
+  // Update legacy courses array (kept for backwards compatibility)
   if (Array.isArray(courseIds)) {
     this.courses = courseIds;
   } else if (courseIds) {
     this.courses = [courseIds];
   } else {
     this.courses = [];
+  }
+
+  // Sync courseEnrollments — this is the authoritative enrollment tracker
+  if (!this.courseEnrollments) {
+    this.courseEnrollments = [];
+  }
+
+  const existingEnrollmentIds = this.courseEnrollments.map((e) =>
+    e.courseId.toString(),
+  );
+
+  // Add new courses or reactivate previously dropped ones
+  for (const courseId of normalizedIds) {
+    if (!existingEnrollmentIds.includes(courseId)) {
+      // Brand new enrollment
+      this.courseEnrollments.push({
+        courseId,
+        enrolledAt: new Date(),
+        status: "active",
+      });
+    } else {
+      // Already tracked — reactivate if it was dropped/suspended
+      const enrollment = this.courseEnrollments.find(
+        (e) => e.courseId.toString() === courseId,
+      );
+      if (enrollment && enrollment.status !== "active") {
+        enrollment.status = "active";
+      }
+    }
+  }
+
+  // Mark removed courses as dropped (preserves enrollment history)
+  for (const enrollment of this.courseEnrollments) {
+    if (
+      enrollment.status === "active" &&
+      !normalizedIds.includes(enrollment.courseId.toString())
+    ) {
+      enrollment.status = "dropped";
+    }
   }
 
   // Calculate total fee based on assigned courses
@@ -717,7 +764,7 @@ studentSchema.methods.calculateCourseFees = async function () {
         ) {
           const courseTotal = course.feeStructure.components.reduce(
             (sum, comp) => sum + comp.amount,
-            0
+            0,
           );
           totalFee += courseTotal;
         }
@@ -753,7 +800,7 @@ studentSchema.methods.calculateCourseFees = async function () {
         this.enrollmentDate || new Date(),
         installmentPlan.numberOfInstallments,
         totalFee,
-        installmentPlan.frequency
+        installmentPlan.frequency,
       );
     } else {
       this.fees.installmentPlan.enabled = false;
@@ -784,7 +831,7 @@ studentSchema.methods.generateInstallmentSchedule = function (
   enrollmentDate,
   numberOfInstallments,
   totalAmount,
-  frequency
+  frequency,
 ) {
   const schedule = [];
   const installmentAmount =

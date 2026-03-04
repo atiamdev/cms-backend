@@ -39,6 +39,7 @@ const globalSettingsRoutes = require("./routes/globalSettingsRoutes");
 const noticeRoutes = require("./routes/noticeRoutes");
 const academicTermRoutes = require("./routes/academicTermRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
+const cronJobDashboardRoutes = require("./routes/cronJobDashboardRoutes");
 
 // Equity Bank Biller API Integration
 const equityBankRoutes = require("./routes/equityBankRoutes");
@@ -185,6 +186,7 @@ app.use("/api/audit", require("./routes/auditRoutes"));
 app.use("/api/branch-admins", require("./routes/branchAdminRoutes"));
 app.use("/api/departments", departmentRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/cron-jobs", cronJobDashboardRoutes);
 
 // Equity Bank Biller API Integration
 app.use("/api/equity", equityBankRoutes);
@@ -301,12 +303,8 @@ const startServer = async () => {
     );
   }
 
-  try {
-    const feeReminderService = require("./services/feeReminderService");
-    feeReminderService.initializeFeeReminderScheduler();
-  } catch (error) {
-    console.error("Error initializing fee reminder service:", error.message);
-  }
+  // Fee reminder service is now managed centrally in scheduledJobs.js
+  // No separate initialization needed here
 
   // Initialize teacher notification schedulers
   try {

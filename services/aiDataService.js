@@ -39,13 +39,13 @@ exports.getBranchContext = async (branchId) => {
     const totalStudents = await Student.countDocuments(query);
     const activeStudents = await Student.countDocuments({
       ...query,
-      status: "Active",
+      academicStatus: "active",
     });
 
     // Student Status Distribution
     const studentStatusStats = await Student.aggregate([
       { $match: query },
-      { $group: { _id: "$status", count: { $sum: 1 } } },
+      { $group: { _id: "$academicStatus", count: { $sum: 1 } } },
     ]);
 
     // 3. Teacher Stats
@@ -142,7 +142,7 @@ exports.getBranchContext = async (branchId) => {
 
     const formattedTrends = revenueTrend.map((r) => {
       const expense = expenseTrend.find(
-        (e) => e._id.month === r._id.month && e._id.year === r._id.year
+        (e) => e._id.month === r._id.month && e._id.year === r._id.year,
       );
       return {
         month: `${monthNames[r._id.month - 1]} ${r._id.year}`,
@@ -167,7 +167,7 @@ exports.getBranchContext = async (branchId) => {
 
     // Get active student counts per class
     const studentsPerClass = await Student.aggregate([
-      { $match: { ...query, status: "Active" } },
+      { $match: { ...query, academicStatus: "active" } },
       { $group: { _id: "$currentClassId", count: { $sum: 1 } } },
     ]);
 
@@ -176,7 +176,7 @@ exports.getBranchContext = async (branchId) => {
     // Calculate expected fees
     for (const structure of feeStructures) {
       const classStats = studentsPerClass.find(
-        (s) => s._id && s._id.toString() === structure.classId.toString()
+        (s) => s._id && s._id.toString() === structure.classId.toString(),
       );
       if (classStats) {
         // Sum up all components in the structure
@@ -232,7 +232,7 @@ exports.getBranchContext = async (branchId) => {
 
     console.log(
       "Students by Department aggregation result:",
-      studentsByDepartment
+      studentsByDepartment,
     );
 
     // 9. Class Stats

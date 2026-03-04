@@ -2,6 +2,7 @@ const express = require("express");
 const { protect, requireAdmin } = require("../middlewares/auth");
 const whatsAppService = require("../services/whatsappService");
 const whatsAppQueueService = require("../services/whatsappQueueService");
+const whatsappWebhookController = require("../controllers/whatsappWebhookController");
 
 const router = express.Router();
 
@@ -12,19 +13,16 @@ const router = express.Router();
  */
 router.get("/status", protect, requireAdmin, (req, res) => {
   try {
-    const status = {
-      enabled: whatsAppService.isEnabled,
-      initialized: whatsAppService.wasender !== null,
-      integrationEnabled: process.env.WHATSAPP_ENABLED === "true",
-      rateLimitDelay: whatsAppService.rateLimitDelay,
-      maxRetries: whatsAppService.maxRetries,
-      timestamp: new Date().toISOString(),
-    };
+    const status = whatsAppService.getStatus();
 
     res.json({
       success: true,
       message: "WhatsApp service status retrieved successfully",
-      data: status,
+      data: {
+        ...status,
+        integrationEnabled: process.env.WHATSAPP_ENABLED === "true",
+        timestamp: new Date().toISOString(),
+      },
     });
   } catch (error) {
     console.error("Error getting WhatsApp status:", error);
@@ -189,5 +187,72 @@ router.delete("/queue", protect, requireAdmin, (req, res) => {
     });
   }
 });
+
+/**
+ * Meta WhatsApp Webhook Endpoints
+ * These endpoints handle webhook verification and events from Meta's WhatsApp Business API
+ */
+
+/**
+ * @route   GET /api/whatsapp/webhook
+ * @desc    Webhook verification endpoint for Meta WhatsApp Business API
+ * @access  Public (Meta verification)
+ */
+router.get("/webhook", whatsappWebhookController.verifyWebhook);
+
+/**
+ * @route   POST /api/whatsapp/webhook
+ * @desc    Webhook event handler for Meta WhatsApp Business API
+ * @access  Public (Meta events)
+ */
+router.post("/webhook", whatsappWebhookController.handleWebhook);
+
+/**
+ * @route   GET /api/whatsapp/webhook/stats
+ * @desc    Get message delivery statistics
+ * @access  Admin only
+ */
+router.get(
+  "/webhook/stats",
+  protect,
+  requireAdmin,
+  whatsappWebhookController.getDeliveryStats,
+);
+
+/**
+ * @route   GET /api/whatsapp/webhook/message/:messageId
+ * @desc    Get message delivery timeline
+ * @access  Admin only
+ */
+router.get(
+  "/webhook/message/:messageId",
+  protect,
+  requireAdmin,
+  whatsappWebhookController.getMessageTimeline,
+);
+
+/**
+ * @route   GET /api/whatsapp/webhook/recipient/:phone
+ * @desc    Get messages for a specific recipient
+ * @access  Admin only
+ */
+router.get(
+  "/webhook/recipient/:phone",
+  protect,
+  requireAdmin,
+  whatsappWebhookController.getRecipientMessages,
+);
+
+/**
+ * @route   GET /api/whatsapp/messages/recent
+ * @desc    Get recent messages across all recipients
+ * @access  Admin only
+ */
+router.get(
+  "/messages/recent",
+  protect,
+  requireAdmin,
+  whatsappWebhookController.getRecentMessages,
+);
 
 module.exports = router;
