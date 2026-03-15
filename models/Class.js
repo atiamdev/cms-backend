@@ -110,6 +110,11 @@ const classSchema = new mongoose.Schema(
           subjectName: { type: String, required: true },
           teacherId: { type: mongoose.Schema.Types.ObjectId, ref: "Teacher" },
           room: { type: String },
+          // Empty array = applies to ALL students in the class (default)
+          // Non-empty = only those specific students attend this period
+          studentIds: [
+            { type: mongoose.Schema.Types.ObjectId, ref: "Student" },
+          ],
         },
       ],
     },
@@ -149,7 +154,7 @@ const classSchema = new mongoose.Schema(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
+  },
 );
 
 // Indexes for performance
@@ -232,7 +237,7 @@ classSchema.methods.addStudent = function (studentId) {
   const existingStudent = this.students.find(
     (student) =>
       student.studentId.toString() === studentId.toString() &&
-      student.status === "active"
+      student.status === "active",
   );
 
   if (existingStudent) {
@@ -256,7 +261,7 @@ classSchema.methods.addStudent = function (studentId) {
 // Method to remove student from class
 classSchema.methods.removeStudent = function (
   studentId,
-  reason = "transferred"
+  reason = "transferred",
 ) {
   // Return early if no students array
   if (!this.students || !Array.isArray(this.students)) {
@@ -266,7 +271,7 @@ classSchema.methods.removeStudent = function (
   const student = this.students.find(
     (student) =>
       student.studentId.toString() === studentId.toString() &&
-      student.status === "active"
+      student.status === "active",
   );
 
   if (student) {
@@ -281,7 +286,7 @@ classSchema.methods.addSubject = function (subjectData) {
   const existingSubject = this.subjects.find(
     (subject) =>
       subject.subjectName.toLowerCase() ===
-      subjectData.subjectName.toLowerCase()
+      subjectData.subjectName.toLowerCase(),
   );
 
   if (existingSubject) {
@@ -295,7 +300,7 @@ classSchema.methods.addSubject = function (subjectData) {
 // Method to assign teacher to subject
 classSchema.methods.assignTeacherToSubject = function (subjectName, teacherId) {
   const subject = this.subjects.find(
-    (sub) => sub.subjectName.toLowerCase() === subjectName.toLowerCase()
+    (sub) => sub.subjectName.toLowerCase() === subjectName.toLowerCase(),
   );
 
   if (!subject) {
@@ -312,10 +317,10 @@ classSchema.methods.assignTeacherToSubject = function (subjectName, teacherId) {
 // Method to remove teacher from subject
 classSchema.methods.removeTeacherFromSubject = function (
   subjectName,
-  teacherId
+  teacherId,
 ) {
   const subject = this.subjects.find(
-    (sub) => sub.subjectName.toLowerCase() === subjectName.toLowerCase()
+    (sub) => sub.subjectName.toLowerCase() === subjectName.toLowerCase(),
   );
 
   if (!subject) {
@@ -323,7 +328,7 @@ classSchema.methods.removeTeacherFromSubject = function (
   }
 
   subject.assignedTeacherIds = subject.assignedTeacherIds.filter(
-    (id) => id.toString() !== teacherId.toString()
+    (id) => id.toString() !== teacherId.toString(),
   );
 
   return this.save();

@@ -1232,8 +1232,55 @@ const getCurrentStudent = async (req, res) => {
               },
             },
           },
+        },
+      },
+      // Separate stage: filter schedule periods for this student.
+      // Must be after the stage that unwraps classInfo via $arrayElemAt so that
+      // $classInfo.schedule is a plain object (not the raw $lookup array).
+      {
+        $addFields: {
           schedule: {
-            $ifNull: ["$classInfo.schedule", null],
+            $cond: {
+              if: { $not: [{ $ifNull: ["$classInfo.schedule", false] }] },
+              then: null,
+              else: {
+                $mergeObjects: [
+                  "$classInfo.schedule",
+                  {
+                    periods: {
+                      $filter: {
+                        input: {
+                          $ifNull: ["$classInfo.schedule.periods", []],
+                        },
+                        as: "period",
+                        cond: {
+                          $or: [
+                            // No specific student restriction → visible to all
+                            {
+                              $eq: [
+                                {
+                                  $size: {
+                                    $ifNull: ["$$period.studentIds", []],
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                            // This student is explicitly listed
+                            {
+                              $in: [
+                                "$_id",
+                                { $ifNull: ["$$period.studentIds", []] },
+                              ],
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
           },
         },
       },

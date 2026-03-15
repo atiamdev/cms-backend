@@ -193,7 +193,7 @@ const getClasses = async (req, res) => {
     // Add pagination
     pipeline.push(
       { $skip: (page - 1) * parseInt(limit) },
-      { $limit: parseInt(limit) }
+      { $limit: parseInt(limit) },
     );
 
     // Execute aggregation
@@ -214,10 +214,10 @@ const getClasses = async (req, res) => {
           ) {
             subject.assignedTeacherIds.forEach((teacherId) => {
               const teacher = cls.subjectTeachers?.find(
-                (t) => t._id.toString() === teacherId.toString()
+                (t) => t._id.toString() === teacherId.toString(),
               );
               const teacherUser = cls.subjectTeacherUsers?.find(
-                (u) => u._id.toString() === teacher?.userId?.toString()
+                (u) => u._id.toString() === teacher?.userId?.toString(),
               );
 
               if (teacher && teacherUser) {
@@ -350,7 +350,7 @@ const updateClass = async (req, res) => {
     const classData = await Class.findOneAndUpdate(
       { _id: id, branchId: req.branchId },
       { ...updateData, updatedAt: Date.now() },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate([
       { path: "classTeacherId", select: "userId employeeId" },
       { path: "branchId", select: "name" },
@@ -396,7 +396,7 @@ const deleteClass = async (req, res) => {
 
     // Check if class has active students
     const activeStudents = classData.students.filter(
-      (student) => student.status === "active"
+      (student) => student.status === "active",
     );
 
     if (activeStudents.length > 0) {
@@ -689,6 +689,128 @@ const setClassTeacher = async (req, res) => {
   }
 };
 
+// ─── Schedule conflict-detection helpers ────────────────────────────────────
+
+// Convert "HH:MM" to total minutes since midnight
+const timeToMinutes = (timeStr) => {
+  const [h, m] = timeStr.split(":").map(Number);
+  return h * 60 + m;
+};
+
+// Returns true when [start1, end1) overlaps [start2, end2)
+const timesOverlap = (start1, end1, start2, end2) =>
+  timeToMinutes(start1) < timeToMinutes(end2) &&
+  timeToMinutes(start2) < timeToMinutes(end1);
+
+/**
+ * Check all three types of scheduling conflicts:
+ *   1. Same class / same day / overlapping time
+ *   2. Teacher double-booking (across all classes in the branch)
+ *   3. Room double-booking (across all classes in the branch)
+ *
+ * @param {string} classId        - the class being scheduled
+ * @param {*}      branchId       - branch scope
+ * @param {object} newPeriod      - the period data being added/updated
+ * @param {number} excludeIndex   - array index to skip (used for update)
+ * @returns {{ conflict: boolean, message?: string }}
+ */
+const checkScheduleConflicts = async (
+  classId,
+  branchId,
+  newPeriod,
+  excludePeriodId = null,
+) => {
+  // 1. Same-class time overlap ------------------------------------------------
+  const classData = await Class.findById(classId);
+  const existingPeriods = classData.schedule.periods;
+
+  for (const p of existingPeriods) {
+    if (excludePeriodId && p._id.toString() === excludePeriodId.toString())
+      continue;
+    if (
+      p.day === newPeriod.day &&
+      timesOverlap(
+        p.startTime,
+        p.endTime,
+        newPeriod.startTime,
+        newPeriod.endTime,
+      )
+    ) {
+      return {
+        conflict: true,
+        message: `Time conflict: "${p.subjectName}" is already scheduled on ${p.day} from ${p.startTime} to ${p.endTime} in this class`,
+      };
+    }
+  }
+
+  // 2. Teacher double-booking -------------------------------------------------
+  if (newPeriod.teacherId) {
+    const allClasses = await Class.find({ branchId });
+    for (const cls of allClasses) {
+      for (const p of cls.schedule.periods) {
+        // Skip the period being updated
+        if (
+          excludePeriodId &&
+          cls._id.toString() === classId.toString() &&
+          p._id.toString() === excludePeriodId.toString()
+        )
+          continue;
+        if (
+          p.teacherId &&
+          p.teacherId.toString() === newPeriod.teacherId.toString() &&
+          p.day === newPeriod.day &&
+          timesOverlap(
+            p.startTime,
+            p.endTime,
+            newPeriod.startTime,
+            newPeriod.endTime,
+          )
+        ) {
+          return {
+            conflict: true,
+            message: `Teacher conflict: This teacher is already assigned to "${p.subjectName}" (${cls.name}) at ${p.startTime}–${p.endTime} on ${p.day}`,
+          };
+        }
+      }
+    }
+  }
+
+  // 3. Room double-booking ----------------------------------------------------
+  if (newPeriod.room && newPeriod.room.trim()) {
+    const allClasses = await Class.find({ branchId });
+    for (const cls of allClasses) {
+      for (const p of cls.schedule.periods) {
+        if (
+          excludePeriodId &&
+          cls._id.toString() === classId.toString() &&
+          p._id.toString() === excludePeriodId.toString()
+        )
+          continue;
+        if (
+          p.room &&
+          p.room.trim().toLowerCase() === newPeriod.room.trim().toLowerCase() &&
+          p.day === newPeriod.day &&
+          timesOverlap(
+            p.startTime,
+            p.endTime,
+            newPeriod.startTime,
+            newPeriod.endTime,
+          )
+        ) {
+          return {
+            conflict: true,
+            message: `Room conflict: Room "${newPeriod.room}" is already booked at ${p.startTime}–${p.endTime} on ${p.day}`,
+          };
+        }
+      }
+    }
+  }
+
+  return { conflict: false };
+};
+
+// ─── Period CRUD controllers ─────────────────────────────────────────────────
+
 // @desc    Add period to class schedule
 // @route   POST /api/classes/:id/schedule/periods
 // @access  Private (Admin, Academic Head)
@@ -721,6 +843,19 @@ const addPeriodToSchedule = async (req, res) => {
       }
     }
 
+    // Check for schedule conflicts before saving
+    const conflictResult = await checkScheduleConflicts(
+      id,
+      req.branchId,
+      periodData,
+    );
+    if (conflictResult.conflict) {
+      return res.status(409).json({
+        success: false,
+        message: conflictResult.message,
+      });
+    }
+
     await classData.addPeriod(periodData);
 
     res.json({
@@ -738,11 +873,11 @@ const addPeriodToSchedule = async (req, res) => {
 };
 
 // @desc    Update period in class schedule
-// @route   PUT /api/classes/:id/schedule/periods/:periodIndex
+// @route   PUT /api/classes/:id/schedule/periods/:periodId
 // @access  Private (Admin, Secretary)
 const updatePeriodInSchedule = async (req, res) => {
   try {
-    const { id, periodIndex } = req.params;
+    const { id, periodId } = req.params;
     const periodData = req.body;
 
     const classData = await Class.findOne({ _id: id, branchId: req.branchId });
@@ -751,6 +886,16 @@ const updatePeriodInSchedule = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Class not found",
+      });
+    }
+
+    const periodExists = classData.schedule.periods.some(
+      (p) => p._id.toString() === periodId,
+    );
+    if (!periodExists) {
+      return res.status(404).json({
+        success: false,
+        message: "Period not found",
       });
     }
 
@@ -769,12 +914,38 @@ const updatePeriodInSchedule = async (req, res) => {
       }
     }
 
-    await classData.updatePeriod(parseInt(periodIndex), periodData);
+    // Check for conflicts, excluding the period being updated
+    const conflictResult = await checkScheduleConflicts(
+      id,
+      req.branchId,
+      periodData,
+      periodId,
+    );
+    if (conflictResult.conflict) {
+      return res.status(409).json({
+        success: false,
+        message: conflictResult.message,
+      });
+    }
 
+    // Use atomic positional update — no race condition possible
+    await Class.updateOne(
+      { _id: id, "schedule.periods._id": periodId },
+      {
+        $set: {
+          "schedule.periods.$": {
+            ...periodData,
+            _id: periodId,
+          },
+        },
+      },
+    );
+
+    const updated = await Class.findById(id);
     res.json({
       success: true,
       message: "Period updated successfully",
-      class: classData,
+      class: updated,
     });
   } catch (error) {
     console.error("Update period error:", error);
@@ -786,27 +957,38 @@ const updatePeriodInSchedule = async (req, res) => {
 };
 
 // @desc    Delete period from class schedule
-// @route   DELETE /api/classes/:id/schedule/periods/:periodIndex
+// @route   DELETE /api/classes/:id/schedule/periods/:periodId
 // @access  Private (Admin, Secretary)
 const deletePeriodFromSchedule = async (req, res) => {
   try {
-    const { id, periodIndex } = req.params;
+    const { id, periodId } = req.params;
 
-    const classData = await Class.findOne({ _id: id, branchId: req.branchId });
-
-    if (!classData) {
+    const classExists = await Class.exists({ _id: id, branchId: req.branchId });
+    if (!classExists) {
       return res.status(404).json({
         success: false,
         message: "Class not found",
       });
     }
 
-    await classData.deletePeriod(parseInt(periodIndex));
+    // $pull atomically removes the subdocument — no race condition
+    const result = await Class.updateOne(
+      { _id: id },
+      { $pull: { "schedule.periods": { _id: periodId } } },
+    );
 
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Period not found",
+      });
+    }
+
+    const updated = await Class.findById(id);
     res.json({
       success: true,
       message: "Period deleted successfully",
-      class: classData,
+      class: updated,
     });
   } catch (error) {
     console.error("Delete period error:", error);
