@@ -288,6 +288,14 @@ const periodValidation = [
     .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
     .withMessage("Valid end time is required (HH:MM format)"),
   body("subjectName").trim().notEmpty().withMessage("Subject name is required"),
+  body("studentIds")
+    .optional()
+    .isArray()
+    .withMessage("studentIds must be an array"),
+  body("studentIds.*")
+    .optional()
+    .isMongoId()
+    .withMessage("Each studentId must be a valid MongoDB ID"),
 ];
 
 // Apply middleware to all routes
@@ -404,7 +412,7 @@ router.post(
   autoAssociateBranch,
   logBranchAdminAction("CREATE_CLASS"),
   classValidation,
-  createClass
+  createClass,
 );
 
 /**
@@ -554,7 +562,7 @@ router.put(
   validateBranchOwnership(Class),
   logBranchAdminAction("UPDATE_CLASS"),
   classValidation,
-  updateClass
+  updateClass,
 );
 
 /**
@@ -591,7 +599,7 @@ router.delete(
   requireAdmin,
   validateBranchOwnership(Class),
   logBranchAdminAction("DELETE_CLASS"),
-  deleteClass
+  deleteClass,
 );
 
 // Student management routes
@@ -641,7 +649,7 @@ router.post(
   "/:id/students",
   canAccessStudents,
   [body("studentId").isMongoId().withMessage("Valid student ID is required")],
-  addStudentToClass
+  addStudentToClass,
 );
 
 /**
@@ -680,7 +688,7 @@ router.post(
 router.delete(
   "/:id/students/:studentId",
   canAccessStudents,
-  removeStudentFromClass
+  removeStudentFromClass,
 );
 
 // Subject management routes
@@ -724,7 +732,7 @@ router.post(
   "/:id/subjects",
   canAccessStudents,
   subjectValidation,
-  addSubjectToClass
+  addSubjectToClass,
 );
 
 /**
@@ -778,7 +786,7 @@ router.post(
   "/:id/subjects/:subjectName/assign-teacher",
   canAccessStudents,
   [body("teacherId").isMongoId().withMessage("Valid teacher ID is required")],
-  assignTeacherToSubject
+  assignTeacherToSubject,
 );
 
 /**
@@ -834,7 +842,7 @@ router.post(
 router.delete(
   "/:id/subjects/:subjectName/remove-teacher/:teacherId",
   canAccessStudents,
-  removeTeacherFromSubject
+  removeTeacherFromSubject,
 );
 
 // Class teacher assignment
@@ -887,7 +895,7 @@ router.put(
       .isMongoId()
       .withMessage("Valid teacher ID is required"),
   ],
-  setClassTeacher
+  setClassTeacher,
 );
 
 // Schedule management
@@ -931,22 +939,22 @@ router.post(
   "/:id/schedule/periods",
   canAccessStudents,
   periodValidation,
-  addPeriodToSchedule
+  addPeriodToSchedule,
 );
 
 // Update period in schedule
 router.put(
-  "/:id/schedule/periods/:periodIndex",
+  "/:id/schedule/periods/:periodId",
   canAccessStudents,
   periodValidation,
-  updatePeriodInSchedule
+  updatePeriodInSchedule,
 );
 
 // Delete period from schedule
 router.delete(
-  "/:id/schedule/periods/:periodIndex",
+  "/:id/schedule/periods/:periodId",
   canAccessStudents,
-  deletePeriodFromSchedule
+  deletePeriodFromSchedule,
 );
 
 module.exports = router;
