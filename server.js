@@ -40,6 +40,7 @@ const noticeRoutes = require("./routes/noticeRoutes");
 const academicTermRoutes = require("./routes/academicTermRoutes");
 const whatsappRoutes = require("./routes/whatsappRoutes");
 const cronJobDashboardRoutes = require("./routes/cronJobDashboardRoutes");
+const secretaryReportRoutes = require("./routes/secretaryReportRoutes");
 
 // Equity Bank Biller API Integration
 const equityBankRoutes = require("./routes/equityBankRoutes");
@@ -187,6 +188,7 @@ app.use("/api/branch-admins", require("./routes/branchAdminRoutes"));
 app.use("/api/departments", departmentRoutes);
 app.use("/api/whatsapp", whatsappRoutes);
 app.use("/api/cron-jobs", cronJobDashboardRoutes);
+app.use("/api/secretary-reports", secretaryReportRoutes);
 
 // Equity Bank Biller API Integration
 app.use("/api/equity", equityBankRoutes);
